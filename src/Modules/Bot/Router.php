@@ -74,13 +74,19 @@ class Router
             return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 4. Regular message
+        // 4. Contact messages (phone sharing)
+        if ($update->isMessage() && $update->getContact() !== null) {
+            error_log("DEBUG ROUTER: -> MessageHandler (contact)");
+            return new MessageHandler($this->baleClient);
+        }
+
+        // 5. Regular message
         if ($update->isMessage() && $text !== '') {
             error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 5. Fallback
+        // 6. Fallback
         error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
         return new UnknownUpdateHandler($this->baleClient);
     }
