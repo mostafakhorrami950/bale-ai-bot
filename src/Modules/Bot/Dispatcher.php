@@ -18,18 +18,21 @@ class Dispatcher
      */
     public function dispatch(string $handlerClass): void
     {
+        error_log("DEBUG: Dispatcher::dispatch() STARTED. Update type: " . gettype($this->update));
         try {
             if (!class_exists($handlerClass)) {
                 throw new \Exception("Handler class $handlerClass not found");
             }
 
             $handler = new $handlerClass($this->update);
+            error_log("DEBUG: Dispatcher about to execute handler: " . get_class($handler));
 
             if (!method_exists($handler, 'handle')) {
                 throw new \Exception("Handle method not found in $handlerClass");
             }
 
             $handler->handle();
+            error_log("DEBUG: Dispatcher handler executed successfully");
 
         } catch (\Throwable $e) {
             $this->handleFailure($e, $handlerClass);
