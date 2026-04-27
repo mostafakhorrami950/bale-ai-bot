@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/error_handler.php';
 
+// Clear opcache to ensure latest file changes are picked up
+if (function_exists('opcache_reset')) {
+    opcache_reset();
+}
+
 function debug_log(string $message, array $context = []): void {
     $ctx = $context ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE) : '';
     $msg = date('[Y-m-d H:i:s]') . " DEBUG: $message$ctx\n";
