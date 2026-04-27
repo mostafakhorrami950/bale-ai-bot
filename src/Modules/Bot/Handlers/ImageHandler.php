@@ -18,27 +18,23 @@ class ImageHandler extends BaseHandler
             $text    = $update->getText();
             $isCallback = $update->isCallback();
 
-            // Step 1: If callback → came from inline button "generate_image"
             if ($isCallback) {
                 $this->askForPrompt($chatId, $userId);
                 return;
             }
 
-            // Step 2: Keyboard button "🎨 ساخت تصویر" pressed → start the flow
             if ($text === '🎨 ساخت تصویر') {
                 $this->askForPrompt($chatId, $userId);
                 return;
             }
 
-            // Step 3: Check state — this should be a text message with prompt
             $state = $this->getUserState($userId);
 
-            if ($state === 'awaiting_image_prompt') {
+            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt') {
                 $this->processPrompt($chatId, $userId, $text);
                 return;
             }
 
-            // Unknown state — redirect to menu
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
         } catch (\Throwable $e) {
             Logger::error('ImageHandler exception', [
@@ -52,7 +48,12 @@ class ImageHandler extends BaseHandler
 
     private function askForPrompt(int $chatId, int $userId): void
     {
-        $this->setUserState($userId, 'awaiting_image_prompt');
+        // Set state BEFORE asking for prompt
+        Database::getInstance()->query(
+            "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_image_prompt', NOW())
+             ON DUPLICATE KEY UPDATE state='awaiting_image_prompt', updated_at=NOW()",
+            [$userId]
+        );
         $this->baleClient->sendMessage($chatId, "🎨 لطفاً متن تصویر مورد نظر خود را بنویسید:");
     }
 
@@ -138,6 +139,13 @@ class ImageHandler extends BaseHandler
         }
 
         $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'text2img', 'success', $referenceId);
+
+        // Clear state to idle
+        Database::getInstance()->query(
+            "UPDATE bot_state SET state='idle', updated_at=NOW() WHERE user_id=?",
+            [$userId]
+        );
+
         $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ساخته شد!", $this->getMainMenuKeyboard());
     }
 
@@ -166,19 +174,6 @@ class ImageHandler extends BaseHandler
         }
     }
 
-    private function setUserState(int $userId, string $state): void
-    {
-        try {
-            $db = Database::getInstance();
-            $db->query(
-                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
-                [$userId, $state, $state]
-            );
-        } catch (\Throwable $e) {
-            Logger::error('ImageHandler: setUserState failed', ['user_id' => $userId, 'state' => $state, 'error' => $e->getMessage()]);
-        }
-    }
-
     private function clearUserState(int $userId): void
     {
         try {
@@ -193,7 +188,7 @@ class ImageHandler extends BaseHandler
     {
         return [
             'keyboard' => [
-                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼️ ویرایش عکس"]],
+                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼 ویرایش عکس"]],
                 [['text' => "👤 حساب من"], ['text' => "💳 شارژ اعتبار"]],
                 [['text' => "❓ راهنما"]]
             ],

@@ -2,6 +2,7 @@
 
 namespace Modules\Bot;
 
+use Modules\Bot\Handlers\AccountHandler;
 use Modules\Bot\Handlers\BuyCreditHandler;
 use Modules\Bot\Handlers\CallbackHandler;
 use Modules\Bot\Handlers\ImageHandler;
@@ -25,7 +26,6 @@ class Router
         'buy_credit'     => BuyCreditHandler::class,
         'generate_image' => ImageHandler::class,
         'edit_image'     => Img2ImgHandler::class,
-        // Plan selection callbacks (prefix match)
         'plan_'          => BuyCreditHandler::class,
     ];
 
@@ -35,13 +35,33 @@ class Router
         'awaiting_edit_prompt'  => Img2ImgHandler::class,
     ];
 
-    /**
-     * Resolve the Update to the appropriate handler instance.
-     */
     public function resolve($update)
     {
         $text = $update->getText() ?? '';
         error_log("DEBUG ROUTER: text=[" . $text . "]");
+
+        // 0. State-based routing — CHECK FIRST before anything else
+        $userId = $update->getUserId();
+        $state = 'idle';
+        if ($userId) {
+            try {
+                $db = Database::getInstance();
+                $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
+                $row = $stmt->fetch();
+                $state = $row['state'] ?? 'idle';
+            } catch (\Throwable $e) {
+                $state = 'idle';
+            }
+            
+            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt') {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> ImageHandler");
+                return new ImageHandler($this->baleClient);
+            }
+            if ($state === 'awaiting_edit_photo') {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> Img2ImgHandler");
+                return new Img2ImgHandler($this->baleClient);
+            }
+        }
 
         // 1. Commands
         if ($text === '/start' || str_starts_with($text, '/start')) {
@@ -49,69 +69,67 @@ class Router
             return new StartHandler($this->baleClient);
         }
 
-        // 2. Contact messages (phone sharing)
+        // 2. Contact messages
         if ($update->getContact() !== null) {
-            error_log("DEBUG ROUTER: contact=[" . json_encode($update->getContact()) . "] -> MessageHandler");
+            error_log("DEBUG ROUTER: contact -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 3. Menu text buttons — MOVED BEFORE callback check
+        // 3. Menu text buttons
         $menuRoutes = [
             '🎨 ساخت تصویر' => 'ImageHandler',
             '🖼 ویرایش عکس' => 'Img2ImgHandler',
             '💳 شارژ اعتبار' => 'BuyCreditHandler',
-            '👤 حساب من' => 'ImageHandler',
+            '👤 حساب من' => 'AccountHandler',
             '❓ راهنما' => 'ImageHandler',
         ];
-
         if (array_key_exists($text, $menuRoutes)) {
             $class = 'Modules\\Bot\\Handlers\\' . $menuRoutes[$text];
             error_log("DEBUG ROUTER: menu text=[" . $text . "] -> " . $menuRoutes[$text]);
             return new $class($this->baleClient);
         }
 
-        // 4. Callback queries
+        // 4. Photo messages
+        if ($update->hasPhoto()) {
+            error_log("DEBUG ROUTER: photo -> Img2ImgHandler");
+            return new Img2ImgHandler($this->baleClient);
+        }
+
+        // 5. Callback queries
         if ($update->isCallback()) {
             $data = $update->getCallbackData() ?? '';
             error_log("DEBUG ROUTER: callback=[" . $data . "]");
-            
             $map = [
                 'buy_credit' => 'BuyCreditHandler',
-                'generate_image' => 'ImageHandler',
-                'edit_image' => 'Img2ImgHandler',
                 'plan_basic' => 'BuyCreditHandler',
                 'plan_standard' => 'BuyCreditHandler',
                 'plan_premium' => 'BuyCreditHandler',
+                'generate_image' => 'ImageHandler',
+                'edit_image' => 'Img2ImgHandler',
                 'check_membership' => 'CallbackHandler',
             ];
-            
             if (isset($map[$data])) {
                 $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
                 return new $class($this->baleClient);
             }
-            
             return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 5. Regular message
+        // 6. Regular message
         if ($update->isMessage() && $text !== '') {
             error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 6. Fallback
+        // 7. Fallback
         error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
         return new UnknownUpdateHandler($this->baleClient);
     }
 
-    /**
-     * Resolve callback data to handler instance.
-     */
     private function resolveCallback(Update $update): BaseHandler
     {
         $callbackData = $update->getCallbackData() ?? '';
 
-        // Exact matches first
         foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_')) continue;
             if ($callbackData === $key) {
@@ -119,7 +137,6 @@ class Router
             }
         }
 
-        // Prefix matches (e.g. "plan_" matches "plan_basic")
         foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_') && str_starts_with($callbackData, $key)) {
                 return new $handlerClass($this->baleClient);

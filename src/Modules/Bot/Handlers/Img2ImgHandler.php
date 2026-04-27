@@ -13,9 +13,9 @@ class Img2ImgHandler extends BaseHandler
     public function handle($update): void
     {
         try {
-            $chatId  = $update->getChatId();
-            $userId  = $update->getUserId();
-            $text    = $update->getText();
+            $chatId = $update->getChatId();
+            $userId = $update->getUserId();
+            $text = $update->getText();
             $isCallback = $update->isCallback();
 
             if ($isCallback) {
@@ -23,7 +23,7 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            if ($text === '🖼️ ویرایش عکس') {
+            if ($text === '🖼 ویرایش عکس') {
                 $this->askForPhoto($chatId, $userId);
                 return;
             }
@@ -31,12 +31,23 @@ class Img2ImgHandler extends BaseHandler
             $state = $this->getUserState($userId);
 
             if ($state === 'awaiting_edit_photo') {
-                $this->processPhoto($chatId, $userId, $update);
+                if ($update->hasPhoto()) {
+                    $fileId = $update->getPhotoFileId();
+                    $this->storePhotoAndAskPrompt($chatId, $userId, $fileId);
+                } else {
+                    $this->baleClient->sendMessage($chatId, "📸 لطفاً یک عکس ارسال کنید.");
+                }
                 return;
             }
 
             if ($state === 'awaiting_edit_prompt') {
-                $this->processPrompt($chatId, $userId, $text);
+                $photoData = $this->getStoredPhotoData($userId);
+                if ($photoData) {
+                    $this->processEdit($chatId, $userId, $text, $photoData);
+                } else {
+                    $this->baleClient->sendMessage($chatId, "⚠️ عکس ذخیره شده یافت نشد. لطفاً دوباره از اول شروع کنید.");
+                    $this->clearUserState($userId);
+                }
                 return;
             }
 
@@ -53,74 +64,49 @@ class Img2ImgHandler extends BaseHandler
 
     private function askForPhoto(int $chatId, int $userId): void
     {
-        $this->setUserState($userId, 'awaiting_edit_photo');
-        $this->baleClient->sendMessage($chatId, "🖼️ لطفاً عکسی که می‌خواهید ویرایش کنید را ارسال نمایید:");
+        Database::getInstance()->query(
+            "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_edit_photo', NOW())
+             ON DUPLICATE KEY UPDATE state='awaiting_edit_photo', updated_at=NOW()",
+            [$userId]
+        );
+        $this->baleClient->sendMessage($chatId, "🖼 لطفاً عکسی که می‌خواهید ویرایش کنید را ارسال نمایید:");
     }
 
-    private function processPhoto(int $chatId, int $userId, $update): void
+    private function storePhotoAndAskPrompt(int $chatId, int $userId, string $fileId): void
     {
-        if (!$update->hasPhoto()) {
-            $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک عکس ارسال کنید.");
-            return;
+        try {
+            $photoBase64 = $this->downloadPhotoAsBase64($fileId);
+            if (!$photoBase64) {
+                $this->baleClient->sendMessage($chatId, "⚠️ دریافت عکس از سرور با مشکل مواجه شد. لطفاً دوباره تلاش کنید.");
+                return;
+            }
+
+            Database::getInstance()->query(
+                "INSERT INTO bot_state (user_id, state, photo_base64, extra_data, updated_at)
+                 VALUES (?, 'awaiting_edit_prompt', ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE state='awaiting_edit_prompt', photo_base64=?, extra_data=?, updated_at=NOW()",
+                [$userId, $photoBase64, '{}', $photoBase64, '{}']
+            );
+
+            $this->baleClient->sendMessage($chatId, "✏️ عکس دریافت شد. حالا لطفاً متن مورد نظر برای ویرایش را بنویسید:");
+        } catch (\Throwable $e) {
+            Logger::error('Img2ImgHandler: storePhotoData failed', ['user_id' => $userId, 'error' => $e->getMessage()]);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطایی در ذخیره عکس رخ داد. لطفاً دوباره تلاش کنید.");
         }
-
-        $fileId = $update->getPhotoFileId();
-        if (!$fileId) {
-            $this->baleClient->sendMessage($chatId, "⚠️ دریافت عکس با مشکل مواجه شد. لطفاً دوباره تلاش کنید.");
-            return;
-        }
-
-        $fileInfo = $this->baleClient->getFile($fileId);
-        if (!$fileInfo || !isset($fileInfo['file_path'])) {
-            Logger::error('Img2ImgHandler: getFile failed', ['user_id' => $userId, 'file_id' => $fileId]);
-            $this->baleClient->sendMessage($chatId, "⚠️ دریافت عکس از سرور با مشکل مواجه شد. لطفاً دوباره تلاش کنید.");
-            return;
-        }
-
-        $fileContent = $this->baleClient->downloadFile($fileInfo['file_path']);
-        if ($fileContent === null) {
-            $this->baleClient->sendMessage($chatId, "⚠️ دانلود عکس با مشکل مواجه شد. لطفاً دوباره تلاش کنید.");
-            return;
-        }
-
-        $tempDir = sys_get_temp_dir() . '/bale_ai_edits';
-        if (!is_dir($tempDir)) {
-            mkdir($tempDir, 0755, true);
-        }
-
-        $tempFile = $tempDir . '/' . $userId . '_' . time() . '.jpg';
-        file_put_contents($tempFile, $fileContent);
-
-        $base64 = base64_encode($fileContent);
-
-        $this->setUserState($userId, 'awaiting_edit_prompt');
-        $this->storePhotoData($userId, $base64, $tempFile);
-
-        $this->baleClient->sendMessage($chatId, "✅ عکس دریافت شد.\n📝 لطفاً متن توضیح ویرایش مورد نظر خود را بنویسید:");
     }
 
-    private function processPrompt(int $chatId, int $userId, string $prompt): void
+    private function processEdit(int $chatId, int $userId, string $prompt, string $photoBase64): void
     {
         if (empty(trim($prompt))) {
             $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک متن معتبر وارد کنید.");
             return;
         }
 
-        $photoData = $this->getStoredPhotoData($userId);
         $this->clearUserState($userId);
-        $this->clearPhotoData($userId);
-
-        if (!$photoData || !isset($photoData['base64'])) {
-            $this->baleClient->sendMessage($chatId, "⚠️ عکس ذخیره‌شده یافت نشد. لطفاً دوباره از اول شروع کنید.");
-            return;
-        }
-
-        $imageBase64 = $photoData['base64'];
-        $tempFile = $photoData['temp_file'] ?? null;
 
         $user = User::findByBaleId($userId);
         if (!$user) {
-            $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد. لطفاً ابتدا با /start ثبت‌نام کنید.");
+            $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد.");
             return;
         }
         $internalId = (int) $user['id'];
@@ -136,7 +122,7 @@ class Img2ImgHandler extends BaseHandler
         $cost = (int) $model['cost_per_image'];
 
         if (!CreditService::hasEnoughCredit($internalId, $cost)) {
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار شما کافی نیست.\n💰 هزینه هر ویرایش: {$cost} اعتبار\n💳 لطفاً از بخش «شارژ اعتبار» حساب خود را افزایش دهید.");
+            $this->baleClient->sendMessage($chatId, "❌ اعتبار شما کافی نیست.\n💰 هزینه هر ویرایش: {$cost} اعتبار");
             return;
         }
 
@@ -147,13 +133,10 @@ class Img2ImgHandler extends BaseHandler
         $result = $aiService->generate([
             'model'  => $model['name'],
             'prompt' => $prompt,
-            'image'  => $imageBase64,
+            'image'  => $photoBase64,
         ]);
 
         if (isset($result['error'])) {
-            if ($tempFile && file_exists($tempFile)) {
-                @unlink($tempFile);
-            }
             Logger::error('Img2ImgHandler: AI edit failed', [
                 'user_id' => $userId,
                 'model'   => $model['name'],
@@ -164,85 +147,58 @@ class Img2ImgHandler extends BaseHandler
             return;
         }
 
-        if ($tempFile && file_exists($tempFile)) {
-            @unlink($tempFile);
-        }
-
-        $deducted = CreditService::deduct($internalId, $cost, $referenceId);
-        if (!$deducted) {
-            Logger::error('Img2ImgHandler: credit deduction failed', [
-                'user_id' => $internalId, 'amount' => $cost, 'reference_id' => $referenceId,
-            ]);
-            $this->baleClient->sendMessage($chatId, "⚠️ مشکلی در کسر اعتبار پیش آمد. لطفاً دوباره تلاش کنید.");
-            return;
-        }
-
         $images = $result['images'];
         $caption = "✅ ویرایش شد با مدل {$model['name']}\n💰 هزینه: {$cost} اعتبار";
 
+        $allSent = true;
         foreach ($images as $url) {
-            $this->baleClient->sendPhoto($chatId, $url, $caption);
+            $response = $this->baleClient->sendPhoto($chatId, $url, $caption);
+            if (!isset($response['ok']) || $response['ok'] !== true) {
+                $allSent = false;
+                Logger::error('Img2ImgHandler: sendPhoto failed', [
+                    'user_id' => $userId,
+                    'url'     => $url,
+                ]);
+            }
             $caption = null;
         }
 
+        if ($allSent) {
+            $deducted = CreditService::deduct($internalId, $cost, $referenceId);
+            if (!$deducted) {
+                Logger::error('Img2ImgHandler: credit deduction failed', [
+                    'user_id'      => $internalId,
+                    'amount'       => $cost,
+                    'reference_id' => $referenceId,
+                ]);
+            }
+        }
+
         $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'img2img', 'success', $referenceId);
+
+        Database::getInstance()->query(
+            "UPDATE bot_state SET state='idle', updated_at=NOW() WHERE user_id=?",
+            [$userId]
+        );
+
         $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ویرایش شد!", $this->getMainMenuKeyboard());
     }
 
-    private function logAiRequest(int $userId, int $modelId, string $prompt, string $imageType, string $status, string $referenceId): void
+    private function downloadPhotoAsBase64(string $fileId): ?string
     {
         try {
-            $db = Database::getInstance();
-            $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, ?, ?)",
-                [$userId, $modelId, $prompt, $imageType, $status, $referenceId]
-            );
+            $fileInfo = $this->baleClient->getFile($fileId);
+            if (!$fileInfo || !isset($fileInfo['file_path'])) {
+                Logger::error('Img2ImgHandler: getFile failed', ['user_id' => 0, 'file_id' => $fileId]);
+                return null;
+            }
+            $fileUrl = $fileInfo['file_path'];
+            $imageData = @file_get_contents($fileUrl);
+            if ($imageData === false) return null;
+            return base64_encode($imageData);
         } catch (\Throwable $e) {
-            Logger::error('Img2ImgHandler: logAiRequest failed', ['error' => $e->getMessage()]);
-        }
-    }
-
-    private function storePhotoData(int $userId, string $base64, string $tempFile): void
-    {
-        try {
-            $db = Database::getInstance();
-            $db->query(
-                "INSERT INTO bot_state (user_id, state, photo_base64, extra_data, updated_at)
-                 VALUES (?, 'awaiting_edit_prompt', ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE photo_base64 = ?, extra_data = ?, updated_at = NOW()",
-                [$userId, $base64, $tempFile, $base64, $tempFile]
-            );
-        } catch (\Throwable $e) {
-            Logger::error('Img2ImgHandler: storePhotoData failed', ['user_id' => $userId, 'error' => $e->getMessage()]);
-        }
-    }
-
-    private function getStoredPhotoData(int $userId): ?array
-    {
-        try {
-            $db = Database::getInstance();
-            $stmt = $db->query(
-                "SELECT photo_base64, extra_data FROM bot_state WHERE user_id = ? AND state = 'awaiting_edit_prompt'",
-                [$userId]
-            );
-            $row = $stmt->fetch();
-            if (!$row) return null;
-            return [
-                'base64'    => $row['photo_base64'],
-                'temp_file' => $row['extra_data'],
-            ];
-        } catch (\Throwable $e) {
+            Logger::error('Img2ImgHandler: downloadPhoto failed', ['error' => $e->getMessage()]);
             return null;
-        }
-    }
-
-    private function clearPhotoData(int $userId): void
-    {
-        try {
-            $db = Database::getInstance();
-            $db->query("UPDATE bot_state SET photo_base64 = NULL, extra_data = NULL WHERE user_id = ?", [$userId]);
-        } catch (\Throwable $e) {
-            // Silent
         }
     }
 
@@ -258,16 +214,18 @@ class Img2ImgHandler extends BaseHandler
         }
     }
 
-    private function setUserState(int $userId, string $state): void
+    private function getStoredPhotoData(int $userId): ?string
     {
         try {
             $db = Database::getInstance();
-            $db->query(
-                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
-                [$userId, $state, $state]
+            $stmt = $db->query(
+                "SELECT photo_base64 FROM bot_state WHERE user_id = ? AND state = 'awaiting_edit_prompt'",
+                [$userId]
             );
+            $row = $stmt->fetch();
+            return $row['photo_base64'] ?? null;
         } catch (\Throwable $e) {
-            Logger::error('Img2ImgHandler: setUserState failed', ['user_id' => $userId, 'state' => $state, 'error' => $e->getMessage()]);
+            return null;
         }
     }
 
@@ -275,7 +233,7 @@ class Img2ImgHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$userId]);
+            $db->query("UPDATE bot_state SET photo_base64 = NULL, state = 'idle' WHERE user_id = ?", [$userId]);
         } catch (\Throwable $e) {
             // Silent
         }
@@ -285,11 +243,24 @@ class Img2ImgHandler extends BaseHandler
     {
         return [
             'keyboard' => [
-                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼️ ویرایش عکس"]],
+                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼 ویرایش عکس"]],
                 [['text' => "👤 حساب من"], ['text' => "💳 شارژ اعتبار"]],
                 [['text' => "❓ راهنما"]]
             ],
             'resize_keyboard' => true
         ];
+    }
+
+    private function logAiRequest(int $userId, int $modelId, string $prompt, string $imageType, string $status, string $referenceId): void
+    {
+        try {
+            $db = Database::getInstance();
+            $db->query(
+                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, ?, ?)",
+                [$userId, $modelId, $prompt, $imageType, $status, $referenceId]
+            );
+        } catch (\Throwable $e) {
+            Logger::error('Img2ImgHandler: logAiRequest failed', ['error' => $e->getMessage()]);
+        }
     }
 }
