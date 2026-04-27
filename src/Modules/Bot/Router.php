@@ -14,6 +14,13 @@ use Database\Database;
 
 class Router
 {
+    private $baleClient;
+
+    public function __construct()
+    {
+        $this->baleClient = new BaleClient();
+    }
+
     private const CALLBACK_MAP = [
         'buy_credit'     => BuyCreditHandler::class,
         'generate_image' => ImageHandler::class,
@@ -44,7 +51,7 @@ class Router
         $normalizedText = mb_strtolower($text);
 
         if ($normalizedText === '/start') {
-            return new StartHandler($update);
+            return new StartHandler($this->baleClient);
         }
 
         // 3. State-based routing
@@ -52,7 +59,7 @@ class Router
             $state = $this->getUserState($update->getUserId());
             if ($state !== null && isset(self::STATE_HANDLER_MAP[$state])) {
                 $handlerClass = self::STATE_HANDLER_MAP[$state];
-                return new $handlerClass($update);
+                return new $handlerClass($this->baleClient);
             }
         }
 
@@ -67,16 +74,16 @@ class Router
 
         if (isset($buttonMap[$text])) {
             $handlerClass = $buttonMap[$text];
-            return new $handlerClass($update);
+            return new $handlerClass($this->baleClient);
         }
 
         // 5. Contact messages
         if ($update->getContact() !== null) {
-            return new MessageHandler($update);
+            return new MessageHandler($this->baleClient);
         }
 
         // 6. Fallback
-        return new MessageHandler($update);
+        return new MessageHandler($this->baleClient);
     }
 
     /**
@@ -90,18 +97,18 @@ class Router
         foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_')) continue;
             if ($callbackData === $key) {
-                return new $handlerClass($update);
+                return new $handlerClass($this->baleClient);
             }
         }
 
         // Prefix matches (e.g. "plan_" matches "plan_basic")
         foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_') && str_starts_with($callbackData, $key)) {
-                return new $handlerClass($update);
+                return new $handlerClass($this->baleClient);
             }
         }
 
-        return new UnknownUpdateHandler($update);
+        return new UnknownUpdateHandler($this->baleClient);
     }
 
     private function getUserState(?int $userId): ?string
