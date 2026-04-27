@@ -57,6 +57,17 @@ class Database
         return $stmt;
     }
 
+    /**
+     * Prepare a SQL statement for execution.
+     *
+     * @param string $sql
+     * @return \PDOStatement
+     */
+    public function prepare(string $sql): \PDOStatement
+    {
+        return $this->connection->prepare($sql);
+    }
+
     // Method to get the raw PDO object if needed for advanced operations
     public function pdo()
     {
