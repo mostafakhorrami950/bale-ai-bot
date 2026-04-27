@@ -19,14 +19,14 @@ class BuyCreditHandler extends BaseHandler
         ['plan_id' => 'premium',  'name' => 'حرفه‌ای',   'credits' => 500, 'price_rial' => 449000],
     ];
 
-    public function handle(): void
+    public function handle($update): void
     {
         try {
-            $chatId  = $this->update->getChatId();
-            $userId  = $this->update->getUserId();
-            $text    = $this->update->getText();
-            $isCallback = $this->update->isCallback();
-            $callbackData = $this->update->getCallbackData();
+            $chatId  = $update->getChatId();
+            $userId  = $update->getUserId();
+            $text    = $update->getText();
+            $isCallback = $update->isCallback();
+            $callbackData = $update->getCallbackData();
 
             // Handle keyboard button "💳 شارژ اعتبار"
             if ($text === '💳 شارژ اعتبار') {
@@ -52,11 +52,11 @@ class BuyCreditHandler extends BaseHandler
             $this->sendMessage("🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
         } catch (\Throwable $e) {
             Logger::error('BuyCreditHandler exception', [
-                'user_id' => $this->update->getUserId(),
+                'user_id' => $userId,
                 'error'   => $e->getMessage(),
                 'trace'   => $e->getTraceAsString(),
             ]);
-            $this->sendMessage("⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($chatId ?? 0, "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
         }
     }
 
@@ -95,7 +95,7 @@ class BuyCreditHandler extends BaseHandler
             ];
         }
 
-        $this->bale->sendMessage($chatId, $message, $keyboard);
+        $this->baleClient->sendMessage($chatId, $message, $keyboard);
     }
 
     /**

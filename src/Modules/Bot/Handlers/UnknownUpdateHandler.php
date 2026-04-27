@@ -6,11 +6,9 @@ use Modules\Bot\BaleClient;
 
 class UnknownUpdateHandler extends BaseHandler
 {
-    protected BaleClient $baleClient;
-
     public function __construct(BaleClient $baleClient)
     {
-        $this->baleClient = $baleClient;
+        parent::__construct($baleClient);
     }
 
     public function handle($update): void
