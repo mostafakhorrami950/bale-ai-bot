@@ -44,6 +44,7 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 
 // 3. Create Update object
 $update = UpdateFactory::create($updateData);
+file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " RAW DATA: " . json_encode($updateData, JSON_UNESCAPED_UNICODE) . "\n", FILE_APPEND);
 debug_log("Webhook received", ['type' => $update->isMessage() ? 'message' : ($update->isCallback() ? 'callback' : 'other'), 'user_id' => $update->getUserId() ?? 'none']);
 if (!$update || !$update->getChatId()) {
     bot_log('ERROR', 'Invalid Update or Missing Chat ID', ['data' => $updateData]);
@@ -63,6 +64,8 @@ if ($update->isDuplicate()) {
 }
 
 // 6. Route & Dispatch
+$text = $update->getText() ?? 'NULL';
+file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " PARSED TEXT: " . $text . "\n", FILE_APPEND);
 try {
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($update);
