@@ -40,14 +40,19 @@ class Router
      */
     public function resolve($update)
     {
-        // 1. Get text safely
         $text = $update->getText() ?? '';
         error_log("DEBUG ROUTER: text=[" . $text . "]");
 
-        // 2. Commands
+        // 1. Commands
         if ($text === '/start' || str_starts_with($text, '/start')) {
             error_log("DEBUG ROUTER: -> StartHandler");
             return new StartHandler($this->baleClient);
+        }
+
+        // 2. Contact messages (phone sharing) — MUST be checked BEFORE isCallback()
+        if ($update->getContact() !== null) {
+            error_log("DEBUG ROUTER: contact=[" . json_encode($update->getContact()) . "] -> MessageHandler");
+            return new MessageHandler($this->baleClient);
         }
 
         // 3. Callback queries
@@ -55,7 +60,6 @@ class Router
             $data = $update->getCallbackData() ?? '';
             error_log("DEBUG ROUTER: callback=[" . $data . "]");
             
-            // Map callback data to handlers
             $map = [
                 'buy_credit' => 'BuyCreditHandler',
                 'generate_image' => 'ImageHandler',
@@ -74,19 +78,13 @@ class Router
             return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 4. Contact messages (phone sharing)
-        if ($update->isMessage() && $update->getContact() !== null) {
-            error_log("DEBUG ROUTER: -> MessageHandler (contact)");
-            return new MessageHandler($this->baleClient);
-        }
-
-        // 5. Regular message
+        // 4. Regular message
         if ($update->isMessage() && $text !== '') {
             error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 6. Fallback
+        // 5. Fallback
         error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
         return new UnknownUpdateHandler($this->baleClient);
     }
