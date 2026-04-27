@@ -1,0 +1,11 @@
+
+debug_log.txt
+*.log
+vendor/
+node_modules/
+.DS_Store
+Thumbs.db
+*.sqlite3
+ai_chatbot.sqlite3
+schema_migration_*.sql
+test_*.php

@@ -1,0 +1,49 @@
+# ================================================================
+# I6: Security hardening for production
+# ================================================================
+
+# 1. Deny direct access to sensitive files
+<FilesMatch "\.(env|sql|md|log|ini|lock|example)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# 2. Deny access to src/ directory (PHP classes) via web
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Block direct access to src/ directory
+    RewriteRule ^src/ - [F,L]
+    
+    # Block access to schema*.sql files
+    RewriteRule schema.*\.sql - [F,L]
+    
+    # Block access to .env from web
+    RewriteRule \.env$ - [F,L]
+    
+    # Block access to test files
+    RewriteRule test_.*\.php$ - [F,L]
+    
+    # Block directory listing
+    Options -Indexes
+</IfModule>
+
+# 3. Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# 4. Deny access to hidden files (starting with .)
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# 5. PHP settings (if allowed)
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_flag log_errors on
+</IfModule>
