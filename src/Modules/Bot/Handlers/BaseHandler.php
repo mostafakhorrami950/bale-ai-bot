@@ -19,7 +19,7 @@ abstract class BaseHandler
         $this->userModel = new User();
     }
 
-    abstract public function handle(): void;
+    abstract public function handle($update): void;
 
     protected function sendMessage(string $text, ?array $keyboard = null)
     {
