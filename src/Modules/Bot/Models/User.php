@@ -16,9 +16,9 @@ class User
         $this->db = Database::getInstance();
     }
 
-    public function getByBaleId(int $telegramId)
+    public function getByBaleId(int $baleId)
     {
-        $stmt = $this->db->query("SELECT * FROM users WHERE telegram_id = ?", [$telegramId]);
+        $stmt = $this->db->query("SELECT * FROM users WHERE bale_id = ?", [$baleId]);
         return $stmt->fetch();
     }
 
@@ -27,10 +27,10 @@ class User
      * M1: Added INSERT for new users (was UPDATE-only).
      * M3: Wrapped in try-catch, returns false on failure.
      */
-    public function register(int $telegramId, array $data): bool
+    public function register(int $baleId, array $data): bool
     {
         try {
-            $user = self::findByBaleId($telegramId);
+            $user = self::findByBaleId($baleId);
             
             if ($user) {
                 // User exists — UPDATE
@@ -40,20 +40,20 @@ class User
                         last_name = ?, 
                         is_registered = 1, 
                         last_active_at = CURRENT_TIMESTAMP 
-                        WHERE telegram_id = ?";
+                        WHERE bale_id = ?";
                 $this->db->query($sql, [
                     $data['phone_number'],
                     $data['first_name'],
                     $data['last_name'],
-                    $telegramId
+                    $baleId
                 ]);
             } else {
                 // M1: New user — INSERT with initial credits from config
                 $initialCredits = (float)(Config::get('FREE_CREDITS_ON_START', 15));
-                $sql = "INSERT INTO users (telegram_id, phone_number, first_name, last_name, is_registered, credits) 
+                $sql = "INSERT INTO users (bale_id, phone_number, first_name, last_name, is_registered, credits) 
                         VALUES (?, ?, ?, ?, 1, ?)";
                 $this->db->query($sql, [
-                    $telegramId,
+                    $baleId,
                     $data['phone_number'],
                     $data['first_name'],
                     $data['last_name'],
@@ -64,17 +64,17 @@ class User
             return true;
         } catch (\Throwable $e) {
             Logger::error('User::register failed', [
-                'telegram_id' => $telegramId,
+                'bale_id' => $baleId,
                 'error'   => $e->getMessage()
             ]);
             return false;
         }
     }
 
-    public static function findByBaleId(int $telegramId)
+    public static function findByBaleId(int $baleId)
     {
         $db = Database::getInstance();
-        $stmt = $db->query("SELECT * FROM users WHERE telegram_id = ?", [$telegramId]);
+        $stmt = $db->query("SELECT * FROM users WHERE bale_id = ?", [$baleId]);
         return $stmt->fetch();
     }
 
@@ -85,7 +85,7 @@ class User
     public static function createOrUpdate(array $data)
     {
         $db = Database::getInstance();
-        $user = self::findByBaleId($data['telegram_id']);
+        $user = self::findByBaleId($data['bale_id']);
         $initialCredits = (float)(Config::get('FREE_CREDITS_ON_START', 15));
 
         if ($user) {
@@ -96,22 +96,22 @@ class User
                     phone_number = COALESCE(?, phone_number), 
                     is_registered = CASE WHEN ? IS NOT NULL OR is_registered = 1 THEN 1 ELSE 0 END,
                     last_active_at = CURRENT_TIMESTAMP 
-                    WHERE telegram_id = ?";
+                    WHERE bale_id = ?";
             $db->query($sql, [
                 $data['first_name'],
                 $data['last_name'],
                 $data['username'],
                 $data['phone_number'] ?? null,
                 $data['phone_number'] ?? null,
-                $data['telegram_id']
+                $data['bale_id']
             ]);
-            return self::findByBaleId($data['telegram_id']);
+            return self::findByBaleId($data['bale_id']);
         } else {
             $isRegistered = ($data['phone_number'] ?? null) ? 1 : 0;
-            $sql = "INSERT INTO users (telegram_id, first_name, last_name, username, phone_number, is_registered, credits) 
+            $sql = "INSERT INTO users (bale_id, first_name, last_name, username, phone_number, is_registered, credits) 
                     VALUES (?, ?, ?, ?, ?, ?, ?)";
             $db->query($sql, [
-                $data['telegram_id'],
+                $data['bale_id'],
                 $data['first_name'],
                 $data['last_name'],
                 $data['username'],
@@ -119,13 +119,13 @@ class User
                 $isRegistered,
                 $initialCredits
             ]);
-            return self::findByBaleId($data['telegram_id']);
+            return self::findByBaleId($data['bale_id']);
         }
     }
 
-    public static function isRegistered(int $telegramId): bool
+    public static function isRegistered(int $baleId): bool
     {
-        $user = self::findByBaleId($telegramId);
+        $user = self::findByBaleId($baleId);
         return $user && $user['is_registered'] == 1;
     }
 
