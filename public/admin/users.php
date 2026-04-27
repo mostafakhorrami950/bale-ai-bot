@@ -14,13 +14,37 @@ $message = '';
 $search = $_GET['search'] ?? '';
 $searchParam = "%{$search}%";
 
+// Safe query: handle missing user_profiles table gracefully
+$hasProfiles = false;
+try {
+    $db->query("SELECT 1 FROM user_profiles LIMIT 1");
+    $hasProfiles = true;
+} catch (\Throwable $e) {
+    $hasProfiles = false;
+}
+
+$userSelect = $hasProfiles
+    ? "SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id"
+    : "SELECT u.*, u.bale_user_id AS fallback_name FROM users u";
+
+$userWhere = $hasProfiles
+    ? "WHERE u.bale_user_id LIKE ? OR up.username LIKE ? OR up.first_name LIKE ? OR u.phone_number LIKE ?"
+    : "WHERE u.bale_user_id LIKE ? OR u.phone_number LIKE ?";
+
 if (!empty($search)) {
-    $users = $db->query(
-        "SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.bale_user_id LIKE ? OR up.username LIKE ? OR up.first_name LIKE ? OR u.phone_number LIKE ? ORDER BY u.last_active_at DESC",
-        [$searchParam, $searchParam, $searchParam, $searchParam]
-    )->fetchAll();
+    if ($hasProfiles) {
+        $users = $db->query(
+            "$userSelect $userWhere ORDER BY u.last_active_at DESC",
+            [$searchParam, $searchParam, $searchParam, $searchParam]
+        )->fetchAll();
+    } else {
+        $users = $db->query(
+            "$userSelect $userWhere ORDER BY u.last_active_at DESC",
+            [$searchParam, $searchParam]
+        )->fetchAll();
+    }
 } else {
-    $users = $db->query("SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id ORDER BY u.last_active_at DESC")->fetchAll();
+    $users = $db->query("$userSelect ORDER BY u.last_active_at DESC")->fetchAll();
 }
 
 ob_start();

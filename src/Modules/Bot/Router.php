@@ -55,7 +55,22 @@ class Router
             return new MessageHandler($this->baleClient);
         }
 
-        // 3. Callback queries
+        // 3. Menu text buttons — MOVED BEFORE callback check
+        $menuRoutes = [
+            '🎨 ساخت تصویر' => 'ImageHandler',
+            '🖼 ویرایش عکس' => 'Img2ImgHandler',
+            '💳 شارژ اعتبار' => 'BuyCreditHandler',
+            '👤 حساب من' => 'ImageHandler',
+            '❓ راهنما' => 'ImageHandler',
+        ];
+
+        if (array_key_exists($text, $menuRoutes)) {
+            $class = 'Modules\\Bot\\Handlers\\' . $menuRoutes[$text];
+            error_log("DEBUG ROUTER: menu text=[" . $text . "] -> " . $menuRoutes[$text]);
+            return new $class($this->baleClient);
+        }
+
+        // 4. Callback queries
         if ($update->isCallback()) {
             $data = $update->getCallbackData() ?? '';
             error_log("DEBUG ROUTER: callback=[" . $data . "]");
@@ -76,21 +91,6 @@ class Router
             }
             
             return new UnknownUpdateHandler($this->baleClient);
-        }
-
-        // 4. Menu text buttons (ReplyKeyboardMarkup labels)
-        $menuRoutes = [
-            '🎨 ساخت تصویر' => 'ImageHandler',
-            '🖼 ویرایش عکس' => 'Img2ImgHandler',
-            '💳 شارژ اعتبار' => 'BuyCreditHandler',
-            '👤 حساب من' => 'ImageHandler',  // Temporary: use ImageHandler or create AccountHandler later
-            '❓ راهنما' => 'ImageHandler',    // Temporary: use ImageHandler or create HelpHandler later
-        ];
-
-        if (array_key_exists($text, $menuRoutes)) {
-            $class = 'Modules\\Bot\\Handlers\\' . $menuRoutes[$text];
-            error_log("DEBUG ROUTER: menu text=[" . $text . "] -> " . $menuRoutes[$text]);
-            return new $class($this->baleClient);
         }
 
         // 5. Regular message

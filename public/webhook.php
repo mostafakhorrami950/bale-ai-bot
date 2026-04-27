@@ -2,7 +2,11 @@
 
 require_once __DIR__ . '/error_handler.php';
 
-// Clear opcache to ensure latest file changes are picked up
+// Force reload all cached files by touching Router.php
+$routerFile = __DIR__ . '/../src/Modules/Bot/Router.php';
+if (file_exists($routerFile)) {
+    touch($routerFile);
+}
 if (function_exists('opcache_reset')) {
     opcache_reset();
 }
