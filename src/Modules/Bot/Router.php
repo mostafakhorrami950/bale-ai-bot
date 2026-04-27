@@ -49,7 +49,7 @@ class Router
             return new StartHandler($this->baleClient);
         }
 
-        // 2. Contact messages (phone sharing) — MUST be checked BEFORE isCallback()
+        // 2. Contact messages (phone sharing)
         if ($update->getContact() !== null) {
             error_log("DEBUG ROUTER: contact=[" . json_encode($update->getContact()) . "] -> MessageHandler");
             return new MessageHandler($this->baleClient);
@@ -78,13 +78,28 @@ class Router
             return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 4. Regular message
+        // 4. Menu text buttons (ReplyKeyboardMarkup labels)
+        $menuRoutes = [
+            '🎨 ساخت تصویر' => 'ImageHandler',
+            '🖼 ویرایش عکس' => 'Img2ImgHandler',
+            '💳 شارژ اعتبار' => 'BuyCreditHandler',
+            '👤 حساب من' => 'ImageHandler',  // Temporary: use ImageHandler or create AccountHandler later
+            '❓ راهنما' => 'ImageHandler',    // Temporary: use ImageHandler or create HelpHandler later
+        ];
+
+        if (array_key_exists($text, $menuRoutes)) {
+            $class = 'Modules\\Bot\\Handlers\\' . $menuRoutes[$text];
+            error_log("DEBUG ROUTER: menu text=[" . $text . "] -> " . $menuRoutes[$text]);
+            return new $class($this->baleClient);
+        }
+
+        // 5. Regular message
         if ($update->isMessage() && $text !== '') {
             error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 5. Fallback
+        // 6. Fallback
         error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
         return new UnknownUpdateHandler($this->baleClient);
     }
