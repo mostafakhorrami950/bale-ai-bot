@@ -49,7 +49,7 @@ class Router
         $rawText = $update->getText();
         $text = is_string($rawText) ? trim($rawText) : '';
         $normalizedText = mb_strtolower($text);
-        error_log("DEBUG ROUTER: isCallback=" . ($update->isCallback() ? 'true' : 'false') . " isMessage=" . ($update->isMessage() ? 'true' : 'false') . " rawText='" . $rawText . "' normalized='" . $normalizedText . "'");
+        file_put_contents(__DIR__ . '/../../../public/debug.txt', "ROUTER DEBUG: isCallback=" . ($update->isCallback() ? 'TRUE' : 'FALSE') . " isMessage=" . ($update->isMessage() ? 'TRUE' : 'FALSE') . " rawText='" . str_replace(["\r", "\n"], ['\r', '\n'], $rawText) . "' normalized='" . $normalizedText . "'\n", FILE_APPEND);
 
         if ($normalizedText === '/start') {
             return new StartHandler($this->baleClient);
