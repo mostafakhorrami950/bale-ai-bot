@@ -45,8 +45,9 @@ class Router
             return $this->resolveCallback($update);
         }
 
-        // 2. Exact command matching
-        $text = trim($update->getText());
+        // 2. Exact command matching — guard against null text
+        $rawText = $update->getText();
+        $text = is_string($rawText) ? trim($rawText) : '';
         $normalizedText = mb_strtolower($text);
 
         if ($normalizedText === '/start') {
