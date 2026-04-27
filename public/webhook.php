@@ -64,16 +64,12 @@ if ($update->isDuplicate()) {
 
 // 6. Route & Dispatch
 try {
-    $router = new Router();
-    $handlerClass = $router->resolve($update);
-    
     $dispatcher = new Dispatcher($update);
-    $dispatcher->dispatch($handlerClass);
+    $dispatcher->dispatch($update);
     debug_log("Dispatch completed", ['update_id' => $update->getId() ?? 'unknown']);
     error_log("DEBUG: Dispatch completed. Update ID: " . ($update->getId() ?? 'unknown'));
     
     $update->markAsProcessed();
-    Logger::logUpdate($update->getId(), $update->getUserId(), "Handled by $handlerClass");
 
 } catch (\Throwable $e) {
     bot_log('ERROR', 'Dispatch error', [

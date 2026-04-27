@@ -7,62 +7,30 @@ use Database\Logger;
 class Dispatcher
 {
     private $update;
+    private $router;
 
     public function __construct(Update $update)
     {
         $this->update = $update;
+        $this->router = new Router();
     }
 
     /**
-     * Dispatches the update to the resolved handler class.
+     * Dispatches the update to the resolved handler.
      */
-    public function dispatch(string $handlerClass): void
+    public function dispatch($update): void
     {
-        error_log("DEBUG: Dispatcher::dispatch() STARTED. Update type: " . gettype($this->update));
+        error_log("DEBUG: Dispatcher::dispatch() STARTED. Update type: " . gettype($update));
+
         try {
-            if (!class_exists($handlerClass)) {
-                throw new \Exception("Handler class $handlerClass not found");
-            }
-
-            $handler = new $handlerClass($this->update);
+            $handler = $this->router->resolve($update);
             error_log("DEBUG: Dispatcher about to execute handler: " . get_class($handler));
-
-            if (!method_exists($handler, 'handle')) {
-                throw new \Exception("Handle method not found in $handlerClass");
-            }
-
-            $handler->handle();
+            $handler->handle($update);
             error_log("DEBUG: Dispatcher handler executed successfully");
-
         } catch (\Throwable $e) {
             $msg = date('[Y-m-d H:i:s]') . " DISPATCHER FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine() . "\n";
             file_put_contents(__DIR__ . '/../../../public/debug.txt', $msg, FILE_APPEND);
             error_log("DISPATCHER FATAL: " . $e->getMessage());
-        }
-    }
-
-    private function handleFailure(\Throwable $e, string $handlerClass): void
-    {
-        // Log error with detail
-        $errorMsg = "Dispatcher Error in $handlerClass: " . $e->getMessage();
-        Logger::logUpdate(
-            $this->update->getId() ?? 0, 
-            $this->update->getUserId() ?? 0, 
-            $errorMsg
-        );
-
-        // Fail-safe user response
-        try {
-            $chatId = $this->update->getChatId();
-            if ($chatId) {
-                $baleClient = new BaleClient();
-                $baleClient->sendMessage(
-                    $chatId,
-                    "⚠️ متأسفانه مشکلی در پردازش درخواست شما پیش آمد. لطفاً دوباره تلاش کنید."
-                );
-            }
-        } catch (\Exception $fallbackError) {
-            // Complete silence if even fallback fails, but we don't break the webhook
         }
     }
 }

@@ -8,118 +8,105 @@ use Modules\Bot\Handlers\ImageHandler;
 use Modules\Bot\Handlers\Img2ImgHandler;
 use Modules\Bot\Handlers\MessageHandler;
 use Modules\Bot\Handlers\StartHandler;
+use Modules\Bot\Handlers\BaseHandler;
 use Modules\Bot\Handlers\UnknownUpdateHandler;
 use Database\Database;
 
 class Router
 {
-    /**
-     * Map callback_data values to their handler classes.
-     */
     private const CALLBACK_MAP = [
-        'buy_credit'     => 'BuyCreditHandler',
-        'generate_image' => 'ImageHandler',
-        'edit_image'     => 'Img2ImgHandler',
-        // Plan selection callbacks (prefix match) → BuyCreditHandler
-        'plan_'          => 'BuyCreditHandler',
+        'buy_credit'     => BuyCreditHandler::class,
+        'generate_image' => ImageHandler::class,
+        'edit_image'     => Img2ImgHandler::class,
+        // Plan selection callbacks (prefix match)
+        'plan_'          => BuyCreditHandler::class,
     ];
 
-    /**
-     * Map bot_state values to the correct handler when user sends a text message.
-     */
     private const STATE_HANDLER_MAP = [
-        'awaiting_image_prompt' => 'ImageHandler',
-        'awaiting_edit_photo'   => 'Img2ImgHandler',
-        'awaiting_edit_prompt'  => 'Img2ImgHandler',
+        'awaiting_image_prompt' => ImageHandler::class,
+        'awaiting_edit_photo'   => Img2ImgHandler::class,
+        'awaiting_edit_prompt'  => Img2ImgHandler::class,
     ];
 
     /**
-     * Resolve the Update to the appropriate handler class name.
-     * I5: Check if callback is already answered before routing (via webhook early answer).
+     * Resolve the Update to the appropriate handler instance.
      */
-    public function resolve(Update $update): string
+    public function resolve(Update $update): BaseHandler
     {
-        // 1. Handle callback queries via CALLBACK_MAP
-        // (Callback is already answered early in webhook.php to remove loading state)
+        // 1. Handle callback queries
         if ($update->isCallback()) {
             return $this->resolveCallback($update);
         }
 
-        // 2. Exact command matching — guard against null text
+        // 2. Guard against null text
         $rawText = $update->getText();
         $text = is_string($rawText) ? trim($rawText) : '';
         $normalizedText = mb_strtolower($text);
 
         if ($normalizedText === '/start') {
-            return StartHandler::class;
+            return new StartHandler($update);
         }
 
-        // 3. State-based routing for messages (text or photo)
+        // 3. State-based routing
         if ($update->isMessage()) {
             $state = $this->getUserState($update->getUserId());
             if ($state !== null && isset(self::STATE_HANDLER_MAP[$state])) {
-                $handlerShort = self::STATE_HANDLER_MAP[$state];
-                return "Modules\\Bot\\Handlers\\{$handlerShort}";
+                $handlerClass = self::STATE_HANDLER_MAP[$state];
+                return new $handlerClass($update);
             }
         }
 
-        // 4. Main menu / known button mapping
+        // 4. Button mapping
         $buttonMap = [
-            '🎨 ساخت تصویر' => 'ImageHandler',
-            '👤 حساب من'    => 'MessageHandler',
-            '💳 شارژ اعتبار' => 'BuyCreditHandler',
-            '❓ راهنما'     => 'MessageHandler',
-            '🖼️ ویرایش عکس' => 'Img2ImgHandler',
+            '🎨 ساخت تصویر' => ImageHandler::class,
+            '👤 حساب من'    => MessageHandler::class,
+            '💳 شارژ اعتبار' => BuyCreditHandler::class,
+            '❓ راهنما'     => MessageHandler::class,
+            '🖼️ ویرایش عکس' => Img2ImgHandler::class,
         ];
 
         if (isset($buttonMap[$text])) {
-            $handlerShort = $buttonMap[$text];
-            return "Modules\\Bot\\Handlers\\{$handlerShort}";
+            $handlerClass = $buttonMap[$text];
+            return new $handlerClass($update);
         }
 
-        // 5. Contact messages (registration flow)
+        // 5. Contact messages
         if ($update->getContact() !== null) {
-            return MessageHandler::class;
+            return new MessageHandler($update);
         }
 
-        // 6. Fallback for unrecognized text
-        return MessageHandler::class;
+        // 6. Fallback
+        return new MessageHandler($update);
     }
 
     /**
-     * Resolve callback data to handler.
+     * Resolve callback data to handler instance.
      */
-    private function resolveCallback(Update $update): string
+    private function resolveCallback(Update $update): BaseHandler
     {
         $callbackData = $update->getCallbackData() ?? '';
 
-        // Check exact matches first
-        foreach (self::CALLBACK_MAP as $key => $handlerShort) {
-            // Skip prefix-only entries in exact match loop
+        // Exact matches first
+        foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_')) continue;
             if ($callbackData === $key) {
-                return "Modules\\Bot\\Handlers\\{$handlerShort}";
+                return new $handlerClass($update);
             }
         }
 
-        // Check prefix matches (e.g. "plan_" matches "plan_basic")
-        foreach (self::CALLBACK_MAP as $key => $handlerShort) {
+        // Prefix matches (e.g. "plan_" matches "plan_basic")
+        foreach (self::CALLBACK_MAP as $key => $handlerClass) {
             if (str_ends_with($key, '_') && str_starts_with($callbackData, $key)) {
-                return "Modules\\Bot\\Handlers\\{$handlerShort}";
+                return new $handlerClass($update);
             }
         }
 
-        // Fallback for unknown callbacks
-        return UnknownUpdateHandler::class;
+        return new UnknownUpdateHandler($update);
     }
 
-    /**
-     * Get user state from bot_state table.
-     */
     private function getUserState(?int $userId): ?string
     {
         if ($userId === null) return null;
-
         try {
             $db = Database::getInstance();
             $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
