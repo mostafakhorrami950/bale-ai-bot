@@ -243,6 +243,7 @@ class BaleClient
         }
 
         $result = json_decode($response, true);
+        error_log("DEBUG: Bale API Response: " . json_encode($result));
 
         if (!$result || !isset($result['ok'])) {
             $this->lastError = "Invalid JSON response";

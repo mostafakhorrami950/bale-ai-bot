@@ -60,6 +60,7 @@ try {
     
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($handlerClass);
+    error_log("DEBUG: Dispatch completed. Update ID: " . ($update->getId() ?? 'unknown'));
     
     $update->markAsProcessed();
     Logger::logUpdate($update->getId(), $update->getUserId(), "Handled by $handlerClass");

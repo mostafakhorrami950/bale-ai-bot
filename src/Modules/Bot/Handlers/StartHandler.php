@@ -13,6 +13,7 @@ class StartHandler extends BaseHandler
      */
     public function handle($update)
     {
+        error_log("DEBUG: StartHandler::handle() CALLED. Chat ID: " . ($update->getChatId() ?? 'none'));
         $chatId = $update->getChatId();
         $userId = $update->getUserId();
 
