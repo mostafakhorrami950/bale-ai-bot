@@ -7,41 +7,42 @@ use Database\Database;
 
 class MessageHandler extends BaseHandler
 {
-    public function handle(): void
+    public function handle($update): void
     {
         try {
-            $text = $this->update->getText();
-            $contact = $this->update->getContact();
+            $text = $update->getText();
+            $contact = $update->getContact();
 
             if ($contact) {
-                $this->handleContact($contact);
+                $this->handleContact($update, $contact);
                 return;
             }
 
             // Fallback for unrecognized text or simple interaction
-            $this->sendMessage("🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($update->getChatId(), "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
 
         } catch (Exception $e) {
             error_log("MessageHandler Exception: " . $e->getMessage());
-            $this->sendMessage("متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($update->getChatId(), "متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
         }
     }
 
-    private function handleContact(array $contact): void
+    private function handleContact($update, array $contact): void
     {
-        $baleId = $this->update->getChatId();
+        $baleId = $update->getChatId();
         $phoneNumber = $contact['phone_number'];
 
-        $saved = $this->userModel->register($baleId, [
+        $userModel = new \Modules\Bot\Models\User();
+        $saved = $userModel->register($baleId, [
             'phone_number' => $phoneNumber,
             'first_name' => $contact['first_name'] ?? '',
             'last_name' => $contact['last_name'] ?? ''
         ]);
 
         if ($saved) {
-            $this->sendMessage("✅ ثبت‌نام شما با موفقیت انجام شد!", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($baleId, "✅ ثبت‌نام شما با موفقیت انجام شد!", $this->getMainMenuKeyboard());
         } else {
-            $this->sendMessage("❌ متأسفانه در ثبت اطلاعات مشکلی پیش آمد.");
+            $this->baleClient->sendMessage($baleId, "❌ متأسفانه در ثبت اطلاعات مشکلی پیش آمد.");
         }
     }
 
