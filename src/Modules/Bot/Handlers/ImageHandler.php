@@ -35,7 +35,7 @@ class ImageHandler extends BaseHandler
                 return;
             }
 
-            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getPersistentKeyboard());
         } catch (\Throwable $e) {
             Logger::error('ImageHandler exception', [
                 'user_id' => $update->getUserId(),
@@ -159,7 +159,24 @@ class ImageHandler extends BaseHandler
         $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'text2img', 'success', $referenceId);
 
         $this->clearUserState($internalId);
-        $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ساخته شد!", $this->getMainMenuKeyboard());
+
+        // Send result and main menu inline keyboard
+        $inlineKeyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => "\xF0\x9F\x8E\xA8 \xD8\xB3\xD8\xA7\xD8\xAE\xD8\xAA \xD8\xAA\xD8\xB5\xD9\x88\xDB\x8C\xD8\xB1", 'callback_data' => 'generate_image'],
+                    ['text' => "\xF0\x9F\x96\xBC \xD9\x88\xDB\x8C\xD8\xB1\xD8\xA7\xDB\x8C\xD8\xB4 \xD8\xB9\xDA\xA9\xD8\xB3", 'callback_data' => 'edit_image']
+                ],
+                [
+                    ['text' => "\xF0\x9F\x91\xA4 \xD8\xAD\xD8\xB3\xD8\xA7\xD8\xA8 \xD9\x85\xD9\x86", 'callback_data' => 'account'],
+                    ['text' => "\xF0\x9F\x92\xB3 \xD8\xB4\xD8\xA7\xD8\xB1\xDA\x98 \xD8\xA7\xD8\xB9\xD8\xAA\xD8\xA8\xD8\xA7\xD8\xB1", 'callback_data' => 'buy_credit']
+                ],
+                [
+                    ['text' => "\xE2\x9D\x93 \xD8\xB1\xD8\xA7\xD9\x87\xD9\x86\xD9\x85\xD8\xA7", 'callback_data' => 'help']
+                ]
+            ]
+        ];
+        $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ساخته شد!", $inlineKeyboard);
     }
 
     private function logAiRequest(int $userId, int $modelId, string $prompt, string $imageType, string $status, string $referenceId): void
@@ -202,13 +219,11 @@ class ImageHandler extends BaseHandler
         }
     }
 
-    private function getMainMenuKeyboard(): array
+    private function getPersistentKeyboard(): array
     {
         return [
             'keyboard' => [
-                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼 ویرایش عکس"]],
-                [['text' => "👤 حساب من"], ['text' => "💳 شارژ اعتبار"]],
-                [['text' => "❓ راهنما"]]
+                [['text' => '/cancel'], ['text' => "\xD9\x85\xD9\x86\xD9\x88 \xD8\xA7\xD8\xB5\xD9\x84\xDB\x8C"]]
             ],
             'resize_keyboard' => true
         ];

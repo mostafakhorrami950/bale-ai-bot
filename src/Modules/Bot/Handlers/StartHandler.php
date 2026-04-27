@@ -3,6 +3,7 @@
 namespace Modules\Bot\Handlers;
 
 use Modules\Bot\Models\User;
+use Database\Database;
 
 class StartHandler extends BaseHandler
 {
@@ -13,21 +14,15 @@ class StartHandler extends BaseHandler
 
         error_log("DEBUG: StartHandler::handle() CALLED. Chat ID: " . ($chatId ?? 'none'));
 
-        if (!$chatId) {
-            return;
-        }
+        if (!$chatId) return;
 
         try {
-            // Check if user is registered
             $isRegistered = User::isRegistered($userId);
 
             if (!$isRegistered) {
-                // Ask for phone number
                 $keyboard = [
                     'keyboard' => [
-                        [
-                            ['text' => '📱 ارسال شماره', 'request_contact' => true]
-                        ]
+                        [['text' => "\xF0\x9F\x93\xB1 \xD8\xA7\xD8\xB1\xD8\xB3\xD8\xA7\xD9\x84 \xD8\xB4\xD9\x85\xD8\xA7\xD8\xB1\xD9\x87", 'request_contact' => true]]
                     ],
                     'resize_keyboard' => true,
                     'one_time_keyboard' => true
@@ -35,38 +30,56 @@ class StartHandler extends BaseHandler
 
                 $this->baleClient->sendMessage(
                     $chatId,
-                    "سلام! 👋\n\nبه ربات هوش مصنوعی خوش آمدید.\nبرای استفاده از خدمات، لطفاً شماره خود را تأیید کنید.",
+                    "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85! \xF0\x9F\x91\x8B\n\n\xD8\xA8\xD9\x87 \xD8\xB1\xD8\xA8\xD8\xA7\xD8\xAA \xD9\x87\xD9\x88\xD8\xB4 \xD9\x85\xD8\xB5\xD9\x86\xD9\x88\xD8\xB9\xDB\x8C \xD8\xAE\xD9\x88\xD8\xB4 \xD8\xA2\xD9\x85\xD8\xAF\xDB\x8C\xD8\xAF.\n\xD8\xA8\xD8\xB1\xD8\xA7\xDB\x8C \xD8\xA7\xD8\xB3\xD8\xAA\xD9\x81\xD8\xA7\xD8\xAF\xD9\x87 \xD8\xA7\xD8\xB2 \xD8\xAE\xD8\xAF\xD9\x85\xD8\xA7\xD8\xAA\xD8\x8C \xD9\x84\xD8\xB7\xD9\x81\xD8\xA7\xD9\x8B \xD8\xB4\xD9\x85\xD8\xA7\xD8\xB1\xD9\x87 \xD8\xAE\xD9\x88\xD8\xAF \xD8\xB1\xD8\xA7 \xD8\xAA\xD8\xA3\xDB\x8C\xDB\x8C\xD8\xAF \xD9\x83\xD9\x86\xDB\x8C\xD8\xAF.",
                     $keyboard
                 );
             } else {
-                // User already registered — show main menu
-                $keyboard = [
-                    'keyboard' => [
-                        [
-                            ['text' => '🎨 ساخت تصویر'],
-                            ['text' => '🖼 ویرایش عکس']
-                        ],
-                        [
-                            ['text' => '💳 شارژ اعتبار'],
-                            ['text' => '👤 حساب من']
-                        ]
-                    ],
-                    'resize_keyboard' => true,
-                    'one_time_keyboard' => false
-                ];
-
-                $this->baleClient->sendMessage(
-                    $chatId,
-                    "سلام مجدد! 👋\nچه کاری میتونم برات انجام بدم؟",
-                    $keyboard
-                );
+                $this->showMainMenu($chatId);
             }
         } catch (\Exception $e) {
             error_log("StartHandler ERROR: " . $e->getMessage());
-            $this->baleClient->sendMessage(
-                $chatId,
-                "متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید."
-            );
+            $this->baleClient->sendMessage($chatId, "\xD9\x85\xD8\xAA\xD8\xA3\xD8\xB3\xD9\x81\xD8\xA7\xD9\x86\xD9\x87 \xD9\x85\xD8\xB4\xDA\xA9\xD9\x84\xDB\x8C \xD9\xBE\xDB\x8C\xD8\xB4 \xD8\xA2\xD9\x85\xD8\xAF. \xD9\x84\xD8\xB7\xD9\x81\xD8\xA7\xD9\x8B \xD8\xAF\xD9\x88\xD8\xA8\xD8\xA7\xD8\xB1\xD9\x87 \xD8\xAA\xD9\x84\xD8\xA7\xD8\xB4 \xDA\xA9\xD9\x86\xDB\x8C\xD8\xAF.");
         }
+    }
+
+    /**
+     * Show main menu with persistent reply keyboard and inline action buttons.
+     */
+    public function showMainMenu(int $chatId): void
+    {
+        // 1. First, set the persistent reply keyboard (/cancel and main menu)
+        $replyKeyboard = [
+            'keyboard' => [
+                [['text' => '/cancel'], ['text' => "\xD9\x85\xD9\x86\xD9\x88 \xD8\xA7\xD8\xB5\xD9\x84\xDB\x8C"]]
+            ],
+            'resize_keyboard' => true
+        ];
+        $this->baleClient->sendMessage(
+            $chatId,
+            "\xD8\xB3\xD9\x84\xD8\xA7\xD9\x85 \xD9\x85\xD8\xAC\xD8\xAF\xD8\xAF! \xF0\x9F\x91\x8B\n\xDA\x86\xD9\x87 \xDA\xA9\xD8\xA7\xD8\xB1\xDB\x8C \xD9\x85\xDB\x8C\xD8\xAA\xD9\x88\xD9\x86\xD9\x85 \xD8\xA8\xD8\xB1\xD8\xA7\xD8\xAA \xD8\xA7\xD9\x86\xD8\xAC\xD8\xA7\xD9\x85 \xD8\xA8\xD8\xAF\xD9\x85\xD8\x9F",
+            $replyKeyboard
+        );
+
+        // 2. Send inline keyboard with main menu actions
+        $inlineKeyboard = [
+            'inline_keyboard' => [
+                [
+                    ['text' => "\xF0\x9F\x8E\xA8 \xD8\xB3\xD8\xA7\xD8\xAE\xD8\xAA \xD8\xAA\xD8\xB5\xD9\x88\xDB\x8C\xD8\xB1", 'callback_data' => 'generate_image'],
+                    ['text' => "\xF0\x9F\x96\xBC \xD9\x88\xDB\x8C\xD8\xB1\xD8\xA7\xDB\x8C\xD8\xB4 \xD8\xB9\xDA\xA9\xD8\xB3", 'callback_data' => 'edit_image']
+                ],
+                [
+                    ['text' => "\xF0\x9F\x91\xA4 \xD8\xAD\xD8\xB3\xD8\xA7\xD8\xA8 \xD9\x85\xD9\x86", 'callback_data' => 'account'],
+                    ['text' => "\xF0\x9F\x92\xB3 \xD8\xB4\xD8\xA7\xD8\xB1\xDA\x98 \xD8\xA7\xD8\xB9\xD8\xAA\xD8\xA8\xD8\xA7\xD8\xB1", 'callback_data' => 'buy_credit']
+                ],
+                [
+                    ['text' => "\xE2\x9D\x93 \xD8\xB1\xD8\xA7\xD9\x87\xD9\x86\xD9\x85\xD8\xA7", 'callback_data' => 'help']
+                ]
+            ]
+        ];
+        $this->baleClient->sendMessage(
+            $chatId,
+            "\xD8\xA7\xD8\xB2 \xD8\xAF\xDA\xA9\xD9\x85\xD9\x87\xE2\x80\x8C\xD9\x87\xD8\xA7\xDB\x8C \xD8\xB2\xDB\x8C\xD8\xB1 \xD8\xA7\xD9\x86\xD8\xAA\xD8\xAE\xD8\xA7\xD8\xA8 \xDA\xA9\xD9\x86\xDB\x8C\xD8\xAF:",
+            $inlineKeyboard
+        );
     }
 }
