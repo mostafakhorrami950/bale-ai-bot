@@ -91,12 +91,12 @@ class Router
      */
     private function resolveCallback(Update $update): string
     {
-        $callbackData = $update->getCallbackData();
+        $callbackData = $update->getCallbackData() ?? '';
 
         // Check exact matches first
         foreach (self::CALLBACK_MAP as $key => $handlerShort) {
             // Skip prefix-only entries in exact match loop
-            if (substr($key, -1) === '_') continue;
+            if (str_ends_with($key, '_')) continue;
             if ($callbackData === $key) {
                 return "Modules\\Bot\\Handlers\\{$handlerShort}";
             }
@@ -104,7 +104,7 @@ class Router
 
         // Check prefix matches (e.g. "plan_" matches "plan_basic")
         foreach (self::CALLBACK_MAP as $key => $handlerShort) {
-            if (substr($key, -1) === '_' && strpos($callbackData, $key) === 0) {
+            if (str_ends_with($key, '_') && str_starts_with($callbackData, $key)) {
                 return "Modules\\Bot\\Handlers\\{$handlerShort}";
             }
         }
