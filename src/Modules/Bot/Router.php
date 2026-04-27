@@ -38,53 +38,51 @@ class Router
     /**
      * Resolve the Update to the appropriate handler instance.
      */
-    public function resolve(Update $update): BaseHandler
+    public function resolve($update)
     {
-        // 1. Handle callback queries
-        if ($update->isCallback()) {
-            return $this->resolveCallback($update);
-        }
+        // 1. Get text safely
+        $text = $update->getText() ?? '';
+        error_log("DEBUG ROUTER: text=[" . $text . "]");
 
-        // 2. Guard against null text
-        $rawText = $update->getText();
-        $text = is_string($rawText) ? trim($rawText) : '';
-        $normalizedText = mb_strtolower($text);
-        file_put_contents(__DIR__ . '/../../../public/debug.txt', "ROUTER DEBUG: isCallback=" . ($update->isCallback() ? 'TRUE' : 'FALSE') . " isMessage=" . ($update->isMessage() ? 'TRUE' : 'FALSE') . " rawText='" . str_replace(["\r", "\n"], ['\r', '\n'], $rawText) . "' normalized='" . $normalizedText . "'\n", FILE_APPEND);
-
-        if ($normalizedText === '/start') {
+        // 2. Commands
+        if ($text === '/start' || str_starts_with($text, '/start')) {
+            error_log("DEBUG ROUTER: -> StartHandler");
             return new StartHandler($this->baleClient);
         }
 
-        // 3. State-based routing
-        if ($update->isMessage()) {
-            $state = $this->getUserState($update->getUserId());
-            if ($state !== null && isset(self::STATE_HANDLER_MAP[$state])) {
-                $handlerClass = self::STATE_HANDLER_MAP[$state];
-                return new $handlerClass($this->baleClient);
+        // 3. Callback queries
+        if ($update->isCallback()) {
+            $data = $update->getCallbackData() ?? '';
+            error_log("DEBUG ROUTER: callback=[" . $data . "]");
+            
+            // Map callback data to handlers
+            $map = [
+                'buy_credit' => 'BuyCreditHandler',
+                'generate_image' => 'ImageHandler',
+                'edit_image' => 'Img2ImgHandler',
+                'plan_basic' => 'BuyCreditHandler',
+                'plan_standard' => 'BuyCreditHandler',
+                'plan_premium' => 'BuyCreditHandler',
+                'check_membership' => 'CallbackHandler',
+            ];
+            
+            if (isset($map[$data])) {
+                $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
+                return new $class($this->baleClient);
             }
+            
+            return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 4. Button mapping
-        $buttonMap = [
-            '🎨 ساخت تصویر' => ImageHandler::class,
-            '👤 حساب من'    => MessageHandler::class,
-            '💳 شارژ اعتبار' => BuyCreditHandler::class,
-            '❓ راهنما'     => MessageHandler::class,
-            '🖼️ ویرایش عکس' => Img2ImgHandler::class,
-        ];
-
-        if (isset($buttonMap[$text])) {
-            $handlerClass = $buttonMap[$text];
-            return new $handlerClass($this->baleClient);
-        }
-
-        // 5. Contact messages
-        if ($update->getContact() !== null) {
+        // 4. Regular message
+        if ($update->isMessage() && $text !== '') {
+            error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }
 
-        // 6. Fallback
-        return new MessageHandler($this->baleClient);
+        // 5. Fallback
+        error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
+        return new UnknownUpdateHandler($this->baleClient);
     }
 
     /**
