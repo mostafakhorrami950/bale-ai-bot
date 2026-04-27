@@ -16,7 +16,7 @@ if (!$userId) {
     exit;
 }
 
-$user = $db->query("SELECT * FROM users WHERE id = ?", [$userId])->fetch();
+$user = $db->query("SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.id = ?", [$userId])->fetch();
 if (!$user) {
     header('Location: users.php');
     exit;
@@ -97,7 +97,7 @@ ob_start();
         <div class="table-container">
             <h5>👤 پروفایل کاربر #<?php echo $user['id']; ?></h5>
             <table class="table table-borderless">
-                <tr><td style="width:150px;">شناسه بله:</td><td style="font-family:monospace;"><?php echo $user['bale_id']; ?></td></tr>
+                <tr><td style="width:150px;">شناسه بله:</td><td style="font-family:monospace;"><?php echo $user['bale_user_id']; ?></td></tr>
                 <tr><td>نام:</td><td><?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name']); ?></td></tr>
                 <tr><td>نام کاربری:</td><td><?php echo htmlspecialchars($user['username'] ?? '-'); ?></td></tr>
                 <tr><td>شماره تلفن:</td><td dir="ltr"><?php echo htmlspecialchars($user['phone_number'] ?? '-'); ?></td></tr>
