@@ -30,7 +30,7 @@ class ImageHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt') {
+            if ($state === 'awaiting_image_prompt') {
                 $this->processPrompt($chatId, $userId, $text);
                 return;
             }
@@ -46,14 +46,31 @@ class ImageHandler extends BaseHandler
         }
     }
 
+    /**
+     * Resolve internal user.id from Bale user ID.
+     */
+    private function resolveUserId(int $baleUserId): ?int
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId]);
+            $row = $stmt->fetch();
+            return $row ? (int) $row['id'] : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function askForPrompt(int $chatId, int $userId): void
     {
-        // Set state BEFORE asking for prompt
-        Database::getInstance()->query(
-            "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_image_prompt', NOW())
-             ON DUPLICATE KEY UPDATE state='awaiting_image_prompt', updated_at=NOW()",
-            [$userId]
-        );
+        $internalId = $this->resolveUserId($userId);
+        if ($internalId) {
+            Database::getInstance()->query(
+                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_image_prompt', NOW())
+                 ON DUPLICATE KEY UPDATE state='awaiting_image_prompt', updated_at=NOW()",
+                [$internalId]
+            );
+        }
         $this->baleClient->sendMessage($chatId, "🎨 لطفاً متن تصویر مورد نظر خود را بنویسید:");
     }
 
@@ -64,14 +81,15 @@ class ImageHandler extends BaseHandler
             return;
         }
 
-        $this->clearUserState($userId);
-
         $user = User::findByBaleId($userId);
         if (!$user) {
             $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد. لطفاً ابتدا با /start ثبت‌نام کنید.");
             return;
         }
         $internalId = (int) $user['id'];
+
+        // Clear state
+        $this->clearUserState($internalId);
 
         $aiService = new AIService();
         $model = $aiService->getFirstActiveModel();
@@ -140,12 +158,7 @@ class ImageHandler extends BaseHandler
 
         $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'text2img', 'success', $referenceId);
 
-        // Clear state to idle
-        Database::getInstance()->query(
-            "UPDATE bot_state SET state='idle', updated_at=NOW() WHERE user_id=?",
-            [$userId]
-        );
-
+        $this->clearUserState($internalId);
         $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ساخته شد!", $this->getMainMenuKeyboard());
     }
 
@@ -162,11 +175,16 @@ class ImageHandler extends BaseHandler
         }
     }
 
-    private function getUserState(int $userId): ?string
+    private function getUserState(int $baleUserId): ?string
     {
         try {
             $db = Database::getInstance();
-            $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
+            $stmt = $db->query(
+                "SELECT bs.state FROM bot_state bs 
+                 JOIN users u ON bs.user_id = u.id 
+                 WHERE u.bale_user_id = ?",
+                [$baleUserId]
+            );
             $row = $stmt->fetch();
             return $row['state'] ?? null;
         } catch (\Throwable $e) {
@@ -174,11 +192,11 @@ class ImageHandler extends BaseHandler
         }
     }
 
-    private function clearUserState(int $userId): void
+    private function clearUserState(int $internalId): void
     {
         try {
             $db = Database::getInstance();
-            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$userId]);
+            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {
             // Silent
         }

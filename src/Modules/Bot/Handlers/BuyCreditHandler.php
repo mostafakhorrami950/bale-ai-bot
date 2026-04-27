@@ -57,7 +57,7 @@ class BuyCreditHandler extends BaseHandler
 
         $keyboard = ['inline_keyboard' => []];
         foreach ($plans as $plan) {
-            $label = "{$plan['title']} - " . number_format($plan['credits']) . " اعتبار - " . number_format($plan['price_rial']) . " تومان";
+            $label = "{$plan['name']} - " . number_format($plan['credits']) . " اعتبار - " . number_format($plan['price_rial']) . " تومان";
             $keyboard['inline_keyboard'][] = [
                 ['text' => $label, 'callback_data' => 'plan_' . $plan['id']]
             ];
@@ -102,7 +102,7 @@ class BuyCreditHandler extends BaseHandler
             if (isset($result['error'])) {
                 Logger::error('BuyCreditHandler: payment request failed', [
                     'user_id' => $internalId,
-                    'plan'    => $plan['title'],
+                    'plan'    => $plan['name'],
                     'error'   => $result['error'],
                 ]);
                 $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی در اتصال به درگاه پرداخت پیش آمد.");
@@ -118,7 +118,7 @@ class BuyCreditHandler extends BaseHandler
                 );
 
                 $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
-                $message = "💳 **پرداخت برای پلن: {$plan['title']}**\n\n";
+                $message = "💳 **پرداخت برای پلن: {$plan['name']}**\n\n";
                 $message .= "💰 مبلغ: " . number_format($amountRial) . " ریال\n";
                 $message .= "💎 اعتبار: {$plan['credits']} کردیت\n\n";
                 $message .= "🔗 لینک پرداخت:\n{$paymentUrl}\n\n";

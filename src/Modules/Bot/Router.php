@@ -22,19 +22,6 @@ class Router
         $this->baleClient = new BaleClient();
     }
 
-    private const CALLBACK_MAP = [
-        'buy_credit'     => BuyCreditHandler::class,
-        'generate_image' => ImageHandler::class,
-        'edit_image'     => Img2ImgHandler::class,
-        'plan_'          => BuyCreditHandler::class,
-    ];
-
-    private const STATE_HANDLER_MAP = [
-        'awaiting_image_prompt' => ImageHandler::class,
-        'awaiting_edit_photo'   => Img2ImgHandler::class,
-        'awaiting_edit_prompt'  => Img2ImgHandler::class,
-    ];
-
     public function resolve($update)
     {
         $text = $update->getText() ?? '';
@@ -46,7 +33,13 @@ class Router
         if ($userId) {
             try {
                 $db = Database::getInstance();
-                $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
+                // bot_state.user_id = internal users.id, so JOIN on bale_user_id
+                $stmt = $db->query(
+                    "SELECT bs.state FROM bot_state bs 
+                     JOIN users u ON bs.user_id = u.id 
+                     WHERE u.bale_user_id = ?",
+                    [$userId]
+                );
                 $row = $stmt->fetch();
                 $state = $row['state'] ?? 'idle';
             } catch (\Throwable $e) {
@@ -124,38 +117,5 @@ class Router
         // 7. Fallback
         error_log("DEBUG ROUTER: -> UnknownUpdateHandler (fallback)");
         return new UnknownUpdateHandler($this->baleClient);
-    }
-
-    private function resolveCallback(Update $update): BaseHandler
-    {
-        $callbackData = $update->getCallbackData() ?? '';
-
-        foreach (self::CALLBACK_MAP as $key => $handlerClass) {
-            if (str_ends_with($key, '_')) continue;
-            if ($callbackData === $key) {
-                return new $handlerClass($this->baleClient);
-            }
-        }
-
-        foreach (self::CALLBACK_MAP as $key => $handlerClass) {
-            if (str_ends_with($key, '_') && str_starts_with($callbackData, $key)) {
-                return new $handlerClass($this->baleClient);
-            }
-        }
-
-        return new UnknownUpdateHandler($this->baleClient);
-    }
-
-    private function getUserState(?int $userId): ?string
-    {
-        if ($userId === null) return null;
-        try {
-            $db = Database::getInstance();
-            $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
-            $row = $stmt->fetch();
-            return $row['state'] ?? null;
-        } catch (\Throwable $e) {
-            return null;
-        }
     }
 }

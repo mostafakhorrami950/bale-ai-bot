@@ -46,7 +46,7 @@ class Img2ImgHandler extends BaseHandler
                     $this->processEdit($chatId, $userId, $text, $photoData);
                 } else {
                     $this->baleClient->sendMessage($chatId, "⚠️ عکس ذخیره شده یافت نشد. لطفاً دوباره از اول شروع کنید.");
-                    $this->clearUserState($userId);
+                    $this->clearUserStateById($userId);
                 }
                 return;
             }
@@ -62,13 +62,28 @@ class Img2ImgHandler extends BaseHandler
         }
     }
 
+    private function resolveUserId(int $baleUserId): ?int
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId]);
+            $row = $stmt->fetch();
+            return $row ? (int) $row['id'] : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function askForPhoto(int $chatId, int $userId): void
     {
-        Database::getInstance()->query(
-            "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_edit_photo', NOW())
-             ON DUPLICATE KEY UPDATE state='awaiting_edit_photo', updated_at=NOW()",
-            [$userId]
-        );
+        $internalId = $this->resolveUserId($userId);
+        if ($internalId) {
+            Database::getInstance()->query(
+                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_edit_photo', NOW())
+                 ON DUPLICATE KEY UPDATE state='awaiting_edit_photo', updated_at=NOW()",
+                [$internalId]
+            );
+        }
         $this->baleClient->sendMessage($chatId, "🖼 لطفاً عکسی که می‌خواهید ویرایش کنید را ارسال نمایید:");
     }
 
@@ -81,12 +96,15 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            Database::getInstance()->query(
-                "INSERT INTO bot_state (user_id, state, photo_base64, extra_data, updated_at)
-                 VALUES (?, 'awaiting_edit_prompt', ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE state='awaiting_edit_prompt', photo_base64=?, extra_data=?, updated_at=NOW()",
-                [$userId, $photoBase64, '{}', $photoBase64, '{}']
-            );
+            $internalId = $this->resolveUserId($userId);
+            if ($internalId) {
+                Database::getInstance()->query(
+                    "INSERT INTO bot_state (user_id, state, photo_base64, extra_data, updated_at)
+                     VALUES (?, 'awaiting_edit_prompt', ?, ?, NOW())
+                     ON DUPLICATE KEY UPDATE state='awaiting_edit_prompt', photo_base64=?, extra_data=?, updated_at=NOW()",
+                    [$internalId, $photoBase64, '{}', $photoBase64, '{}']
+                );
+            }
 
             $this->baleClient->sendMessage($chatId, "✏️ عکس دریافت شد. حالا لطفاً متن مورد نظر برای ویرایش را بنویسید:");
         } catch (\Throwable $e) {
@@ -102,14 +120,14 @@ class Img2ImgHandler extends BaseHandler
             return;
         }
 
-        $this->clearUserState($userId);
-
         $user = User::findByBaleId($userId);
         if (!$user) {
             $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد.");
             return;
         }
         $internalId = (int) $user['id'];
+
+        $this->clearUserStateById($internalId);
 
         $aiService = new AIService();
         $model = $aiService->getFirstActiveModel();
@@ -176,11 +194,7 @@ class Img2ImgHandler extends BaseHandler
 
         $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'img2img', 'success', $referenceId);
 
-        Database::getInstance()->query(
-            "UPDATE bot_state SET state='idle', updated_at=NOW() WHERE user_id=?",
-            [$userId]
-        );
-
+        $this->clearUserStateById($internalId);
         $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ویرایش شد!", $this->getMainMenuKeyboard());
     }
 
@@ -202,11 +216,16 @@ class Img2ImgHandler extends BaseHandler
         }
     }
 
-    private function getUserState(int $userId): ?string
+    private function getUserState(int $baleUserId): ?string
     {
         try {
             $db = Database::getInstance();
-            $stmt = $db->query("SELECT state FROM bot_state WHERE user_id = ?", [$userId]);
+            $stmt = $db->query(
+                "SELECT bs.state FROM bot_state bs 
+                 JOIN users u ON bs.user_id = u.id 
+                 WHERE u.bale_user_id = ?",
+                [$baleUserId]
+            );
             $row = $stmt->fetch();
             return $row['state'] ?? null;
         } catch (\Throwable $e) {
@@ -214,13 +233,15 @@ class Img2ImgHandler extends BaseHandler
         }
     }
 
-    private function getStoredPhotoData(int $userId): ?string
+    private function getStoredPhotoData(int $baleUserId): ?string
     {
         try {
             $db = Database::getInstance();
             $stmt = $db->query(
-                "SELECT photo_base64 FROM bot_state WHERE user_id = ? AND state = 'awaiting_edit_prompt'",
-                [$userId]
+                "SELECT bs.photo_base64 FROM bot_state bs 
+                 JOIN users u ON bs.user_id = u.id 
+                 WHERE u.bale_user_id = ? AND bs.state = 'awaiting_edit_prompt'",
+                [$baleUserId]
             );
             $row = $stmt->fetch();
             return $row['photo_base64'] ?? null;
@@ -229,11 +250,11 @@ class Img2ImgHandler extends BaseHandler
         }
     }
 
-    private function clearUserState(int $userId): void
+    private function clearUserStateById(int $internalId): void
     {
         try {
             $db = Database::getInstance();
-            $db->query("UPDATE bot_state SET photo_base64 = NULL, state = 'idle' WHERE user_id = ?", [$userId]);
+            $db->query("UPDATE bot_state SET photo_base64 = NULL, state = 'idle' WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {
             // Silent
         }
