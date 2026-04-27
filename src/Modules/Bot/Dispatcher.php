@@ -35,7 +35,9 @@ class Dispatcher
             error_log("DEBUG: Dispatcher handler executed successfully");
 
         } catch (\Throwable $e) {
-            $this->handleFailure($e, $handlerClass);
+            $msg = date('[Y-m-d H:i:s]') . " DISPATCHER FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine() . "\n";
+            file_put_contents(__DIR__ . '/../../../public/debug.txt', $msg, FILE_APPEND);
+            error_log("DISPATCHER FATAL: " . $e->getMessage());
         }
     }
 
