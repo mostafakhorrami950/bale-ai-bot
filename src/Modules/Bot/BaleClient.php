@@ -243,6 +243,8 @@ class BaleClient
         }
 
         $result = json_decode($response, true);
+        $msg = date('[Y-m-d H:i:s]') . " BALE_API: " . json_encode($result, JSON_UNESCAPED_UNICODE) . "\n";
+        file_put_contents(__DIR__ . '/../../../public/debug.txt', $msg, FILE_APPEND);
         error_log("DEBUG: Bale API Response: " . json_encode($result));
 
         if (!$result || !isset($result['ok'])) {

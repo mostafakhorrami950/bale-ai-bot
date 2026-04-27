@@ -1,5 +1,13 @@
 <?php
 
+require_once __DIR__ . '/error_handler.php';
+
+function debug_log(string $message, array $context = []): void {
+    $ctx = $context ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE) : '';
+    $msg = date('[Y-m-d H:i:s]') . " DEBUG: $message$ctx\n";
+    file_put_contents(__DIR__ . '/debug.txt', $msg, FILE_APPEND);
+}
+
 require_once __DIR__ . '/../init.php';
 
 use Modules\Bot\UpdateFactory;
@@ -36,6 +44,7 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 
 // 3. Create Update object
 $update = UpdateFactory::create($updateData);
+debug_log("Webhook received", ['type' => $update->isMessage() ? 'message' : ($update->isCallback() ? 'callback' : 'other'), 'user_id' => $update->getUserId() ?? 'none']);
 if (!$update || !$update->getChatId()) {
     bot_log('ERROR', 'Invalid Update or Missing Chat ID', ['data' => $updateData]);
     exit('Parse error');
@@ -60,6 +69,7 @@ try {
     
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($handlerClass);
+    debug_log("Dispatch completed", ['update_id' => $update->getId() ?? 'unknown']);
     error_log("DEBUG: Dispatch completed. Update ID: " . ($update->getId() ?? 'unknown'));
     
     $update->markAsProcessed();
