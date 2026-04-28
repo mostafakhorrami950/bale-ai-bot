@@ -102,7 +102,7 @@ class ImageHandler extends BaseHandler
                 [$internalId, $nextState, $nextState]
             );
 
-            $this->baleClient->sendMessage($chatId, "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:", json_encode($keyboard));
+            $this->baleClient->sendMessage($chatId, "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:", $keyboard);
         } catch (\Throwable $e) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
         }
@@ -224,13 +224,13 @@ class ImageHandler extends BaseHandler
         ];
     }
 
-    private function getMainMenuInlineKeyboard(): string
+    private function getMainMenuInlineKeyboard(): array
     {
-        return json_encode([
+        return [
             'inline_keyboard' => [
                 [['text' => '🎨 ساخت تصویر', 'callback_data' => 'generate_image'], ['text' => '🖼 ویرایش عکس', 'callback_data' => 'edit_image']],
                 [['text' => '👤 حساب من', 'callback_data' => 'account'], ['text' => '💳 شارژ اعتبار', 'callback_data' => 'buy_credit']]
             ]
-        ]);
+        ];
     }
 }

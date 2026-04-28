@@ -96,7 +96,7 @@ class Img2ImgHandler extends BaseHandler
 
         $internalId = $this->resolveUserId($userId);
         $db->execute("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);
-        $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", json_encode($keyboard));
+        $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", $keyboard);
     }
 
     private function saveModelAndAskPhoto(int $chatId, int $userId, int $modelId): void
@@ -208,13 +208,13 @@ class Img2ImgHandler extends BaseHandler
         } catch (\Throwable $e) {}
     }
 
-    private function getMainMenuInlineKeyboard(): string
+    private function getMainMenuInlineKeyboard(): array
     {
-        return json_encode([
+        return [
             'inline_keyboard' => [
                 [['text' => '🎨 ساخت تصویر', 'callback_data' => 'generate_image'], ['text' => '🖼 ویرایش عکس', 'callback_data' => 'edit_image']],
                 [['text' => '👤 حساب من', 'callback_data' => 'account'], ['text' => '💳 شارژ اعتبار', 'callback_data' => 'buy_credit']]
             ]
-        ]);
+        ];
     }
 }

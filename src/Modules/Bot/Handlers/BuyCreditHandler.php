@@ -69,7 +69,7 @@ class BuyCreditHandler extends BaseHandler
             ];
         }
 
-        $this->baleClient->sendMessage($chatId, "💰 **لطفاً یکی از پلن‌های زیر را انتخاب کنید:**\n\n", json_encode($keyboard));
+        $this->baleClient->sendMessage($chatId, "💰 **لطفاً یکی از پلن‌های زیر را انتخاب کنید:**\n\n", $keyboard);
     }
 
     private function processPlan(int $chatId, int $userId, string $callbackData): void
