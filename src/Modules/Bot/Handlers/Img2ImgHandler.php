@@ -206,16 +206,9 @@ class Img2ImgHandler extends BaseHandler
         $token = \Core\Config::get('BALE_BOT_TOKEN');
 
         foreach ($fileIds as $i => $fileId) {
-            $getFileResponse = $this->baleClient->getFile($fileId);
-            $filePath = $getFileResponse['result']['file_path'] ?? null;
-
-            if (!$filePath) {
-                error_log("Img2ImgHandler: No file_path from getFile for file_id=$fileId");
-                $failedCount++;
-                continue;
-            }
-
-            $downloadUrl = "https://tapi.bale.ai/file/bot{$token}/{$filePath}";
+            // In Bale Bot API, the file_path IS the file_id for new-style file identifiers
+            // We download directly using the file_id as the path
+            $downloadUrl = "https://tapi.bale.ai/file/bot{$token}/{$fileId}";
 
             $ch = curl_init($downloadUrl);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -223,10 +216,11 @@ class Img2ImgHandler extends BaseHandler
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             $imageBinary = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $downloadedSize = strlen($imageBinary ?? '');
             curl_close($ch);
 
-            if ($httpCode !== 200 || empty($imageBinary) || strlen($imageBinary) < 1000) {
-                error_log("Img2ImgHandler: Failed to download photo, HTTP=$httpCode, size=" . strlen($imageBinary ?? ''));
+            if ($httpCode !== 200 || empty($imageBinary) || $downloadedSize < 1000) {
+                error_log("Img2ImgHandler: Failed to download photo, HTTP=$httpCode, downloaded=$downloadedSize, fileId=$fileId");
                 $failedCount++;
                 continue;
             }
