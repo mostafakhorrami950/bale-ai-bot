@@ -83,6 +83,7 @@ ob_start();
                     <label class="form-label">ارائه‌دهنده (Provider):</label>
                     <select name="provider" class="form-select">
                         <option value="gapgpt" <?php echo ($editMode && $editModel['provider'] === 'gapgpt') ? 'selected' : ''; ?>>GapGPT</option>
+                        <option value="metisai" <?php echo ($editMode && $editModel['provider'] === 'metisai') ? 'selected' : ''; ?>>MetisAI</option>
                         <option value="custom" <?php echo ($editMode && $editModel['provider'] === 'custom') ? 'selected' : ''; ?>>Custom</option>
                     </select>
                 </div>
