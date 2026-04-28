@@ -96,7 +96,7 @@ class ImageHandler extends BaseHandler
             $internalId = $this->resolveUserId($userId);
             $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
             
-            $db->execute(
+            $db->query(
                 "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW())
                  ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
                 [$internalId, $nextState, $nextState]
@@ -119,7 +119,7 @@ class ImageHandler extends BaseHandler
             return;
         }
 
-        $db->execute(
+        $db->query(
             "UPDATE bot_state SET state = 'awaiting_image_prompt', extra_data = ? WHERE user_id = ?",
             [json_encode(['model_id' => $modelId]), $internalId]
         );
@@ -138,7 +138,7 @@ class ImageHandler extends BaseHandler
         $db = Database::getInstance();
         
         // Lock user first to prevent loops/double spending
-        $db->execute("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
+        $db->query("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
 
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
@@ -182,7 +182,7 @@ class ImageHandler extends BaseHandler
 
         CreditService::deduct($internalId, $cost, $referenceId);
         
-        $db->execute(
+        $db->query(
             "INSERT INTO ai_requests (user_id, model_id, prompt, status, reference_id) VALUES (?, ?, ?, 'success', ?)",
             [$internalId, $modelId, $prompt, $referenceId]
         );
@@ -212,7 +212,7 @@ class ImageHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $db->execute("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
+            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {}
     }
 

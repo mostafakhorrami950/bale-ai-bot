@@ -24,7 +24,8 @@ class BuyCreditHandler extends BaseHandler
             }
 
             if ($callbackData && str_starts_with($callbackData, 'plan_')) {
-                $this->processPlan($chatId, $userId, $callbackData);
+                $callbackId = $update->getCallbackId();
+                $this->processPlan($chatId, $userId, $callbackId, $callbackData);
                 return;
             }
 
@@ -72,7 +73,7 @@ class BuyCreditHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, "💰 **لطفاً یکی از پلن‌های زیر را انتخاب کنید:**\n\n", $keyboard);
     }
 
-    private function processPlan(int $chatId, int $userId, string $callbackData): void
+    private function processPlan(int $chatId, int $userId, ?string $callbackId, string $callbackData): void
     {
         $planId = (int) str_replace('plan_', '', $callbackData);
         if ($planId <= 0) {
@@ -93,7 +94,9 @@ class BuyCreditHandler extends BaseHandler
             return;
         }
 
-        $this->baleClient->answerCallbackQuery($update->getCallbackId());
+        if ($callbackId) {
+            $this->baleClient->answerCallbackQuery($callbackId);
+        }
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال اتصال به درگاه پرداخت... لطفاً صبر کنید.");
 

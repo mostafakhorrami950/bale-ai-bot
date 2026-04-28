@@ -96,7 +96,7 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $internalId = $this->resolveUserId($userId);
-        $db->execute("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);
+        $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);
         $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", $keyboard);
     }
 
@@ -104,7 +104,7 @@ class Img2ImgHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        $db->execute(
+        $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_photo', extra_data = ? WHERE user_id = ?",
             [json_encode(['model_id' => $modelId]), $internalId]
         );
@@ -128,7 +128,7 @@ class Img2ImgHandler extends BaseHandler
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
         $extra['photo_base64'] = base64_encode($imageData);
 
-        $db->execute(
+        $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_prompt', extra_data = ? WHERE user_id = ?",
             [json_encode($extra), $internalId]
         );
@@ -141,7 +141,7 @@ class Img2ImgHandler extends BaseHandler
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
         
-        $db->execute("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
+        $db->query("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
 
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
@@ -205,7 +205,7 @@ class Img2ImgHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $db->execute("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
+            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {}
     }
 
