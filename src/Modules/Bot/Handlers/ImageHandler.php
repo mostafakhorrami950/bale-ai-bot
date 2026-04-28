@@ -175,13 +175,18 @@ class ImageHandler extends BaseHandler
         }
 
         $referenceId = 'ai_' . bin2hex(random_bytes(8));
-        $images = $result['images'] ?? [];
         
+        // Deduct credits BEFORE sending photos (idempotent)
+        if (!CreditService::deduct($internalId, $cost, $referenceId)) {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
+            return;
+        }
+        
+        $images = $result['images'] ?? [];
         foreach ($images as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
         }
-
-        CreditService::deduct($internalId, $cost, $referenceId);
         
         $db->query(
             "INSERT INTO ai_requests (user_id, model_id, prompt, status, reference_id) VALUES (?, ?, ?, 'success', ?)",

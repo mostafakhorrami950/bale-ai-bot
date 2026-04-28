@@ -104,9 +104,10 @@ class BuyCreditHandler extends BaseHandler
             $paymentService = new \Modules\Payment\ZibalService();
             $internalId = (int) $user['id'];
             $amountRial = (int) $plan['price_rial'];
-            $callbackUrl = Config::get('BASE_URL', 'https://mobixai.ir') . '/payment/verify.php';
+            $orderId = 'ORD-' . $internalId . '-' . time();
+            $description = "خرید پلن {$plan['name']} - کاربر {$user['id']}";
 
-            $result = $paymentService->requestPayment($amountRial, $callbackUrl, $internalId);
+            $result = $paymentService->requestPayment($amountRial, $orderId, $description);
 
             if (isset($result['error'])) {
                 Logger::error('BuyCreditHandler: payment request failed', [

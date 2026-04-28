@@ -177,11 +177,17 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $refId = 'ai_edit_' . bin2hex(random_bytes(8));
+        
+        // Deduct credits BEFORE sending photos (idempotent)
+        if (!CreditService::deduct($internalId, $cost, $refId)) {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
+            return;
+        }
+        
         foreach ($result['images'] ?? [] as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
         }
-
-        CreditService::deduct($internalId, $cost, $refId);
         $this->clearUserState($internalId);
         $this->baleClient->sendMessage($chatId, "✨ انجام شد.", $this->getMainMenuInlineKeyboard());
     }

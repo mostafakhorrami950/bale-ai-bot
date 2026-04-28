@@ -9,13 +9,15 @@
  * 1. Receive trackId from GET
  * 2. Call Zibal verify API (NEVER trust GET params alone)
  * 3. Update payment record and add credits to user
- * 4. Show Persian result page
+ * 4. Notify user on Bale via bot
+ * 5. Show Persian result page
  */
 
 require_once __DIR__ . '/../../init.php';
 
 use Modules\Payment\ZibalService;
 use Modules\Bot\CreditService;
+use Modules\Bot\BaleClient;
 use Database\Database;
 use Database\Logger;
 
@@ -69,6 +71,16 @@ if (!$payment) {
         'لطفاً با پشتیبانی تماس بگیرید.'
     );
     exit;
+}
+
+// Extract plan name from payment record
+$planName = $payment['plan_id'] ?? null;
+if ($planName) {
+    try {
+        $pStmt = Database::getInstance()->query("SELECT name FROM payment_plans WHERE id = ? OR plan_id = ?", [$planName, $planName]);
+        $pRow = $pStmt->fetch();
+        if ($pRow) $planName = $pRow['name'];
+    } catch (\Throwable $e) {}
 }
 
 // ============================================================
@@ -130,6 +142,23 @@ if ($payment['status'] === 'pending') {
             'refNumber'  => $refNumber,
             'amountRial' => $payment['amount_rial'],
         ]);
+
+        // 5c. Notify user on Bale
+        try {
+            $stmt = $db->query("SELECT bale_user_id FROM users WHERE id = ?", [$userId]);
+            $user = $stmt->fetch();
+            if ($user && $user['bale_user_id']) {
+                $bale = new BaleClient();
+                $planText = $planName ? " برای پلن «{$planName}»" : '';
+                $msg = "✅ **پرداخت شما با موفقیت انجام شد!**{$planText}\n\n💎 {$credits} اعتبار به حساب شما اضافه شد.\n\n🙏 از اعتماد شما سپاسگزاریم.";
+                $bale->sendMessage((int) $user['bale_user_id'], $msg);
+            }
+        } catch (\Throwable $e) {
+            Logger::error('verify.php: Bale notify failed', [
+                'user_id' => $userId,
+                'error'   => $e->getMessage(),
+            ]);
+        }
 
         displayResult(
             true,
