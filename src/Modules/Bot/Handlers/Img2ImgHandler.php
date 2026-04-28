@@ -10,6 +10,17 @@ use Database\Logger;
 
 class Img2ImgHandler extends BaseHandler
 {
+    private string $uploadDir;
+
+    public function __construct($baleClient)
+    {
+        parent::__construct($baleClient);
+        $this->uploadDir = BASE_PATH . '/uploads/tmp/';
+        if (!is_dir($this->uploadDir)) {
+            @mkdir($this->uploadDir, 0755, true);
+        }
+    }
+
     public function handle($update): void
     {
         try {
@@ -20,7 +31,6 @@ class Img2ImgHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            // Priority 1: AI processing lock
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
                     $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
@@ -30,20 +40,17 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            // Entry Point
             if ($callbackData === 'edit_image' || $text === '🖼 ویرایش عکس') {
                 $this->showModelSelection($chatId, $userId);
                 return;
             }
 
-            // Step 2: Handle Model Selection
             if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
                 $modelId = (int) str_replace('select_model_', '', $callbackData);
                 $this->saveModelAndAskPhoto($chatId, $userId, $modelId);
                 return;
             }
 
-            // Step 3: Handle Photo Upload — auto-advance to prompt after receiving 1 photo
             if ($state === 'awaiting_edit_photo') {
                 if ($update->hasPhoto()) {
                     $this->storePhotoAndAskPrompt($chatId, $userId, $update->getPhotoFileId());
@@ -53,7 +60,6 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            // Step 4: Handle Prompt
             if ($state === 'awaiting_edit_prompt') {
                 $this->processEditRequest($chatId, $userId, $text);
                 return;
@@ -62,8 +68,10 @@ class Img2ImgHandler extends BaseHandler
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً یکی از گزینه‌های منو را انتخاب کنید:", $this->getPersistentKeyboard());
         } catch (\Throwable $e) {
             error_log("Img2ImgHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
-            Logger::error('Img2ImgHandler exception', ['user_id' => $userId, 'error' => $e->getMessage()]);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطایی رخ داد. مجدداً تلاش کنید.");
+            Logger::error('Img2ImgHandler exception', ['user_id' => $userId ?? 0, 'error' => $e->getMessage()]);
+            if (isset($chatId)) {
+                $this->baleClient->sendMessage($chatId, "⚠️ خطایی رخ داد. مجدداً تلاش کنید.");
+            }
         }
     }
 
@@ -115,23 +123,28 @@ class Img2ImgHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        
-        // Use BaleClient::downloadFile() to properly download via API URL
+
         $fileInfo = $this->baleClient->getFile($fileId);
         if (!$fileInfo || empty($fileInfo['file_path'])) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت اطلاعات فایل از بله.");
             return;
         }
-        
+
         $imageData = $this->baleClient->downloadFile($fileInfo['file_path']);
         if (!$imageData) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت فایل از بله.");
             return;
         }
 
+        // Save to temp file instead of DB (avoids TEXT 64KB limit)
+        $tmpFilename = 'edit_' . $internalId . '_' . time() . '.jpg';
+        $tmpPath = $this->uploadDir . $tmpFilename;
+        file_put_contents($tmpPath, $imageData);
+
+        // Store only the file path in extra_data
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $extra['photo_base64'] = base64_encode($imageData);
+        $extra['photo_path'] = $tmpPath;
 
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_prompt', extra_data = ? WHERE user_id = ?",
@@ -145,18 +158,27 @@ class Img2ImgHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        
+
         $db->query("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
 
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        
-        $aiService = new AIService();
-        $model = $aiService->getActiveModelById((int)($extra['model_id'] ?? 0));
 
-        if (!$model || !isset($extra['photo_base64'])) {
+        $modelId = (int)($extra['model_id'] ?? 0);
+        $photoPath = $extra['photo_path'] ?? '';
+
+        if (empty($modelId) || empty($photoPath) || !file_exists($photoPath)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی اطلاعات. دوباره شروع کنید.");
+            return;
+        }
+
+        $aiService = new AIService();
+        $model = $aiService->getActiveModelById($modelId);
+
+        if (!$model) {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
             return;
         }
 
@@ -167,43 +189,44 @@ class Img2ImgHandler extends BaseHandler
             return;
         }
 
-        // Generate unique reference for this request
         $referenceId = 'ai_edit_' . bin2hex(random_bytes(8));
 
-        // Deduct credits IMMEDIATELY before API call
         if (!CreditService::deduct($internalId, $cost, $referenceId)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار.");
             return;
         }
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.");
 
+        // Read file and encode for API call
+        $imageData = file_get_contents($photoPath);
+        $photoBase64 = base64_encode($imageData);
+        @unlink($photoPath); // Clean up temp file
+
         $result = $aiService->generate([
             'model'  => $model['name'],
             'prompt' => $prompt,
-            'image'  => $extra['photo_base64']
+            'image'  => $photoBase64
         ]);
 
         $imageType = 'img2img';
 
         if (isset($result['error'])) {
-            // Log as failed
             $db->query(
                 "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
-                [$internalId, $extra['model_id'], $prompt, $imageType, $referenceId]
+                [$internalId, $modelId, $prompt, $imageType, $referenceId]
             );
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $result['error']);
             return;
         }
 
-        // Log successful request
         $db->query(
             "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'success', ?)",
-            [$internalId, $extra['model_id'], $prompt, $imageType, $referenceId]
+            [$internalId, $modelId, $prompt, $imageType, $referenceId]
         );
-        
+
         foreach ($result['images'] ?? [] as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
         }
@@ -230,6 +253,13 @@ class Img2ImgHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
+            $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+            if ($stateData) {
+                $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+                if (!empty($extra['photo_path']) && file_exists($extra['photo_path'])) {
+                    @unlink($extra['photo_path']);
+                }
+            }
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {}
     }
