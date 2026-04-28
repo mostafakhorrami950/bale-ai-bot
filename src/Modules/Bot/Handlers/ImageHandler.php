@@ -175,8 +175,9 @@ class ImageHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
 
         $result = $aiService->generate([
-            'model'  => $model['name'],
-            'prompt' => $prompt,
+            'model'    => $model['name'],
+            'prompt'   => $prompt,
+            'provider' => $model['provider'] ?? '',
         ]);
 
         if (isset($result['error'])) {

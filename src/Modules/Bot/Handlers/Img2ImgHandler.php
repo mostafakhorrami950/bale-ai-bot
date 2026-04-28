@@ -310,9 +310,10 @@ class Img2ImgHandler extends BaseHandler
             @unlink($photoPath);
 
             $result = $aiService->generate([
-                'model'  => $model['name'],
-                'prompt' => $prompt,
-                'image'  => $photoBase64
+                'model'    => $model['name'],
+                'prompt'   => $prompt,
+                'image'    => $photoBase64,
+                'provider' => $model['provider'] ?? '',
             ]);
 
             if (isset($result['error'])) {
