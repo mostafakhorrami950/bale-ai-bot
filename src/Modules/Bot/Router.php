@@ -114,8 +114,8 @@ class Router
                 'account' => 'AccountHandler',
                 'help' => 'ImageHandler',
                 'check_membership' => 'CallbackHandler',
-                'edit_photos_done' => 'Img2ImgHandler',
             ];
+
             
             // Check prefix for select_model_ — route based on current state
             if (str_starts_with($data, 'select_model_')) {

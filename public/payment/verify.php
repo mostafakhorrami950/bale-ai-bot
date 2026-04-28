@@ -123,7 +123,9 @@ if ($payment['status'] === 'pending') {
     $conn = $db->getConnection();
 
     try {
-        $conn->beginTransaction();
+        // NOTE: CreditService::addCredits() manages its OWN transaction internally.
+        // We do NOT wrap in an outer transaction here to avoid nesting conflicts.
+        // Payment status update is done first, then credit add is handled separately.
 
         // 5a. Update payment status to verified
         $stmt = $conn->prepare(
@@ -136,14 +138,15 @@ if ($payment['status'] === 'pending') {
         }
 
         // 5b. Add credits to user (idempotent via reference_id)
+        // CreditService::addCredits() handles its own beginTransaction/commit/rollback
         $referenceId = 'purchase_' . $trackId;
         $credited = CreditService::addCredits($userId, $credits, $referenceId);
 
         if (!$credited) {
+            // Rollback payment status manually
+            $conn->prepare("UPDATE payments SET status = 'pending', ref_number = NULL, verified_at = NULL WHERE id = ?")->execute([$payment['id']]);
             throw new \Exception('Failed to add credits to user');
         }
-
-        $conn->commit();
 
         Logger::info('Payment verified and credits added', [
             'trackId'    => $trackId,
@@ -179,7 +182,6 @@ if ($payment['status'] === 'pending') {
         exit;
 
     } catch (\Throwable $e) {
-        $conn->rollBack();
         Logger::error('Payment callback: transaction failed', [
             'trackId' => $trackId,
             'error'   => $e->getMessage(),
@@ -193,6 +195,7 @@ if ($payment['status'] === 'pending') {
         );
         exit;
     }
+
 }
 
 // ============================================================

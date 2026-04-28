@@ -37,25 +37,19 @@ class Img2ImgHandler extends BaseHandler
             }
 
             // Step 2: Handle Model Selection
-            if ($update->isCallback() && str_starts_with($callbackData, 'select_model_')) {
+            if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
                 $modelId = (int) str_replace('select_model_', '', $callbackData);
-                $this->saveModelAndAskPhotos($chatId, $userId, $modelId);
+                $this->saveModelAndAskPhoto($chatId, $userId, $modelId);
                 return;
             }
 
-            // Step 3: Handle Photo Upload(s) - 1 to 5 photos
+            // Step 3: Handle Photo Upload — auto-advance to prompt after receiving 1 photo
             if ($state === 'awaiting_edit_photo') {
                 if ($update->hasPhoto()) {
-                    $this->storePhotoAndCheckDone($chatId, $userId, $update->getPhotoFileId());
+                    $this->storePhotoAndAskPrompt($chatId, $userId, $update->getPhotoFileId());
                 } else {
-                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس(های) مورد نظر برای ویرایش را ارسال کنید.\n(حداقل ۱ و حداکثر ۵ عکس)\nپس از اتمام، دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس مورد نظر برای ویرایش را ارسال کنید:");
                 }
-                return;
-            }
-
-            // Step 3b: User clicked "✅ انجام شد" after uploading photos
-            if ($callbackData === 'edit_photos_done') {
-                $this->finalizePhotosAndAskPrompt($chatId, $userId);
                 return;
             }
 
@@ -106,83 +100,45 @@ class Img2ImgHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", $keyboard);
     }
 
-    private function saveModelAndAskPhotos(int $chatId, int $userId, int $modelId): void
+    private function saveModelAndAskPhoto(int $chatId, int $userId, int $modelId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_photo', extra_data = ? WHERE user_id = ?",
-            [json_encode(['model_id' => $modelId, 'photos' => []]), $internalId]
+            [json_encode(['model_id' => $modelId]), $internalId]
         );
-        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. حالا عکس‌های مورد نظر را بفرستید (حداقل ۱ و حداکثر ۵).\nپس از اتمام، دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. حالا عکس مورد نظر را بفرستید:");
     }
 
-    private function getPhotoDoneKeyboard(): array
-    {
-        return [
-            'inline_keyboard' => [
-                [['text' => '✅ انجام شد', 'callback_data' => 'edit_photos_done']]
-            ]
-        ];
-    }
-
-    private function storePhotoAndCheckDone(int $chatId, int $userId, string $fileId): void
+    private function storePhotoAndAskPrompt(int $chatId, int $userId, string $fileId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
         
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        
-        $photos = $extra['photos'] ?? [];
-        
-        // Check max limit
-        if (count($photos) >= 5) {
-            $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است. لطفاً دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+        // Use BaleClient::downloadFile() to properly download via API URL
+        $fileInfo = $this->baleClient->getFile($fileId);
+        if (!$fileInfo || empty($fileInfo['file_path'])) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت اطلاعات فایل از بله.");
             return;
         }
         
-        // Download and store the photo
-        $fileInfo = $this->baleClient->getFile($fileId);
-        $imageData = @file_get_contents($fileInfo['file_path'] ?? '');
-        
+        $imageData = $this->baleClient->downloadFile($fileInfo['file_path']);
         if (!$imageData) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت فایل از بله.");
             return;
         }
-        
-        $photos[] = base64_encode($imageData);
-        $extra['photos'] = $photos;
-        
-        $db->query(
-            "UPDATE bot_state SET extra_data = ? WHERE user_id = ?",
-            [json_encode($extra), $internalId]
-        );
-        
-        $remaining = 5 - count($photos);
-        $this->baleClient->sendMessage($chatId, "✅ عکس شماره " . count($photos) . " دریافت شد.\n" . ($remaining > 0 ? "می‌توانید تا {$remaining} عکس دیگر ارسال کنید." : "حداکثر تعداد عکس دریافت شد.") . "\nپس از اتمام، دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
-    }
 
-    private function finalizePhotosAndAskPrompt(int $chatId, int $userId): void
-    {
-        $internalId = $this->resolveUserId($userId);
-        $db = Database::getInstance();
-        
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $photos = $extra['photos'] ?? [];
-        
-        if (count($photos) < 1) {
-            $this->baleClient->sendMessage($chatId, "⚠️ حداقل ۱ عکس باید ارسال کنید. لطفاً عکس(های) خود را بفرستید.", $this->getPhotoDoneKeyboard());
-            return;
-        }
-        
+        $extra['photo_base64'] = base64_encode($imageData);
+
         $db->query(
-            "UPDATE bot_state SET state = 'awaiting_edit_prompt' WHERE user_id = ?",
-            [$internalId]
+            "UPDATE bot_state SET state = 'awaiting_edit_prompt', extra_data = ? WHERE user_id = ?",
+            [json_encode($extra), $internalId]
         );
-        
-        $this->baleClient->sendMessage($chatId, "✏️ " . count($photos) . " عکس دریافت شد. حالا متن تغییرات (Prompt) را بنویسید:");
+
+        $this->baleClient->sendMessage($chatId, "✏️ عکس دریافت شد. متن تغییرات (Prompt) را بنویسید:");
     }
 
     private function processEditRequest(int $chatId, int $userId, string $prompt): void
@@ -198,21 +154,13 @@ class Img2ImgHandler extends BaseHandler
         $aiService = new AIService();
         $model = $aiService->getActiveModelById((int)($extra['model_id'] ?? 0));
 
-        if (!$model) {
+        if (!$model || !isset($extra['photo_base64'])) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی اطلاعات. دوباره شروع کنید.");
             return;
         }
 
         $cost = (int) $model['cost_per_image'];
-        $photos = $extra['photos'] ?? [];
-        
-        if (empty($photos)) {
-            $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "❌ عکسی یافت نشد. دوباره شروع کنید.");
-            return;
-        }
-
         if (!CreditService::hasEnoughCredit($internalId, $cost)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید.");
@@ -222,7 +170,7 @@ class Img2ImgHandler extends BaseHandler
         // Generate unique reference for this request
         $referenceId = 'ai_edit_' . bin2hex(random_bytes(8));
 
-        // Deduct credits IMMEDIATELY before API call (issue #3 fix)
+        // Deduct credits IMMEDIATELY before API call
         if (!CreditService::deduct($internalId, $cost, $referenceId)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
@@ -231,55 +179,32 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.");
 
-        // Process all photos
-        $allImages = [];
-        $hasError = false;
-        $errorMsg = '';
-
-        foreach ($photos as $index => $photoBase64) {
-            $result = $aiService->generate([
-                'model'  => $model['name'],
-                'prompt' => $prompt,
-                'image'  => $photoBase64
-            ]);
-
-            if (isset($result['error'])) {
-                $hasError = true;
-                $errorMsg = $result['error'];
-                Logger::error('Img2ImgHandler: AI edit failed', [
-                    'user_id'  => $internalId,
-                    'photo_idx' => $index,
-                    'error'    => $result['error'],
-                ]);
-                break;
-            }
-
-            if (!empty($result['images'])) {
-                $allImages = array_merge($allImages, $result['images']);
-            }
-        }
+        $result = $aiService->generate([
+            'model'  => $model['name'],
+            'prompt' => $prompt,
+            'image'  => $extra['photo_base64']
+        ]);
 
         $imageType = 'img2img';
-        $totalImages = count($allImages);
 
-        if ($hasError && empty($allImages)) {
-            // All failed - log as failed
+        if (isset($result['error'])) {
+            // Log as failed
             $db->query(
                 "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
                 [$internalId, $extra['model_id'], $prompt, $imageType, $referenceId]
             );
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ویرایش تصاویر: " . $errorMsg);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $result['error']);
             return;
         }
 
-        // Log successful request(s)
+        // Log successful request
         $db->query(
             "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'success', ?)",
             [$internalId, $extra['model_id'], $prompt, $imageType, $referenceId]
         );
         
-        foreach ($allImages as $url) {
+        foreach ($result['images'] ?? [] as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
         }
         $this->clearUserState($internalId);
