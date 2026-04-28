@@ -54,6 +54,7 @@ class ImageHandler extends BaseHandler
             // Fallback
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:");
         } catch (\Throwable $e) {
+            error_log("ImageHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             Logger::error('ImageHandler exception', [
                 'user_id' => $update->getUserId(),
                 'error'   => $e->getMessage()

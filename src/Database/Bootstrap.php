@@ -67,6 +67,7 @@ class Bootstrap
         $sql = "CREATE TABLE IF NOT EXISTS bot_state (
             user_id INT PRIMARY KEY,
             state VARCHAR(50) NOT NULL,
+            extra_data TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";

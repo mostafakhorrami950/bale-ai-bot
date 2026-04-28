@@ -32,6 +32,7 @@ class DatabaseRepairService
         $this->ensureAiModelsProviderColumn();
         $this->ensureApiKeysProviderColumn();
         $this->ensureUsersColumns();
+        $this->ensureBotStateExtraDataColumn();
         $this->seedDefaultModel();
 
         return $this->messages;
@@ -248,6 +249,14 @@ class DatabaseRepairService
         if ($this->tableExists('api_keys') && !$this->columnExists('api_keys', 'provider')) {
             $this->exec("ALTER TABLE api_keys ADD COLUMN provider VARCHAR(50) DEFAULT 'gapgpt' AFTER id");
             $this->log('✅ ستون provider به جدول api_keys اضافه شد.');
+        }
+    }
+
+    private function ensureBotStateExtraDataColumn(): void
+    {
+        if ($this->tableExists('bot_state') && !$this->columnExists('bot_state', 'extra_data')) {
+            $this->exec("ALTER TABLE bot_state ADD COLUMN extra_data TEXT NULL AFTER state");
+            $this->log('✅ ستون extra_data به جدول bot_state اضافه شد.');
         }
     }
 
