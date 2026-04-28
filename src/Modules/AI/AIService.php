@@ -15,7 +15,7 @@ class AIService
     {
         $this->apiKey = Config::get('GAPGPT_API_KEY', '');
         $this->baseUrl = rtrim(Config::get('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1'), '/');
-        $this->timeout = (int) Config::get('AI_TIMEOUT', 60);
+        $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
     }
 
     /**
