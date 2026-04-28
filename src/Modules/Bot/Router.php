@@ -114,6 +114,7 @@ class Router
                 'account' => 'AccountHandler',
                 'help' => 'ImageHandler',
                 'check_membership' => 'CallbackHandler',
+                'edit_photos_done' => 'Img2ImgHandler',
             ];
 
             

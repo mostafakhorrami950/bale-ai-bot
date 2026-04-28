@@ -31,6 +31,7 @@ class Img2ImgHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
+            // Priority 1: AI processing lock
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
                     $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
@@ -40,26 +41,36 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
+            // Entry Point
             if ($callbackData === 'edit_image' || $text === '🖼 ویرایش عکس') {
                 $this->showModelSelection($chatId, $userId);
                 return;
             }
 
+            // Step 2: Handle Model Selection
             if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
                 $modelId = (int) str_replace('select_model_', '', $callbackData);
-                $this->saveModelAndAskPhoto($chatId, $userId, $modelId);
+                $this->saveModelAndAskPhotos($chatId, $userId, $modelId);
                 return;
             }
 
+            // Step 3: Handle Photo Upload(s) - 1 to 5 photos
             if ($state === 'awaiting_edit_photo') {
                 if ($update->hasPhoto()) {
-                    $this->storePhotoAndAskPrompt($chatId, $userId, $update->getPhotoFileId());
+                    $this->storePhotoAndCheckDone($chatId, $userId, $update->getPhotoFileId());
                 } else {
-                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس مورد نظر برای ویرایش را ارسال کنید:");
+                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس(های) مورد نظر برای ویرایش را ارسال کنید (حداکثر ۵).\nپس از اتمام، دکمه «✅ انجام شد» را بزنید:", $this->getPhotoDoneKeyboard());
                 }
                 return;
             }
 
+            // Step 3b: User clicked "✅ انجام شد"
+            if ($callbackData === 'edit_photos_done') {
+                $this->finalizePhotosAndAskPrompt($chatId, $userId);
+                return;
+            }
+
+            // Step 4: Handle Prompt
             if ($state === 'awaiting_edit_prompt') {
                 $this->processEditRequest($chatId, $userId, $text);
                 return;
@@ -108,21 +119,39 @@ class Img2ImgHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", $keyboard);
     }
 
-    private function saveModelAndAskPhoto(int $chatId, int $userId, int $modelId): void
+    private function saveModelAndAskPhotos(int $chatId, int $userId, int $modelId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_photo', extra_data = ? WHERE user_id = ?",
-            [json_encode(['model_id' => $modelId]), $internalId]
+            [json_encode(['model_id' => $modelId, 'photos' => []]), $internalId]
         );
-        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. حالا عکس مورد نظر را بفرستید:");
+        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. حالا عکس‌های مورد نظر را بفرستید (حداکثر ۵).\nپس از اتمام، دکمه «✅ انجام شد» را بزنید:", $this->getPhotoDoneKeyboard());
     }
 
-    private function storePhotoAndAskPrompt(int $chatId, int $userId, string $fileId): void
+    private function getPhotoDoneKeyboard(): array
+    {
+        return [
+            'inline_keyboard' => [
+                [['text' => '✅ انجام شد', 'callback_data' => 'edit_photos_done']]
+            ]
+        ];
+    }
+
+    private function storePhotoAndCheckDone(int $chatId, int $userId, string $fileId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $photos = $extra['photos'] ?? [];
+
+        if (count($photos) >= 5) {
+            $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است. دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+            return;
+        }
 
         $fileInfo = $this->baleClient->getFile($fileId);
         if (!$fileInfo || empty($fileInfo['file_path'])) {
@@ -136,22 +165,43 @@ class Img2ImgHandler extends BaseHandler
             return;
         }
 
-        // Save to temp file instead of DB (avoids TEXT 64KB limit)
-        $tmpFilename = 'edit_' . $internalId . '_' . time() . '.jpg';
+        // Save to temp file instead of DB
+        $tmpFilename = 'edit_' . $internalId . '_' . time() . '_' . count($photos) . '.jpg';
         $tmpPath = $this->uploadDir . $tmpFilename;
         file_put_contents($tmpPath, $imageData);
 
-        // Store only the file path in extra_data
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $extra['photo_path'] = $tmpPath;
+        $photos[] = $tmpPath;
+        $extra['photos'] = $photos;
 
         $db->query(
-            "UPDATE bot_state SET state = 'awaiting_edit_prompt', extra_data = ? WHERE user_id = ?",
+            "UPDATE bot_state SET extra_data = ? WHERE user_id = ?",
             [json_encode($extra), $internalId]
         );
 
-        $this->baleClient->sendMessage($chatId, "✏️ عکس دریافت شد. متن تغییرات (Prompt) را بنویسید:");
+        $remaining = 5 - count($photos);
+        $this->baleClient->sendMessage($chatId, "✅ عکس شماره " . count($photos) . " دریافت شد.\n" . ($remaining > 0 ? "می‌توانید تا {$remaining} عکس دیگر ارسال کنید." : "حداکثر تعداد عکس دریافت شد.") . "\nپس از اتمام، دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+    }
+
+    private function finalizePhotosAndAskPrompt(int $chatId, int $userId): void
+    {
+        $internalId = $this->resolveUserId($userId);
+        $db = Database::getInstance();
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $photos = $extra['photos'] ?? [];
+
+        if (count($photos) < 1) {
+            $this->baleClient->sendMessage($chatId, "⚠️ حداقل ۱ عکس باید ارسال کنید.", $this->getPhotoDoneKeyboard());
+            return;
+        }
+
+        $db->query(
+            "UPDATE bot_state SET state = 'awaiting_edit_prompt' WHERE user_id = ?",
+            [$internalId]
+        );
+
+        $this->baleClient->sendMessage($chatId, "✏️ " . count($photos) . " عکس دریافت شد. متن تغییرات (Prompt) را بنویسید:");
     }
 
     private function processEditRequest(int $chatId, int $userId, string $prompt): void
@@ -165,9 +215,9 @@ class Img2ImgHandler extends BaseHandler
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
 
         $modelId = (int)($extra['model_id'] ?? 0);
-        $photoPath = $extra['photo_path'] ?? '';
+        $photoPaths = $extra['photos'] ?? [];
 
-        if (empty($modelId) || empty($photoPath) || !file_exists($photoPath)) {
+        if (empty($modelId) || empty($photoPaths)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی اطلاعات. دوباره شروع کنید.");
             return;
@@ -199,26 +249,43 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.");
 
-        // Read file and encode for API call
-        $imageData = file_get_contents($photoPath);
-        $photoBase64 = base64_encode($imageData);
-        @unlink($photoPath); // Clean up temp file
+        // Process all photos
+        $allImages = [];
+        $hasError = false;
+        $errorMsg = '';
 
-        $result = $aiService->generate([
-            'model'  => $model['name'],
-            'prompt' => $prompt,
-            'image'  => $photoBase64
-        ]);
+        foreach ($photoPaths as $index => $photoPath) {
+            if (!file_exists($photoPath)) continue;
+            $imageData = file_get_contents($photoPath);
+            $photoBase64 = base64_encode($imageData);
+            @unlink($photoPath);
+
+            $result = $aiService->generate([
+                'model'  => $model['name'],
+                'prompt' => $prompt,
+                'image'  => $photoBase64
+            ]);
+
+            if (isset($result['error'])) {
+                $hasError = true;
+                $errorMsg = $result['error'];
+                break;
+            }
+
+            if (!empty($result['images'])) {
+                $allImages = array_merge($allImages, $result['images']);
+            }
+        }
 
         $imageType = 'img2img';
 
-        if (isset($result['error'])) {
+        if ($hasError && empty($allImages)) {
             $db->query(
                 "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
                 [$internalId, $modelId, $prompt, $imageType, $referenceId]
             );
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $result['error']);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $errorMsg);
             return;
         }
 
@@ -227,7 +294,7 @@ class Img2ImgHandler extends BaseHandler
             [$internalId, $modelId, $prompt, $imageType, $referenceId]
         );
 
-        foreach ($result['images'] ?? [] as $url) {
+        foreach ($allImages as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
         }
         $this->clearUserState($internalId);
@@ -256,8 +323,8 @@ class Img2ImgHandler extends BaseHandler
             $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
             if ($stateData) {
                 $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-                if (!empty($extra['photo_path']) && file_exists($extra['photo_path'])) {
-                    @unlink($extra['photo_path']);
+                foreach (($extra['photos'] ?? []) as $path) {
+                    if (file_exists($path)) @unlink($path);
                 }
             }
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
