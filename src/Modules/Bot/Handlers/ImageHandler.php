@@ -161,6 +161,17 @@ class ImageHandler extends BaseHandler
             return;
         }
 
+        // Generate unique reference for this request
+        $referenceId = 'ai_' . bin2hex(random_bytes(8));
+
+        // Deduct credits IMMEDIATELY before API call (issue #3 fix)
+        // This ensures credits are deducted even if AI server is slow or fails
+        if (!CreditService::deduct($internalId, $cost, $referenceId)) {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
+            return;
+        }
+
         $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
 
         $result = $aiService->generate([
@@ -169,29 +180,26 @@ class ImageHandler extends BaseHandler
         ]);
 
         if (isset($result['error'])) {
+            // Log as failed
+            $db->query(
+                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'failed', ?)",
+                [$internalId, $modelId, $prompt, $referenceId]
+            );
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
             return;
         }
 
-        $referenceId = 'ai_' . bin2hex(random_bytes(8));
-        
-        // Deduct credits BEFORE sending photos (idempotent)
-        if (!CreditService::deduct($internalId, $cost, $referenceId)) {
-            $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
-            return;
-        }
+        // Log successful request
+        $db->query(
+            "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)",
+            [$internalId, $modelId, $prompt, $referenceId]
+        );
         
         $images = $result['images'] ?? [];
         foreach ($images as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
         }
-        
-        $db->query(
-            "INSERT INTO ai_requests (user_id, model_id, prompt, status, reference_id) VALUES (?, ?, ?, 'success', ?)",
-            [$internalId, $modelId, $prompt, $referenceId]
-        );
 
         $this->clearUserState($internalId);
         $this->baleClient->sendMessage($chatId, "✨ عملیات با موفقیت پایان یافت.", $this->getMainMenuInlineKeyboard());

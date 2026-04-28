@@ -218,10 +218,19 @@ class DatabaseRepairService
     private function ensureCreditLedgerIndex(): void
     {
         if ($this->tableExists('credit_ledger')) {
-            // First ensure reference_id column exists
+            // First check if reference_id already has a UNIQUE index (skip if so)
+            $hasUnique = $this->indexExists('credit_ledger', 'idx_reference_id_unique');
+            
+            // First ensure reference_id column exists — use AFTER created_at for safety
+            // Bootstrap creates credit_ledger without model_key, so AFTER model_key would fail
             if (!$this->columnExists('credit_ledger', 'reference_id')) {
-                $this->exec("ALTER TABLE credit_ledger ADD COLUMN reference_id VARCHAR(100) NULL AFTER model_key");
+                $this->exec("ALTER TABLE credit_ledger ADD COLUMN reference_id VARCHAR(100) NULL");
                 $this->log('✅ ستون reference_id به جدول credit_ledger اضافه شد.');
+            }
+            // Also ensure model_key column exists (needed by CreditService)
+            if (!$this->columnExists('credit_ledger', 'model_key')) {
+                $this->exec("ALTER TABLE credit_ledger ADD COLUMN model_key VARCHAR(50) NULL AFTER type");
+                $this->log('✅ ستون model_key به جدول credit_ledger اضافه شد.');
             }
             // Then create index
             if (!$this->indexExists('credit_ledger', 'idx_reference_id')) {
@@ -229,10 +238,38 @@ class DatabaseRepairService
                 $this->log('✅ ایندکس idx_reference_id روی credit_ledger ایجاد شد.');
             }
             // N6: Create UNIQUE index for idempotency
-            if (!$this->indexExists('credit_ledger', 'idx_reference_id_unique')) {
+            if (!$hasUnique) {
+                // First drop any existing regular index with same name to avoid conflict
+                if ($this->indexExists('credit_ledger', 'idx_reference_id_unique')) {
+                    $this->exec("DROP INDEX idx_reference_id_unique ON credit_ledger");
+                }
                 $this->exec("ALTER TABLE credit_ledger ADD UNIQUE INDEX idx_reference_id_unique (reference_id)");
                 $this->log('✅ ایندکس یکتا idx_reference_id_unique روی credit_ledger ایجاد شد.');
             }
+            // Fix ENUM type to support 'charge' and 'deduction' values used by CreditService
+            $this->fixCreditLedgerTypeEnum();
+        }
+    }
+
+    /**
+     * Fix the credit_ledger.type ENUM to include 'charge' and 'deduction' values.
+     * Bootstrap creates ENUM('credit','debit') but CreditService uses 'charge' and 'deduction'.
+     */
+    private function fixCreditLedgerTypeEnum(): void
+    {
+        try {
+            $stmt = $this->conn->query("SHOW COLUMNS FROM credit_ledger WHERE Field = 'type'");
+            $col = $stmt->fetch();
+            if ($col) {
+                $typeDef = $col['Type'] ?? '';
+                // If type is enum('credit','debit'), alter it
+                if (strpos($typeDef, "enum('credit','debit')") !== false) {
+                    $this->exec("ALTER TABLE credit_ledger MODIFY COLUMN type VARCHAR(20) NOT NULL DEFAULT 'charge'");
+                    $this->log('✅ ستون type در credit_ledger به VARCHAR(20) تغییر یافت.');
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->log("⚠️ خطا در fixCreditLedgerTypeEnum: " . $e->getMessage());
         }
     }
 

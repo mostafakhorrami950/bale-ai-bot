@@ -13,7 +13,16 @@
  * 5. Show Persian result page
  */
 
-require_once __DIR__ . '/../../init.php';
+// Enable error display for debugging (safety net)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+try {
+    require_once __DIR__ . '/../../init.php';
+} catch (\Throwable $e) {
+    displayErrorPage("خطا در بارگذاری سیستم", $e->getMessage());
+    exit;
+}
 
 use Modules\Payment\ZibalService;
 use Modules\Bot\CreditService;
@@ -25,6 +34,7 @@ use Database\Logger;
 // 1. Get trackId from GET parameter
 // ============================================================
 $trackId = $_GET['trackId'] ?? $_GET['track_id'] ?? '';
+
 
 if (empty($trackId)) {
     displayResult(
@@ -245,9 +255,81 @@ function markPaymentFailed(string $trackId, string $errorMsg): void
     }
 }
 
+
+/**
+ * Display a simple error page when the entire system fails to load.
+ */
+function displayErrorPage(string $title, string $details): void
+{
+    ?>
+    <!DOCTYPE html>
+    <html lang="fa" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>❌ خطا</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: Tahoma, Arial, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 20px;
+            }
+            .card {
+                background: white;
+                border-radius: 20px;
+                padding: 40px;
+                max-width: 500px;
+                width: 100%;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
+            }
+            .icon { font-size: 64px; margin-bottom: 20px; }
+            h1 { font-size: 24px; color: #333; margin-bottom: 20px; }
+            .message {
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+                border-radius: 10px;
+                padding: 20px;
+                margin-bottom: 20px;
+                font-size: 14px;
+                line-height: 1.8;
+                text-align: left;
+                direction: ltr;
+                word-break: break-all;
+            }
+            .btn {
+                display: inline-block;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 14px 35px;
+                border-radius: 50px;
+                text-decoration: none;
+                font-size: 16px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div class="icon">❌</div>
+            <h1><?php echo htmlspecialchars($title); ?></h1>
+            <div class="message"><?php echo nl2br(htmlspecialchars($details)); ?></div>
+            <a href="https://t.me/mobix_tube_bot" class="btn">🚀 برگشت به ربات</a>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
 /**
  * Display a Persian HTML result page to the user.
  */
+
 function displayResult(bool $success, string $title, string $message, string $footer): void
 {
     $icon     = $success ? '✅' : '❌';

@@ -81,11 +81,11 @@ class Router
                 $state = 'idle';
             }
             
-            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt' || $state === 'selecting_model_image' || $state === 'selecting_model_edit' || $state === 'ai_processing') {
+            if ($state === 'awaiting_image_prompt' || $state === 'selecting_model_image' || $state === 'ai_processing') {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> ImageHandler");
                 return new ImageHandler($this->baleClient);
             }
-            if ($state === 'awaiting_edit_photo') {
+            if ($state === 'awaiting_edit_photo' || $state === 'selecting_model_edit' || $state === 'awaiting_edit_prompt') {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> Img2ImgHandler");
                 return new Img2ImgHandler($this->baleClient);
             }
@@ -114,11 +114,26 @@ class Router
                 'account' => 'AccountHandler',
                 'help' => 'ImageHandler',
                 'check_membership' => 'CallbackHandler',
-                'select_model_' => 'ImageHandler',
+                'edit_photos_done' => 'Img2ImgHandler',
             ];
             
-            // Check prefix for select_model_
+            // Check prefix for select_model_ — route based on current state
             if (str_starts_with($data, 'select_model_')) {
+                // Check user state to determine if this is for image or edit flow
+                try {
+                    $db = Database::getInstance();
+                    $stmt = $db->query(
+                        "SELECT bs.state FROM bot_state bs 
+                         JOIN users u ON bs.user_id = u.id 
+                         WHERE u.bale_user_id = ?",
+                        [$userId]
+                    );
+                    $row = $stmt->fetch();
+                    $currentState = $row['state'] ?? '';
+                    if ($currentState === 'selecting_model_edit') {
+                        return new Img2ImgHandler($this->baleClient);
+                    }
+                } catch (\Throwable $e) {}
                 return new ImageHandler($this->baleClient);
             }
             if (isset($map[$data])) {
