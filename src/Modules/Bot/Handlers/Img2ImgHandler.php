@@ -31,46 +31,46 @@ class Img2ImgHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            // Priority 1: AI processing lock
+            // AI processing lock
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
                     $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
                     return;
                 }
-                $this->baleClient->sendMessage($chatId, "⏳ لطفاً صبور باشید، هوش مصنوعی در حال ویرایش عکس شماست...");
+                $this->baleClient->sendMessage($chatId, "⏳ لطفاً صبور باشید...");
                 return;
             }
 
-            // Entry Point
+            // Entry
             if ($callbackData === 'edit_image' || $text === '🖼 ویرایش عکس') {
                 $this->showModelSelection($chatId, $userId);
                 return;
             }
 
-            // Step 2: Handle Model Selection
+            // Model selection
             if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
                 $modelId = (int) str_replace('select_model_', '', $callbackData);
                 $this->saveModelAndAskPhotos($chatId, $userId, $modelId);
                 return;
             }
 
-            // Step 3: Handle Photo Upload(s) - 1 to 5 photos
+            // Photo upload — store only file_id, show Done button
             if ($state === 'awaiting_edit_photo') {
                 if ($update->hasPhoto()) {
-                    $this->storePhotoAndCheckDone($chatId, $userId, $update->getPhotoFileId());
+                    $this->storeFileId($chatId, $userId, $update->getPhotoFileId());
                 } else {
-                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس(های) مورد نظر برای ویرایش را ارسال کنید (حداکثر ۵).\nپس از اتمام، دکمه «✅ انجام شد» را بزنید:", $this->getPhotoDoneKeyboard());
+                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس ارسال کنید (حداکثر ۵)\nسپس دکمه ✅ انجام شد را بزنید:", $this->getDoneKeyboard());
                 }
                 return;
             }
 
-            // Step 3b: User clicked "✅ انجام شد"
+            // Done button
             if ($callbackData === 'edit_photos_done') {
-                $this->finalizePhotosAndAskPrompt($chatId, $userId);
+                $this->downloadAllAndAskPrompt($chatId, $userId);
                 return;
             }
 
-            // Step 4: Handle Prompt
+            // Prompt
             if ($state === 'awaiting_edit_prompt') {
                 $this->processEditRequest($chatId, $userId, $text);
                 return;
@@ -116,7 +116,7 @@ class Img2ImgHandler extends BaseHandler
 
         $internalId = $this->resolveUserId($userId);
         $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);
-        $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر برای ویرایش را انتخاب کنید:", $keyboard);
+        $this->baleClient->sendMessage($chatId, "🎯 ابتدا مدل مورد نظر را انتخاب کنید:", $keyboard);
     }
 
     private function saveModelAndAskPhotos(int $chatId, int $userId, int $modelId): void
@@ -125,12 +125,12 @@ class Img2ImgHandler extends BaseHandler
         $db = Database::getInstance();
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_edit_photo', extra_data = ? WHERE user_id = ?",
-            [json_encode(['model_id' => $modelId, 'photos' => []]), $internalId]
+            [json_encode(['model_id' => $modelId, 'file_ids' => []]), $internalId]
         );
-        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. حالا عکس‌های مورد نظر را بفرستید (حداکثر ۵).\nپس از اتمام، دکمه «✅ انجام شد» را بزنید:", $this->getPhotoDoneKeyboard());
+        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. عکس‌ها را ارسال کنید (حداکثر ۵)\nسپس دکمه ✅ انجام شد را بزنید:", $this->getDoneKeyboard());
     }
 
-    private function getPhotoDoneKeyboard(): array
+    private function getDoneKeyboard(): array
     {
         return [
             'inline_keyboard' => [
@@ -139,69 +139,119 @@ class Img2ImgHandler extends BaseHandler
         ];
     }
 
-    private function storePhotoAndCheckDone(int $chatId, int $userId, string $fileId): void
+    /**
+     * Store only the file_id in DB (fast, no download).
+     * Photos are downloaded ALL AT ONCE when user clicks "انجام شد".
+     */
+    private function storeFileId(int $chatId, int $userId, string $fileId): void
+    {
+        $internalId = $this->resolveUserId($userId);
+        $db = Database::getInstance();
+        $conn = $db->getConnection();
+
+        try {
+            // Use transaction + FOR UPDATE for safe concurrent access
+            $conn->beginTransaction();
+
+            $stmt = $conn->prepare("SELECT extra_data FROM bot_state WHERE user_id = ? FOR UPDATE");
+            $stmt->execute([$internalId]);
+            $stateData = $stmt->fetch();
+            $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+            $fileIds = $extra['file_ids'] ?? [];
+
+            if (count($fileIds) >= 5) {
+                $conn->rollBack();
+                $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است. دکمه ✅ انجام شد را بزنید.", $this->getDoneKeyboard());
+                return;
+            }
+
+            if (in_array($fileId, $fileIds)) {
+                $conn->rollBack();
+                $this->baleClient->sendMessage($chatId, "⚠️ این عکس قبلاً ارسال شده.");
+                return;
+            }
+
+            $fileIds[] = $fileId;
+            $extra['file_ids'] = $fileIds;
+
+            $stmt = $conn->prepare("UPDATE bot_state SET extra_data = ? WHERE user_id = ?");
+            $stmt->execute([json_encode($extra), $internalId]);
+            $conn->commit();
+
+            $remaining = 5 - count($fileIds);
+            $msg = "✅ عکس " . count($fileIds) . " دریافت شد.\n";
+            $msg .= ($remaining > 0) ? "تا {$remaining} عکس دیگر می‌توانید ارسال کنید.\n" : "حداکثر تعداد رسید.\n";
+            $msg .= "سپس دکمه ✅ انجام شد را بزنید.";
+            $this->baleClient->sendMessage($chatId, $msg, $this->getDoneKeyboard());
+        } catch (\Throwable $e) {
+            if ($conn->inTransaction()) $conn->rollBack();
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ذخیره عکس.");
+        }
+    }
+
+    /**
+     * Download ALL photos at once when user clicks Done.
+     * This avoids race conditions from separate PHP requests.
+     */
+    private function downloadAllAndAskPrompt(int $chatId, int $userId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
 
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $photos = $extra['photos'] ?? [];
+        $fileIds = $extra['file_ids'] ?? [];
 
-        if (count($photos) >= 5) {
-            $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است. دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
+        if (count($fileIds) < 1) {
+            $this->baleClient->sendMessage($chatId, "⚠️ حداقل ۱ عکس ارسال کنید.", $this->getDoneKeyboard());
             return;
         }
 
-        $fileInfo = $this->baleClient->getFile($fileId);
-        if (!$fileInfo || empty($fileInfo['file_path'])) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت اطلاعات فایل از بله.");
+        $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت عکس‌ها از بله...");
+
+        // Download all photos now
+        $paths = [];
+        $failedCount = 0;
+
+        foreach ($fileIds as $i => $fileId) {
+            $fileInfo = $this->baleClient->getFile($fileId);
+            if (!$fileInfo || empty($fileInfo['file_path'])) {
+                $failedCount++;
+                continue;
+            }
+
+            $imageData = $this->baleClient->downloadFile($fileInfo['file_path']);
+            if (!$imageData) {
+                $failedCount++;
+                continue;
+            }
+
+            $tmpFilename = 'edit_' . $internalId . '_' . time() . '_' . $i . '.jpg';
+            $tmpPath = $this->uploadDir . $tmpFilename;
+            file_put_contents($tmpPath, $imageData);
+            $paths[] = $tmpPath;
+        }
+
+        if (empty($paths)) {
+            $this->baleClient->sendMessage($chatId, "⚠️ هیچ‌کدام از عکس‌ها قابل دریافت نبود.");
             return;
         }
 
-        $imageData = $this->baleClient->downloadFile($fileInfo['file_path']);
-        if (!$imageData) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت فایل از بله.");
-            return;
-        }
-
-        // Save to temp file instead of DB
-        $tmpFilename = 'edit_' . $internalId . '_' . time() . '_' . count($photos) . '.jpg';
-        $tmpPath = $this->uploadDir . $tmpFilename;
-        file_put_contents($tmpPath, $imageData);
-
-        $photos[] = $tmpPath;
-        $extra['photos'] = $photos;
+        // Store paths and advance state
+        $extra['photo_paths'] = $paths;
+        unset($extra['file_ids']);
 
         $db->query(
-            "UPDATE bot_state SET extra_data = ? WHERE user_id = ?",
+            "UPDATE bot_state SET state = 'awaiting_edit_prompt', extra_data = ? WHERE user_id = ?",
             [json_encode($extra), $internalId]
         );
 
-        $remaining = 5 - count($photos);
-        $this->baleClient->sendMessage($chatId, "✅ عکس شماره " . count($photos) . " دریافت شد.\n" . ($remaining > 0 ? "می‌توانید تا {$remaining} عکس دیگر ارسال کنید." : "حداکثر تعداد عکس دریافت شد.") . "\nپس از اتمام، دکمه «✅ انجام شد» را بزنید.", $this->getPhotoDoneKeyboard());
-    }
-
-    private function finalizePhotosAndAskPrompt(int $chatId, int $userId): void
-    {
-        $internalId = $this->resolveUserId($userId);
-        $db = Database::getInstance();
-
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $photos = $extra['photos'] ?? [];
-
-        if (count($photos) < 1) {
-            $this->baleClient->sendMessage($chatId, "⚠️ حداقل ۱ عکس باید ارسال کنید.", $this->getPhotoDoneKeyboard());
-            return;
+        $sentMsg = "✏️ " . count($paths) . " عکس دریافت شد.";
+        if ($failedCount > 0) {
+            $sentMsg .= " {$failedCount} عکس قابل دریافت نبود.";
         }
-
-        $db->query(
-            "UPDATE bot_state SET state = 'awaiting_edit_prompt' WHERE user_id = ?",
-            [$internalId]
-        );
-
-        $this->baleClient->sendMessage($chatId, "✏️ " . count($photos) . " عکس دریافت شد. متن تغییرات (Prompt) را بنویسید:");
+        $sentMsg .= " متن تغییرات (Prompt) را بنویسید:";
+        $this->baleClient->sendMessage($chatId, $sentMsg);
     }
 
     private function processEditRequest(int $chatId, int $userId, string $prompt): void
@@ -215,9 +265,9 @@ class Img2ImgHandler extends BaseHandler
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
 
         $modelId = (int)($extra['model_id'] ?? 0);
-        $photoPaths = $extra['photos'] ?? [];
+        $paths = $extra['photo_paths'] ?? [];
 
-        if (empty($modelId) || empty($photoPaths)) {
+        if (empty($modelId) || empty($paths)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی اطلاعات. دوباره شروع کنید.");
             return;
@@ -254,7 +304,7 @@ class Img2ImgHandler extends BaseHandler
         $hasError = false;
         $errorMsg = '';
 
-        foreach ($photoPaths as $index => $photoPath) {
+        foreach ($paths as $photoPath) {
             if (!file_exists($photoPath)) continue;
             $imageData = file_get_contents($photoPath);
             $photoBase64 = base64_encode($imageData);
@@ -323,7 +373,7 @@ class Img2ImgHandler extends BaseHandler
             $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
             if ($stateData) {
                 $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-                foreach (($extra['photos'] ?? []) as $path) {
+                foreach (($extra['photo_paths'] ?? []) as $path) {
                     if (file_exists($path)) @unlink($path);
                 }
             }

@@ -104,6 +104,11 @@ class Update
         return $last['file_unique_id'] ?? null;
     }
 
+    public function getMediaGroupId(): ?string
+    {
+        return $this->data['message']['media_group_id'] ?? null;
+    }
+
     public function isDuplicate(): bool
     {
         try {
