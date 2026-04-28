@@ -200,26 +200,40 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت عکس‌ها از بله...");
 
-        // Download all photos now
+        // Download all photos now using direct curl (bypass broken downloadFile)
         $paths = [];
         $failedCount = 0;
+        $token = \Core\Config::get('BALE_BOT_TOKEN');
 
         foreach ($fileIds as $i => $fileId) {
-            $fileInfo = $this->baleClient->getFile($fileId);
-            if (!$fileInfo || empty($fileInfo['file_path'])) {
+            $getFileResponse = $this->baleClient->getFile($fileId);
+            $filePath = $getFileResponse['result']['file_path'] ?? null;
+
+            if (!$filePath) {
+                error_log("Img2ImgHandler: No file_path from getFile for file_id=$fileId");
                 $failedCount++;
                 continue;
             }
 
-            $imageData = $this->baleClient->downloadFile($fileInfo['file_path']);
-            if (!$imageData) {
+            $downloadUrl = "https://tapi.bale.ai/file/bot{$token}/{$filePath}";
+
+            $ch = curl_init($downloadUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            $imageBinary = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode !== 200 || empty($imageBinary) || strlen($imageBinary) < 1000) {
+                error_log("Img2ImgHandler: Failed to download photo, HTTP=$httpCode, size=" . strlen($imageBinary ?? ''));
                 $failedCount++;
                 continue;
             }
 
             $tmpFilename = 'edit_' . $internalId . '_' . time() . '_' . $i . '.jpg';
             $tmpPath = $this->uploadDir . $tmpFilename;
-            file_put_contents($tmpPath, $imageData);
+            file_put_contents($tmpPath, $imageBinary);
             $paths[] = $tmpPath;
         }
 
