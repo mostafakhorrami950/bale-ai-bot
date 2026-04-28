@@ -54,6 +54,12 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
+            // Done button — MUST be checked BEFORE state check
+            if ($callbackData === 'edit_photos_done') {
+                $this->downloadAllAndAskPrompt($chatId, $userId);
+                return;
+            }
+
             // Photo upload — store only file_id, show Done button
             if ($state === 'awaiting_edit_photo') {
                 if ($update->hasPhoto()) {
@@ -61,12 +67,6 @@ class Img2ImgHandler extends BaseHandler
                 } else {
                     $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس ارسال کنید (حداکثر ۵)\nسپس دکمه ✅ انجام شد را بزنید:", $this->getDoneKeyboard());
                 }
-                return;
-            }
-
-            // Done button
-            if ($callbackData === 'edit_photos_done') {
-                $this->downloadAllAndAskPrompt($chatId, $userId);
                 return;
             }
 
@@ -143,6 +143,10 @@ class Img2ImgHandler extends BaseHandler
      * Store only the file_id in DB (fast, no download).
      * Photos are downloaded ALL AT ONCE when user clicks "انجام شد".
      */
+    /**
+     * Store only the file_id in DB silently (no message per photo).
+     * When user clicks "انجام شد", all photos are downloaded at once.
+     */
     private function storeFileId(int $chatId, int $userId, string $fileId): void
     {
         $internalId = $this->resolveUserId($userId);
@@ -150,7 +154,6 @@ class Img2ImgHandler extends BaseHandler
         $conn = $db->getConnection();
 
         try {
-            // Use transaction + FOR UPDATE for safe concurrent access
             $conn->beginTransaction();
 
             $stmt = $conn->prepare("SELECT extra_data FROM bot_state WHERE user_id = ? FOR UPDATE");
@@ -161,14 +164,13 @@ class Img2ImgHandler extends BaseHandler
 
             if (count($fileIds) >= 5) {
                 $conn->rollBack();
-                $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است. دکمه ✅ انجام شد را بزنید.", $this->getDoneKeyboard());
+                $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است.", $this->getDoneKeyboard());
                 return;
             }
 
             if (in_array($fileId, $fileIds)) {
                 $conn->rollBack();
-                $this->baleClient->sendMessage($chatId, "⚠️ این عکس قبلاً ارسال شده.");
-                return;
+                return; // Silent duplicate
             }
 
             $fileIds[] = $fileId;
@@ -177,15 +179,8 @@ class Img2ImgHandler extends BaseHandler
             $stmt = $conn->prepare("UPDATE bot_state SET extra_data = ? WHERE user_id = ?");
             $stmt->execute([json_encode($extra), $internalId]);
             $conn->commit();
-
-            $remaining = 5 - count($fileIds);
-            $msg = "✅ عکس " . count($fileIds) . " دریافت شد.\n";
-            $msg .= ($remaining > 0) ? "تا {$remaining} عکس دیگر می‌توانید ارسال کنید.\n" : "حداکثر تعداد رسید.\n";
-            $msg .= "سپس دکمه ✅ انجام شد را بزنید.";
-            $this->baleClient->sendMessage($chatId, $msg, $this->getDoneKeyboard());
         } catch (\Throwable $e) {
             if ($conn->inTransaction()) $conn->rollBack();
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ذخیره عکس.");
         }
     }
 
