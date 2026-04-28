@@ -141,46 +141,42 @@ class Img2ImgHandler extends BaseHandler
 
     /**
      * Store only the file_id in DB (fast, no download).
-     * Photos are downloaded ALL AT ONCE when user clicks "انجام شد".
-     */
-    /**
-     * Store only the file_id in DB silently (no message per photo).
+     * Sends a message only for the FIRST photo to avoid spam for media groups.
      * When user clicks "انجام شد", all photos are downloaded at once.
      */
     private function storeFileId(int $chatId, int $userId, string $fileId): void
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        $conn = $db->getConnection();
 
         try {
-            $conn->beginTransaction();
-
-            $stmt = $conn->prepare("SELECT extra_data FROM bot_state WHERE user_id = ? FOR UPDATE");
-            $stmt->execute([$internalId]);
-            $stateData = $stmt->fetch();
+            // Read current state
+            $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
             $extra = json_decode($stateData['extra_data'] ?? '{}', true);
             $fileIds = $extra['file_ids'] ?? [];
+            $wasEmpty = empty($fileIds);
 
             if (count($fileIds) >= 5) {
-                $conn->rollBack();
                 $this->baleClient->sendMessage($chatId, "⚠️ حداکثر ۵ عکس مجاز است.", $this->getDoneKeyboard());
                 return;
             }
 
             if (in_array($fileId, $fileIds)) {
-                $conn->rollBack();
-                return; // Silent duplicate
+                return;
             }
 
             $fileIds[] = $fileId;
             $extra['file_ids'] = $fileIds;
 
-            $stmt = $conn->prepare("UPDATE bot_state SET extra_data = ? WHERE user_id = ?");
-            $stmt->execute([json_encode($extra), $internalId]);
-            $conn->commit();
+            // Write back
+            $db->query("UPDATE bot_state SET extra_data = ? WHERE user_id = ?", [json_encode($extra), $internalId]);
+
+            // Send message only for the first photo
+            if ($wasEmpty) {
+                $this->baleClient->sendMessage($chatId, "✅ عکس دریافت شد. می‌توانید عکس‌های بیشتری ارسال کنید یا دکمه ✅ انجام شد را بزنید.", $this->getDoneKeyboard());
+            }
         } catch (\Throwable $e) {
-            if ($conn->inTransaction()) $conn->rollBack();
+            // Silent fail
         }
     }
 
