@@ -59,7 +59,7 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            $this->baleClient->sendMessage($chatId, "🤖 لطفاً یکی از گزینه‌های منو را انتخاب کنید:");
+            $this->baleClient->sendMessage($chatId, "🤖 لطفاً یکی از گزینه‌های منو را انتخاب کنید:", $this->getPersistentKeyboard());
         } catch (\Throwable $e) {
             Logger::error('Img2ImgHandler exception', ['user_id' => $userId, 'error' => $e->getMessage()]);
             $this->baleClient->sendMessage($chatId, "⚠️ خطایی رخ داد. مجدداً تلاش کنید.");
