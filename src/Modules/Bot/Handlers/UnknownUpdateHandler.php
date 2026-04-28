@@ -16,7 +16,11 @@ class UnknownUpdateHandler extends BaseHandler
         if (method_exists($update, 'isCallback') && $update->isCallback()) {
             $callbackId = method_exists($update, 'getCallbackId') ? $update->getCallbackId() : null;
             if ($callbackId) {
-                $this->baleClient->answerCallbackQuery($callbackId);
+                try {
+                    $this->baleClient->answerCallbackQuery($callbackId);
+                } catch (\Exception $e) {
+                    error_log("UnknownUpdateHandler: answerCallback failed - " . $e->getMessage());
+                }
             }
         }
     }

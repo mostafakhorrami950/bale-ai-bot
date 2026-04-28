@@ -61,6 +61,7 @@ class Img2ImgHandler extends BaseHandler
 
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً یکی از گزینه‌های منو را انتخاب کنید:", $this->getPersistentKeyboard());
         } catch (\Throwable $e) {
+            error_log("Img2ImgHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             Logger::error('Img2ImgHandler exception', ['user_id' => $userId, 'error' => $e->getMessage()]);
             $this->baleClient->sendMessage($chatId, "⚠️ خطایی رخ داد. مجدداً تلاش کنید.");
         }

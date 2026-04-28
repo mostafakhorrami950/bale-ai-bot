@@ -63,7 +63,7 @@ class BuyCreditHandler extends BaseHandler
 
         $keyboard = ['inline_keyboard' => []];
         foreach ($plans as $plan) {
-            $label = "{$plan['name']} - " . number_format($plan['credits']) . " اعتبار - " . number_format($plan['price_rial']) . " تومان";
+            $label = "{$plan['name']} - " . number_format($plan['credits']) . " اعتبار - " . number_format($plan['price_rial'] / 10) . " تومان";
             $keyboard['inline_keyboard'][] = [
                 ['text' => $label, 'callback_data' => 'plan_' . $plan['id']]
             ];
@@ -117,15 +117,16 @@ class BuyCreditHandler extends BaseHandler
 
             if (isset($result['trackId'])) {
                 $trackId = $result['trackId'];
+                $orderId = 'ORD-' . $internalId . '-' . time();
 
                 Database::getInstance()->query(
-                    "INSERT INTO payments (user_id, track_id, amount_rial, credits, plan_id, status) VALUES (?, ?, ?, ?, ?, 'pending')",
-                    [$internalId, $trackId, $amountRial, $plan['credits'], $plan['id']]
+                    "INSERT INTO payments (user_id, track_id, order_id, amount_rial, credits, plan_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+                    [$internalId, $trackId, $orderId, $amountRial, $plan['credits'], $plan['id']]
                 );
 
                 $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
                 $message = "💳 **پرداخت برای پلن: {$plan['name']}**\n\n";
-                $message .= "💰 مبلغ: " . number_format($amountRial) . " ریال\n";
+                $message .= "💰 مبلغ: " . number_format($amountRial / 10) . " تومان\n";
                 $message .= "💎 اعتبار: {$plan['credits']} کردیت\n\n";
                 $message .= "🔗 لینک پرداخت:\n{$paymentUrl}\n\n";
                 $message .= "⏳ پس از پرداخت، به صورت خودکار اعتبار به حساب شما اضافه می‌شود.";

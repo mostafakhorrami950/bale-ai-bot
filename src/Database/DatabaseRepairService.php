@@ -32,6 +32,7 @@ class DatabaseRepairService
         $this->ensureAiModelsProviderColumn();
         $this->ensureApiKeysProviderColumn();
         $this->ensureUsersColumns();
+        $this->seedDefaultModel();
 
         return $this->messages;
     }
@@ -247,6 +248,26 @@ class DatabaseRepairService
         if ($this->tableExists('api_keys') && !$this->columnExists('api_keys', 'provider')) {
             $this->exec("ALTER TABLE api_keys ADD COLUMN provider VARCHAR(50) DEFAULT 'gapgpt' AFTER id");
             $this->log('✅ ستون provider به جدول api_keys اضافه شد.');
+        }
+    }
+
+    private function seedDefaultModel(): void
+    {
+        if (!$this->tableExists('ai_models')) return;
+        try {
+            $stmt = $this->conn->query("SELECT COUNT(*) as c FROM ai_models");
+            $count = $stmt->fetch()['c'] ?? 0;
+            if ($count == 0) {
+                $this->exec("
+                    INSERT IGNORE INTO ai_models (name, provider, cost_per_image, is_active) VALUES 
+                    ('gpt-image-1', 'gapgpt', 2, 1),
+                    ('gemini-3-pro-image-preview', 'gapgpt', 3, 1),
+                    ('gemini-3.1-flash-image-preview', 'gapgpt', 1, 1)
+                ");
+                $this->log('✅ سه مدل پیش‌فرض AI در ai_models درج شد.');
+            }
+        } catch (\Throwable $e) {
+            $this->log("⚠️ خطا در seedDefaultModel: " . $e->getMessage());
         }
     }
 

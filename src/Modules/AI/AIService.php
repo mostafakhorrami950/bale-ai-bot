@@ -67,9 +67,20 @@ class AIService
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE id = ?", [$id]);
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE id = ? AND is_active = 1", [$id]);
             $row = $stmt->fetch();
-            return $row ?: null;
+            if ($row) return $row;
+            // Fallback: return first active model
+            $fallback = $this->getFirstActiveModel();
+            if ($fallback) return $fallback;
+            // Ultimate fallback: return hardcoded default if table is empty
+            return [
+                'id' => 0,
+                'name' => 'gpt-image-1',
+                'provider' => 'gapgpt',
+                'cost_per_image' => 2,
+                'is_active' => 1
+            ];
         } catch (\Throwable $e) {
             Logger::error('AIService::getModelById failed', [
                 'model_id' => $id,
