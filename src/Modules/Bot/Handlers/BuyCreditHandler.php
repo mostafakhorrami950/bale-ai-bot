@@ -35,23 +35,29 @@ class BuyCreditHandler extends BaseHandler
                 'error'   => $e->getMessage(),
                 'trace'   => $e->getTraceAsString(),
             ]);
-            $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            error_log("BuyCreditHandler FATAL ERROR: " . $e->getMessage());
+            $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی در بارگزاری پلن‌ها پیش آمد.\nعلت: " . $e->getMessage());
         }
     }
 
     private function showPlans(int $chatId, int $userId): void
     {
+        error_log("BuyCreditHandler::showPlans CALLED for user $userId");
         // Check if payment_plans table exists
         try {
-            $plans = Database::getInstance()->query("SELECT * FROM payment_plans WHERE is_active=1")->fetchAll();
+            $db = Database::getInstance();
+            $plans = $db->query("SELECT * FROM payment_plans WHERE is_active=1")->fetchAll();
+            error_log("BuyCreditHandler::showPlans FOUND " . count($plans) . " plans");
         } catch (\PDOException $e) {
-            Logger::error('BuyCreditHandler: payment_plans table missing', ['error' => $e->getMessage()]);
-            $this->baleClient->sendMessage($chatId, "⚠️ در حال حاضر پلن‌های شارژ در دسترس نیست. لطفاً بعداً تلاش کنید.");
+            error_log("BuyCreditHandler SQL ERROR: " . $e->getMessage());
+            Logger::error('BuyCreditHandler: payment_plans table error', ['error' => $e->getMessage()]);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در پایگاه داده پلن‌ها. لطفاً به پشتیبانی اطلاع دهید.");
             return;
         }
 
         if (empty($plans)) {
-            $this->baleClient->sendMessage($chatId, "⚠️ در حال حاضر پلن‌های شارژ در دسترس نیست. لطفاً بعداً تلاش کنید.");
+            error_log("BuyCreditHandler: NO ACTIVE PLANS IN DB");
+            $this->baleClient->sendMessage($chatId, "⚠️ هیچ پلن فعالی یافت نشد.");
             return;
         }
 

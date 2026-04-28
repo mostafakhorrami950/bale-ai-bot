@@ -16,39 +16,52 @@ class ImageHandler extends BaseHandler
             $chatId  = $update->getChatId();
             $userId  = $update->getUserId();
             $text    = $update->getText();
+            $callbackData = $update->getCallbackData();
             $isCallback = $update->isCallback();
-
-            if ($isCallback) {
-                $this->askForPrompt($chatId, $userId);
-                return;
-            }
-
-            if ($text === '🎨 ساخت تصویر') {
-                $this->askForPrompt($chatId, $userId);
-                return;
-            }
 
             $state = $this->getUserState($userId);
 
+            // Priority: Block user if AI is processing
+            if ($state === 'ai_processing') {
+                if ($text === '/cancel') {
+                    $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش توسط هوش مصنوعی است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
+                    return;
+                }
+                $this->baleClient->sendMessage($chatId, "⏳ لطفاً صبور باشید، درخواست قبلی شما در حال پردازش است...");
+                return;
+            }
+
+            // Entry point 1: Button click or command
+            if ($callbackData === 'generate_image' || $text === '🎨 ساخت تصویر') {
+                $this->showModelSelection($chatId, $userId, 'image');
+                return;
+            }
+
+            // Step 2: Handle Model Selection
+            if ($isCallback && str_starts_with($callbackData, 'select_model_')) {
+                $modelId = (int) str_replace('select_model_', '', $callbackData);
+                $this->saveSelectedModelAndAskPrompt($chatId, $userId, $modelId);
+                return;
+            }
+
+            // Step 3: Handle Prompt Input
             if ($state === 'awaiting_image_prompt') {
+                if ($text === '/cancel' || $text === 'منو اصلی') return; // Handled by Router but safety first
                 $this->processPrompt($chatId, $userId, $text);
                 return;
             }
 
-            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getPersistentKeyboard());
+            // Fallback
+            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:");
         } catch (\Throwable $e) {
             Logger::error('ImageHandler exception', [
                 'user_id' => $update->getUserId(),
-                'error'   => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
+                'error'   => $e->getMessage()
             ]);
             $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
         }
     }
 
-    /**
-     * Resolve internal user.id from Bale user ID.
-     */
     private function resolveUserId(int $baleUserId): ?int
     {
         try {
@@ -61,17 +74,57 @@ class ImageHandler extends BaseHandler
         }
     }
 
-    private function askForPrompt(int $chatId, int $userId): void
+    private function showModelSelection(int $chatId, int $userId, string $type): void
+    {
+        try {
+            $db = Database::getInstance();
+            $models = $db->query("SELECT id, name, cost_per_image FROM ai_models WHERE is_active = 1")->fetchAll();
+
+            if (empty($models)) {
+                $this->baleClient->sendMessage($chatId, "❌ در حال حاضر هیچ مدل فعالی یافت نشد.");
+                return;
+            }
+
+            $keyboard = ['inline_keyboard' => []];
+            foreach ($models as $model) {
+                $keyboard['inline_keyboard'][] = [[
+                    'text' => "🤖 {$model['name']} (هزینه: {$model['cost_per_image']} اعتبار)",
+                    'callback_data' => "select_model_{$model['id']}"
+                ]];
+            }
+
+            $internalId = $this->resolveUserId($userId);
+            $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
+            
+            $db->execute(
+                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
+                [$internalId, $nextState, $nextState]
+            );
+
+            $this->baleClient->sendMessage($chatId, "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:", json_encode($keyboard));
+        } catch (\Throwable $e) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
+        }
+    }
+
+    private function saveSelectedModelAndAskPrompt(int $chatId, int $userId, int $modelId): void
     {
         $internalId = $this->resolveUserId($userId);
-        if ($internalId) {
-            Database::getInstance()->query(
-                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, 'awaiting_image_prompt', NOW())
-                 ON DUPLICATE KEY UPDATE state='awaiting_image_prompt', updated_at=NOW()",
-                [$internalId]
-            );
+        $db = Database::getInstance();
+        
+        $model = $db->query("SELECT * FROM ai_models WHERE id = ?", [$modelId])->fetch();
+        if (!$model) {
+            $this->baleClient->sendMessage($chatId, "⚠️ مدل انتخاب شده معتبر نیست.");
+            return;
         }
-        $this->baleClient->sendMessage($chatId, "🎨 لطفاً متن تصویر مورد نظر خود را بنویسید:");
+
+        $db->execute(
+            "UPDATE bot_state SET state = 'awaiting_image_prompt', extra_data = ? WHERE user_id = ?",
+            [json_encode(['model_id' => $modelId]), $internalId]
+        );
+
+        $this->baleClient->sendMessage($chatId, "🎨 مدل «{$model['name']}» انتخاب شد.\n\nلطفاً متن تصویر مورد نظر خود را بنویسید:");
     }
 
     private function processPrompt(int $chatId, int $userId, string $prompt): void
@@ -81,34 +134,33 @@ class ImageHandler extends BaseHandler
             return;
         }
 
-        $user = User::findByBaleId($userId);
-        if (!$user) {
-            $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد. لطفاً ابتدا با /start ثبت‌نام کنید.");
-            return;
-        }
-        $internalId = (int) $user['id'];
+        $internalId = $this->resolveUserId($userId);
+        $db = Database::getInstance();
+        
+        // Lock user first to prevent loops/double spending
+        $db->execute("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
 
-        // Clear state
-        $this->clearUserState($internalId);
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $modelId = $extra['model_id'] ?? null;
 
         $aiService = new AIService();
-        $model = $aiService->getFirstActiveModel();
+        $model = $aiService->getActiveModelById((int)$modelId);
+        
         if (!$model) {
-            Logger::error('ImageHandler: no active AI model found');
-            $this->baleClient->sendMessage($chatId, "❌ مدل فعالی یافت نشد، لطفاً بعداً تلاش کنید.");
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد. لطفاً دوباره انتخاب کنید.");
             return;
         }
 
         $cost = (int) $model['cost_per_image'];
-
         if (!CreditService::hasEnoughCredit($internalId, $cost)) {
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار شما کافی نیست.\n💰 هزینه هر تصویر: {$cost} اعتبار\n💳 لطفاً از بخش «شارژ اعتبار» حساب خود را افزایش دهید.");
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "❌ اعتبار شما کافی نیست (نیاز به {$cost} اعتبار).");
             return;
         }
 
-        $referenceId = 'ai_txt_' . $internalId . '_' . time() . '_' . bin2hex(random_bytes(4));
-
-        $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر... لطفاً چند لحظه صبر کنید.");
+        $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
 
         $result = $aiService->generate([
             'model'  => $model['name'],
@@ -116,80 +168,27 @@ class ImageHandler extends BaseHandler
         ]);
 
         if (isset($result['error'])) {
-            Logger::error('ImageHandler: AI generation failed', [
-                'user_id' => $userId,
-                'model'   => $model['name'],
-                'error'   => $result['error'],
-            ]);
-            $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی در ساخت تصویر پیش آمد. لطفاً دوباره تلاش کنید.");
-            $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'text2img', 'failed', $referenceId);
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
             return;
         }
 
-        $images = $result['images'];
-        $caption = "✅ ساخته شد با مدل {$model['name']}\n💰 هزینه: {$cost} اعتبار";
-
-        $allSent = true;
+        $referenceId = 'ai_' . bin2hex(random_bytes(8));
+        $images = $result['images'] ?? [];
+        
         foreach ($images as $url) {
-            $response = $this->baleClient->sendPhoto($chatId, $url, $caption);
-            if (!isset($response['ok']) || $response['ok'] !== true) {
-                $allSent = false;
-                Logger::error('ImageHandler: sendPhoto failed', [
-                    'user_id' => $userId,
-                    'url'     => $url,
-                    'error'   => $response['description'] ?? 'Unknown',
-                ]);
-            }
-            $caption = null;
+            $this->baleClient->sendPhoto($chatId, $url, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
         }
 
-        if ($allSent) {
-            $deducted = CreditService::deduct($internalId, $cost, $referenceId);
-            if (!$deducted) {
-                Logger::error('ImageHandler: credit deduction failed AFTER sending images', [
-                    'user_id'      => $internalId,
-                    'amount'       => $cost,
-                    'reference_id' => $referenceId,
-                ]);
-            }
-        } else {
-            Logger::warning('ImageHandler: some images failed to send, not charging', ['user_id' => $userId]);
-        }
-
-        $this->logAiRequest($internalId, (int) $model['id'], $prompt, 'text2img', 'success', $referenceId);
+        CreditService::deduct($internalId, $cost, $referenceId);
+        
+        $db->execute(
+            "INSERT INTO ai_requests (user_id, model_id, prompt, status, reference_id) VALUES (?, ?, ?, 'success', ?)",
+            [$internalId, $modelId, $prompt, $referenceId]
+        );
 
         $this->clearUserState($internalId);
-
-        // Send result and main menu inline keyboard
-        $inlineKeyboard = [
-            'inline_keyboard' => [
-                [
-                    ['text' => "\xF0\x9F\x8E\xA8 \xD8\xB3\xD8\xA7\xD8\xAE\xD8\xAA \xD8\xAA\xD8\xB5\xD9\x88\xDB\x8C\xD8\xB1", 'callback_data' => 'generate_image'],
-                    ['text' => "\xF0\x9F\x96\xBC \xD9\x88\xDB\x8C\xD8\xB1\xD8\xA7\xDB\x8C\xD8\xB4 \xD8\xB9\xDA\xA9\xD8\xB3", 'callback_data' => 'edit_image']
-                ],
-                [
-                    ['text' => "\xF0\x9F\x91\xA4 \xD8\xAD\xD8\xB3\xD8\xA7\xD8\xA8 \xD9\x85\xD9\x86", 'callback_data' => 'account'],
-                    ['text' => "\xF0\x9F\x92\xB3 \xD8\xB4\xD8\xA7\xD8\xB1\xDA\x98 \xD8\xA7\xD8\xB9\xD8\xAA\xD8\xA8\xD8\xA7\xD8\xB1", 'callback_data' => 'buy_credit']
-                ],
-                [
-                    ['text' => "\xE2\x9D\x93 \xD8\xB1\xD8\xA7\xD9\x87\xD9\x86\xD9\x85\xD8\xA7", 'callback_data' => 'help']
-                ]
-            ]
-        ];
-        $this->baleClient->sendMessage($chatId, "✅ تصویر با موفقیت ساخته شد!", $inlineKeyboard);
-    }
-
-    private function logAiRequest(int $userId, int $modelId, string $prompt, string $imageType, string $status, string $referenceId): void
-    {
-        try {
-            $db = Database::getInstance();
-            $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, ?, ?)",
-                [$userId, $modelId, $prompt, $imageType, $status, $referenceId]
-            );
-        } catch (\Throwable $e) {
-            Logger::error('ImageHandler: logAiRequest failed', ['error' => $e->getMessage()]);
-        }
+        $this->baleClient->sendMessage($chatId, "✨ عملیات با موفقیت پایان یافت.", $this->getMainMenuInlineKeyboard());
     }
 
     private function getUserState(int $baleUserId): ?string
@@ -213,19 +212,25 @@ class ImageHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
-        } catch (\Throwable $e) {
-            // Silent
-        }
+            $db->execute("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
+        } catch (\Throwable $e) {}
     }
 
     private function getPersistentKeyboard(): array
     {
         return [
-            'keyboard' => [
-                [['text' => '/cancel'], ['text' => "\xD9\x85\xD9\x86\xD9\x88 \xD8\xA7\xD8\xB5\xD9\x84\xDB\x8C"]]
-            ],
+            'keyboard' => [[['text' => '/cancel'], ['text' => "منو اصلی"]]],
             'resize_keyboard' => true
         ];
+    }
+
+    private function getMainMenuInlineKeyboard(): string
+    {
+        return json_encode([
+            'inline_keyboard' => [
+                [['text' => '🎨 ساخت تصویر', 'callback_data' => 'generate_image'], ['text' => '🖼 ویرایش عکس', 'callback_data' => 'edit_image']],
+                [['text' => '👤 حساب من', 'callback_data' => 'account'], ['text' => '💳 شارژ اعتبار', 'callback_data' => 'buy_credit']]
+            ]
+        ]);
     }
 }

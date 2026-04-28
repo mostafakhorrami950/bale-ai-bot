@@ -81,7 +81,7 @@ class Router
                 $state = 'idle';
             }
             
-            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt') {
+            if ($state === 'awaiting_image_prompt' || $state === 'awaiting_edit_prompt' || $state === 'selecting_model_image' || $state === 'selecting_model_edit' || $state === 'ai_processing') {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> ImageHandler");
                 return new ImageHandler($this->baleClient);
             }
@@ -111,7 +111,13 @@ class Router
                 'account' => 'AccountHandler',
                 'help' => 'ImageHandler',
                 'check_membership' => 'CallbackHandler',
+                'select_model_' => 'ImageHandler',
             ];
+            
+            // Check prefix for select_model_
+            if (str_starts_with($data, 'select_model_')) {
+                return new ImageHandler($this->baleClient);
+            }
             if (isset($map[$data])) {
                 $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
                 return new $class($this->baleClient);
