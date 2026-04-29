@@ -152,13 +152,51 @@ class AIService
 
     private function gapgptImageEdit(string $prompt, string $image, string $model): array
     {
+        // Convert image to temp file for multipart upload
         try {
             [$tmpFile, $mime] = $this->imageToTempFile($image);
         } catch (\Throwable $e) {
-            Logger::error('gapgptImageEdit: image decode failed', ['error' => $e->getMessage()]);
+            $this->aiLog('ERROR', 'gapgptImageEdit: decode failed', ['error' => $e->getMessage()]);
             return ['error' => $e->getMessage()];
         }
 
+        // Strategy 1: Try /images/edits with multipart (OpenAI-compatible)
+        $result = $this->tryMultipartEdit($prompt, $tmpFile, $mime, $model);
+        if (isset($result['images'])) {
+            @unlink($tmpFile);
+            return $result;
+        }
+
+        $this->aiLog('WARN', 'gapgptImageEdit: /images/edits failed, trying generations with embedded prompt', $result);
+
+        // Strategy 2: Fallback — embed image as base64 data URI in prompt for /images/generations
+        $imageData = file_get_contents($tmpFile);
+        @unlink($tmpFile);
+
+        if (!empty($imageData)) {
+            $base64Image = base64_encode($imageData);
+            $dataUri = "data:{$mime};base64,{$base64Image}";
+            $enhancedPrompt = "Edit this image: {$prompt}\nReference image: {$dataUri}";
+
+            $this->aiLog('INFO', 'gapgptImageEdit: trying generations with embedded image', [
+                'model' => $model, 'image_size' => strlen($imageData),
+            ]);
+
+            $result2 = $this->gapgptImageGeneration($enhancedPrompt, $model);
+            if (isset($result2['images'])) {
+                return $result2;
+            }
+            $this->aiLog('WARN', 'gapgptImageEdit: generations also failed', $result2);
+        }
+
+        return ['error' => 'ویرایش تصویر با GapGPT ممکن نیست. لطفاً از مدل MetisAI استفاده کنید.'];
+    }
+
+    /**
+     * Try multipart upload to /images/edits
+     */
+    private function tryMultipartEdit(string $prompt, string $tmpFile, string $mime, string $model): array
+    {
         $ext = pathinfo($tmpFile, PATHINFO_EXTENSION);
         $curlFile = new \CURLFile($tmpFile, $mime, 'image.' . $ext);
 
@@ -173,19 +211,16 @@ class AIService
         $url = $this->gapgptBaseUrl . '/images/edits';
         $ch = curl_init($url);
         curl_setopt_array($ch, [
-            CURLOPT_POST          => true,
-            CURLOPT_POSTFIELDS    => $postFields,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $postFields,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT       => $this->timeout,
+            CURLOPT_TIMEOUT        => 120, // 120s max for CDN
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_VERBOSE       => true,
-            CURLOPT_HEADER        => true,
-            CURLOPT_HTTPHEADER    => [
-                'Authorization: Bearer ' . $this->gapgptApiKey,
-            ],
+            CURLOPT_VERBOSE        => true,
+            CURLOPT_HEADER         => true,
+            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $this->gapgptApiKey],
         ]);
-        // Capture verbose output
         $verboseFile = tmpfile();
         curl_setopt($ch, CURLOPT_STDERR, $verboseFile);
 
@@ -196,40 +231,34 @@ class AIService
         $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         curl_close($ch);
 
-        // Get verbose log
         rewind($verboseFile);
         $verboseLog = stream_get_contents($verboseFile);
         fclose($verboseFile);
 
-        @unlink($tmpFile);
-
-        // Extract header & body
         $responseHeader = substr($response, 0, $headerSize);
         $responseBody   = substr($response, $headerSize);
 
-        $this->aiLog('INFO', 'GapGPT edits response', [
-            'http'     => $httpCode,
-            'errno'    => $errno,
-            'error'    => $error,
-            'header'   => mb_substr($responseHeader, 0, 500),
-            'body'     => mb_substr($responseBody, 0, 2000),
-            'verbose'  => mb_substr($verboseLog, 0, 1000),
-            'mime'     => $mime,
-            'file_ext' => $ext,
+        $this->aiLog('INFO', 'tryMultipartEdit', [
+            'http'  => $httpCode,
+            'errno' => $errno,
+            'error' => $error,
+            'header' => mb_substr($responseHeader, 0, 500),
+            'body'   => mb_substr($responseBody, 0, 1000),
+            'verbose' => mb_substr($verboseLog, 0, 500),
         ]);
 
-        if ($errno) return ['error' => 'Connection error: ' . $error];
+        if ($errno || $httpCode >= 500) {
+            return ['error' => "HTTP {$httpCode}: {$error}"];
+        }
 
         $r = json_decode($responseBody, true);
-        if (!is_array($r)) {
-            $this->aiLog('ERROR', 'gapgptImageEdit: invalid JSON', ['body_raw' => mb_substr($responseBody, 0, 3000)]);
-            return ['error' => 'Invalid response from AI service (HTTP ' . $httpCode . ')'];
-        }
+        if (!is_array($r)) return ['error' => 'Invalid JSON'];
+
         if (isset($r['error'])) {
             $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
-            Logger::error('gapgptImageEdit: API error', ['msg' => $msg]);
             return ['error' => $msg];
         }
+
         return $this->gapgptParse($r);
     }
 
