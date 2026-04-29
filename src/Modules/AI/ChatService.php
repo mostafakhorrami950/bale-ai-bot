@@ -7,18 +7,36 @@ use Database\Database;
 use Database\Logger;
 
 /**
- * ChatService — handles OpenRouter chat completions with per-character billing.
+ * ChatService — handles multi-provider chat completions (text models only).
+ * Supports: OpenRouter, GapGPT (OpenAI-compatible), MetisAI Wrapper.
+ *
+ * Provider is determined from ai_models.provider, not hardcoded.
+ * API keys come from .env (OPENROUTER_API_KEY, GAPGPT_API_KEY, METISAI_API_KEY).
  */
 class ChatService
 {
-    private string $apiKey;
-    private string $baseUrl;
     private string $logFile;
+
+    private const PROVIDERS = [
+        'openrouter' => [
+            'base_url' => 'https://openrouter.ai/api/v1',
+            'key_env'  => 'OPENROUTER_API_KEY',
+            'endpoint' => '/chat/completions',
+        ],
+        'gapgpt' => [
+            'base_url' => 'https://api.gapgpt.app/v1',
+            'key_env'  => 'GAPGPT_API_KEY',
+            'endpoint' => '/chat/completions',
+        ],
+        'metisai' => [
+            'base_url' => 'https://api.metisai.ir/api/v1',
+            'key_env'  => 'METISAI_API_KEY',
+            'endpoint' => '/wrapper/',  // + {provider_name}/chat/completions
+        ],
+    ];
 
     public function __construct()
     {
-        $this->apiKey = Config::get('OPENROUTER_API_KEY', '');
-        $this->baseUrl = 'https://openrouter.ai/api/v1';
         $this->logFile = Config::get('AI_LOG_FILE', BASE_PATH . '/logs_ai.txt');
     }
 
@@ -30,20 +48,63 @@ class ChatService
     }
 
     /**
+     * Build the appropriate API endpoint URL based on provider.
+     */
+    private function buildEndpoint(string $provider, array $modelData): string
+    {
+        $provider = strtolower($provider);
+        $cfg = self::PROVIDERS[$provider] ?? self::PROVIDERS['openrouter'];
+
+        if ($provider === 'metisai') {
+            // MetisAI uses wrapper: /wrapper/{provider_name}/chat/completions
+            // provider_name comes from model_config.metisai.model_name or defaults to 'openai'
+            $mc = json_decode($modelData['model_config'] ?? '{}', true);
+            $wrapperName = $mc['metisai']['model_name'] ?? 'openai';
+            return $cfg['base_url'] . '/wrapper/' . trim($wrapperName) . '/chat/completions';
+        }
+
+        return $cfg['base_url'] . $cfg['endpoint'];
+    }
+
+    /**
+     * Get the API key for a given provider.
+     */
+    private function getApiKey(string $provider): string
+    {
+        $provider = strtolower($provider);
+        $envKey = self::PROVIDERS[$provider]['key_env'] ?? 'OPENROUTER_API_KEY';
+
+        // Also check provider-specific env vars like METISAI_API_KEY, GAPGPT_API_KEY
+        $key = Config::get($envKey, '');
+
+        if (empty($key)) {
+            // Fallback to OPENROUTER_API_KEY for backward compatibility
+            $key = Config::get('OPENROUTER_API_KEY', '');
+        }
+
+        return $key;
+    }
+
+    /**
      * Send a chat prompt and get the AI response.
      *
-     * @param array  $messages   Full message history for OpenRouter
-     * @param string $model      Model name (e.g. "google/gemini-2.5-flash-image")
-     * @param array  $modelData  Full model row from ai_models
+     * @param array  $messages   Full message history (OpenRouter-compatible format)
+     * @param string $model      Model name (e.g. "google/gemini-2.5-flash-image", "deepseek-chat")
+     * @param array  $modelData  Full model row from ai_models (provider, model_config, etc.)
      * @return array ['response' => string, 'input_chars' => int, 'output_chars' => int, 'error' => string|null]
      */
     public function chat(array $messages, string $model, array $modelData): array
     {
-        if (empty($this->apiKey)) {
-            return ['error' => 'OpenRouter API Key تنظیم نشده است.'];
+        $provider = strtolower($modelData['provider'] ?? 'openrouter');
+        $apiKey = $this->getApiKey($provider);
+
+        if (empty($apiKey)) {
+            $msg = "API Key برای ارائه‌دهنده «{$provider}» تنظیم نشده است.";
+            $this->aiLog('ERROR', $msg, ['provider' => $provider]);
+            return ['error' => $msg];
         }
 
-        // Count input chars from all messages
+        // Count input chars
         $inputChars = $this->countMessageChars($messages);
 
         $payload = [
@@ -52,18 +113,38 @@ class ChatService
             'stream'     => false,
         ];
 
-        // Some models work best with modalities
-        if (str_contains($model, 'gemini')) {
-            $payload['modalities'] = ['image', 'text'];
+        // OpenRouter-specific: pass referrer
+        $extraHeaders = [];
+        if ($provider === 'openrouter') {
+            $extraHeaders[] = 'HTTP-Referer: https://mobixai.ir';
+            $extraHeaders[] = 'X-OpenRouter-Title: MobixAI Bot';
         }
 
+        // GapGPT / MetisAI: optional size/quality from model_config
+        if (in_array($provider, ['gapgpt', 'metisai'])) {
+            $mc = json_decode($modelData['model_config'] ?? '{}', true);
+            if ($provider === 'metisai') {
+                $mcfg = $mc['metisai'] ?? [];
+                if (!empty($mcfg['model_model'])) {
+                    $payload['model'] = $mcfg['model_model']; // override model name for MetisAI
+                }
+                if (!empty($mcfg['size'])) {
+                    $payload['size'] = $mcfg['size'];
+                }
+            }
+        }
+
+        $endpoint = $this->buildEndpoint($provider, $modelData);
+
         $this->aiLog('INFO', 'ChatService request', [
-            'model' => $model,
+            'provider' => $provider,
+            'model' => $payload['model'],
+            'endpoint' => $endpoint,
             'msg_count' => count($messages),
             'input_chars' => $inputChars,
         ]);
 
-        $result = $this->openrouterCall($payload);
+        $result = $this->providerCall($endpoint, $payload, $apiKey, $extraHeaders);
 
         if (isset($result['error'])) {
             return $result;
@@ -82,10 +163,6 @@ class ChatService
 
     /**
      * Calculate credit cost for input/output chars based on model settings.
-     *
-     * @param int   $chars
-     * @param float $costPerChar  From ai_models.cost_per_input_char or cost_per_output_char
-     * @return int  Credits (rounded up, minimum 0)
      */
     public static function calcCreditCost(int $chars, float $costPerChar): int
     {
@@ -95,7 +172,7 @@ class ChatService
     }
 
     /**
-     * Count total characters in an array of OpenRouter messages.
+     * Count total characters in an array of messages.
      */
     private function countMessageChars(array $messages): int
     {
@@ -109,7 +186,6 @@ class ChatService
                     if (($part['type'] ?? '') === 'text') {
                         $total += mb_strlen($part['text'] ?? '');
                     }
-                    // image parts are counted as 1000 chars equivalent
                     if (($part['type'] ?? '') === 'image_url') {
                         $total += 1000;
                     }
@@ -120,7 +196,7 @@ class ChatService
     }
 
     /**
-     * Build OpenRouter messages array from DB chat_messages rows.
+     * Build OpenRouter-compatible messages from DB chat_messages rows.
      */
     public static function buildMessagesFromHistory(array $rows, string $newUserText = null, string $fileContent = null, string $fileType = null): array
     {
@@ -132,20 +208,15 @@ class ChatService
             'content' => 'شما یک دستیار هوش مصنوعی مفید هستید. به زبان فارسی پاسخ دهید.'
         ];
 
-        // History
         foreach ($rows as $row) {
             $role = $row['role'];
-            if ($role === 'system') continue; // skip old system msgs
+            if ($role === 'system') continue;
 
             if (!empty($row['file_type']) && !empty($row['file_content'])) {
-                // Message with file attachment
-                $parts = [
-                    ['type' => 'text', 'text' => $row['content']],
-                ];
+                $parts = [['type' => 'text', 'text' => $row['content']]];
                 if ($row['file_type'] === 'image') {
                     $parts[] = ['type' => 'image_url', 'image_url' => ['url' => $row['file_content']]];
                 } else {
-                    // text file - append content to text
                     $parts[0]['text'] .= "\n\n[فایل ضمیمه: {$row['file_type']}]\n{$row['file_content']}";
                 }
                 $messages[] = ['role' => $role, 'content' => $parts];
@@ -154,7 +225,6 @@ class ChatService
             }
         }
 
-        // New user message
         if ($newUserText !== null) {
             if ($fileContent !== null && $fileType !== null) {
                 $parts = [['type' => 'text', 'text' => $newUserText]];
@@ -173,19 +243,28 @@ class ChatService
     }
 
     /**
-     * Get the estimated file character cost for billing.
+     * Estimate file character cost for billing.
      */
     public static function estimateFileChars(string $fileType, string $fileContent): int
     {
-        if ($fileType === 'image') {
-            return 1000; // fixed cost for image
-        }
+        if ($fileType === 'image') return 1000;
         return mb_strlen($fileContent);
     }
 
-    private function openrouterCall(array $payload): array
+    /**
+     * Make the actual cURL call to the provider's API.
+     */
+    private function providerCall(string $endpoint, array $payload, string $apiKey, array $extraHeaders = []): array
     {
-        $ch = curl_init($this->baseUrl . '/chat/completions');
+        $headers = [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey,
+        ];
+        foreach ($extraHeaders as $h) {
+            $headers[] = $h;
+        }
+
+        $ch = curl_init($endpoint);
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -193,31 +272,28 @@ class ChatService
             CURLOPT_TIMEOUT        => 120,
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $this->apiKey,
-                'HTTP-Referer: https://mobixai.ir',
-                'X-OpenRouter-Title: MobixAI Bot',
-            ],
+            CURLOPT_HTTPHEADER     => $headers,
         ]);
-        $body   = curl_exec($ch);
-        $errno  = curl_errno($ch);
-        $error  = curl_error($ch);
+
+        $body     = curl_exec($ch);
+        $errno    = curl_errno($ch);
+        $error    = curl_error($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
         $this->aiLog('INFO', 'ChatService API', [
-            'http' => $httpCode,
-            'errno' => $errno,
-            'error' => $error,
-            'body' => mb_substr($body ?? '', 0, 2000),
+            'http'     => $httpCode,
+            'errno'    => $errno,
+            'error'    => $error,
+            'endpoint' => $endpoint,
+            'body'     => mb_substr($body ?? '', 0, 2000),
         ]);
 
         if ($errno) return ['error' => 'خطای اتصال: ' . $error];
-        if ($httpCode >= 400) return ['error' => "OpenRouter HTTP {$httpCode}: " . mb_substr($body, 0, 500)];
+        if ($httpCode >= 400) return ['error' => "HTTP {$httpCode}: " . mb_substr($body, 0, 500)];
 
         $r = json_decode($body, true);
-        if (!is_array($r)) return ['error' => 'پاسخ نامعتبر از OpenRouter'];
+        if (!is_array($r)) return ['error' => 'پاسخ نامعتبر از API'];
 
         if (isset($r['error'])) {
             $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
@@ -230,7 +306,7 @@ class ChatService
             $text .= $choice['message']['content'] ?? '';
         }
 
-        if (empty(trim($text))) return ['error' => 'پاسخ خالی از OpenRouter دریافت شد'];
+        if (empty(trim($text))) return ['error' => 'پاسخ خالی از API دریافت شد'];
 
         return ['response' => $text];
     }
