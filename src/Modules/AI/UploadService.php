@@ -22,6 +22,7 @@ class UploadService
         if (!file_exists($htaccess)) {
             file_put_contents($htaccess, "Allow From All\n");
         }
+        // PUBLIC_BASE_URL = "https://mobixai.ir", uploads are at public/uploads/ai/
         $this->publicBaseUrl = rtrim(Config::get('PUBLIC_BASE_URL', 'https://mobixai.ir'), '/');
     }
 
@@ -53,7 +54,7 @@ class UploadService
             return null;
         }
 
-        $publicUrl = $this->publicBaseUrl . '/uploads/ai/' . $filename;
+        $publicUrl = $this->publicBaseUrl . '/public/uploads/ai/' . $filename;
         $fileSize = strlen($binary);
         $mimeType = $this->getMimeFromExt($ext);
 

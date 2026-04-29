@@ -153,10 +153,12 @@ class AIService
 
     private function metisaiPoll(string $taskId): array
     {
+        $lastResponse = '';
         for ($i = 1; $i <= max(1, (int)($this->timeout / 5)); $i++) {
             $r = $this->metisaiGet("/generate/$taskId");
             if (isset($r['error'])) return $r;
             $s = $r['status'] ?? '';
+            $lastResponse = json_encode($r, JSON_UNESCAPED_UNICODE);
 
             if ($s === 'COMPLETED') {
                 $images = [];
@@ -170,11 +172,13 @@ class AIService
             if (in_array($s, ['ERROR', 'CANCELLED', 'FAILED'], true)) {
                 $err = $r['error'] ?? ($s === 'CANCELLED' ? 'لغو شده' : 'خطا در تولید');
                 if (is_array($err)) $err = $err['message'] ?? json_encode($err);
+                Logger::error('MetisAI generation failed', ['task_id' => $taskId, 'status' => $s, 'error' => $err, 'raw' => mb_substr($lastResponse, 0, 3000)]);
                 return ['error' => "تولید تصویر ناموفق: $err"];
             }
             sleep(5);
         }
-        return ['error' => 'زمان تولید تصویر به پایان رسید (تا)'];
+        Logger::error('MetisAI poll timeout', ['task_id' => $taskId, 'last_response' => mb_substr($lastResponse, 0, 2000)]);
+        return ['error' => 'زمان تولید تصویر به پایان رسید لطفاً دوباره تلاش کنید'];
     }
 
     private function metisaiGet(string $path): array
