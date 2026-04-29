@@ -67,9 +67,99 @@ class AIService
 
     private function gapgptImageEdit(string $prompt, string $image, string $model): array
     {
-        return $this->gapgptParse($this->gapgptCall('/images/edits', [
-            'model' => $model, 'image' => $image, 'prompt' => $prompt, 'n' => 1, 'size' => '1024x1024',
-        ]));
+        // OpenAI-compatible /images/edits requires multipart/form-data with actual image file
+        $tmpFile = null;
+        $imageData = null;
+
+        // If it's base64, decode to binary
+        if (str_starts_with($image, 'data:') || preg_match('/^[a-zA-Z0-9+\/=]+$/', $image)) {
+            // Remove data URI prefix if present
+            $clean = $image;
+            if (str_contains($clean, 'base64,')) {
+                $clean = explode('base64,', $clean)[1] ?? $clean;
+            }
+            $imageData = base64_decode($clean, true);
+        } elseif (filter_var($image, FILTER_VALIDATE_URL)) {
+            // It's a URL, download it
+            $ch = curl_init($image);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => true]);
+            $imageData = curl_exec($ch);
+            curl_close($ch);
+        }
+
+        if (empty($imageData)) {
+            return ['error' => 'تصویر ورودی نامعتبر است'];
+        }
+
+        // Write to temp file
+        $tmpFile = tempnam(sys_get_temp_dir(), 'gpt_edit_') . '.png';
+        file_put_contents($tmpFile, $imageData);
+
+        // Build multipart request
+        $boundary = '----GapGPTEdit' . bin2hex(random_bytes(8));
+        $eol = "\r\n";
+        $body = '';
+
+        // image file
+        $body .= '--' . $boundary . $eol;
+        $body .= 'Content-Disposition: form-data; name="image"; filename="image.png"' . $eol;
+        $body .= 'Content-Type: image/png' . $eol . $eol;
+        $body .= $imageData . $eol;
+
+        // prompt
+        $body .= '--' . $boundary . $eol;
+        $body .= 'Content-Disposition: form-data; name="prompt"' . $eol . $eol;
+        $body .= $prompt . $eol;
+
+        // model
+        $body .= '--' . $boundary . $eol;
+        $body .= 'Content-Disposition: form-data; name="model"' . $eol . $eol;
+        $body .= $model . $eol;
+
+        // n
+        $body .= '--' . $boundary . $eol;
+        $body .= 'Content-Disposition: form-data; name="n"' . $eol . $eol;
+        $body .= '1' . $eol;
+
+        // size
+        $body .= '--' . $boundary . $eol;
+        $body .= 'Content-Disposition: form-data; name="size"' . $eol . $eol;
+        $body .= '1024x1024' . $eol;
+
+        // end
+        $body .= '--' . $boundary . '--' . $eol;
+
+        // Clean up temp file
+        if ($tmpFile && file_exists($tmpFile)) @unlink($tmpFile);
+
+        $url = $this->gapgptBaseUrl . '/images/edits';
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: multipart/form-data; boundary=' . $boundary,
+                'Authorization: Bearer ' . $this->gapgptApiKey,
+                'Content-Length: ' . strlen($body),
+            ],
+        ]);
+        $response = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($errno) return ['error' => 'Connection error: ' . $error];
+        $r = json_decode($response, true);
+        if (!is_array($r)) return ['error' => 'Invalid response from AI service'];
+        if (isset($r['error'])) {
+            $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
+            return ['error' => $msg];
+        }
+        return $this->gapgptParse($r);
     }
 
     private function gapgptCall(string $endpoint, array $data): array
