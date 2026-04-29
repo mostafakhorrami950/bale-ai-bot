@@ -3,6 +3,7 @@
 namespace Modules\Bot\Handlers;
 
 use Modules\AI\AIService;
+use Modules\AI\UploadService;
 use Modules\Bot\CreditService;
 use Modules\Bot\Models\User;
 use Database\Database;
@@ -302,17 +303,30 @@ class Img2ImgHandler extends BaseHandler
         $allImages = [];
         $hasError = false;
         $errorMsg = '';
+        $uploadService = new UploadService();
+        $isMetisai = strtolower($model['provider'] ?? '') === 'metisai';
 
         foreach ($paths as $photoPath) {
             if (!file_exists($photoPath)) continue;
             $imageData = file_get_contents($photoPath);
-            $photoBase64 = base64_encode($imageData);
+            
+            // For MetisAI: save locally and pass public URL
+            // For GapGPT: pass base64
+            if ($isMetisai) {
+                $imageUrl = $uploadService->saveImage($internalId, $imageData);
+                if (!$imageUrl) {
+                    $imageUrl = base64_encode($imageData); // fallback
+                }
+            } else {
+                $imageUrl = base64_encode($imageData);
+            }
+            
             @unlink($photoPath);
 
             $result = $aiService->generate([
                 'model'    => $model['name'],
                 'prompt'   => $prompt,
-                'image'    => $photoBase64,
+                'image'    => $imageUrl,
                 'provider' => $model['provider'] ?? '',
             ]);
 

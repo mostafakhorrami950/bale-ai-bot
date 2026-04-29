@@ -176,15 +176,8 @@ class AIService
         ];
 
         // IMPORTANT: MetisAI requires publicly accessible URLs for images
-        // For image editing, use 'image_input' field
         if ($image) {
-            if (filter_var($image, FILTER_VALIDATE_URL)) {
-                $args['image_input'] = $image;
-            } else {
-                // base64 — we must upload somewhere accessible or pass as data URI
-                // Try data URI first (MetisAI may reject large payloads)
-                $args['image_input'] = 'data:image/jpeg;base64,' . $image;
-            }
+            $args['image'] = $image;
         }
 
         $operation = 'Imagine';

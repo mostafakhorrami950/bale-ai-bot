@@ -20,6 +20,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Handle file cleanup action
+if (isset($_POST['action']) && $_POST['action'] === 'clean_uploads') {
+    try {
+        $uploadService = new \Modules\AI\UploadService();
+        $deleted = $uploadService->cleanOldFiles(24);
+        header('Location: settings.php?cleaned=' . $deleted);
+        exit;
+    } catch (\Throwable $e) {
+        $message = '❌ خطا در پاکسازی: ' . $e->getMessage();
+    }
+}
+
 $currentSettings = $settingsManager->getAll();
 
 ob_start();
@@ -114,6 +126,25 @@ ob_start();
                     <i class="bi bi-save"></i> ذخیره کلیه تنظیمات
                 </button>
             </form>
+        </div>
+
+        <div class="table-container mt-4">
+            <h5>🗑️ پاکسازی فایل‌های آپلود شده</h5>
+            <?php
+            use Modules\AI\UploadService;
+            $uploadStats = (new UploadService())->getStats();
+            ?>
+            <p>تعداد فایل‌های ذخیره شده: <strong><?php echo number_format($uploadStats['count']); ?></strong></p>
+            <p>حجم کل: <strong><?php echo number_format($uploadStats['total_size'] / 1024, 1); ?> KB</strong></p>
+            <form method="POST" onsubmit="return confirm('فایل‌های قدیمی‌تر از ۲۴ ساعت حذف شوند؟');">
+                <input type="hidden" name="action" value="clean_uploads">
+                <button type="submit" class="btn btn-warning">
+                    🗑️ پاکسازی فایل‌های قدیمی (بیشتر از ۲۴ ساعت)
+                </button>
+            </form>
+            <?php if (isset($_GET['cleaned'])): ?>
+                <div class="alert alert-success mt-2">✅ <?php echo (int)$_GET['cleaned']; ?> فایل پاکسازی شد.</div>
+            <?php endif; ?>
         </div>
     </div>
 
