@@ -30,7 +30,7 @@ class AIService
      * $params can contain:
      *   - model    (string) required — e.g. "gpt-image-2"
      *   - prompt   (string) required
-     *   - provider (string|null) optional — "gapgpt", "metisai", or null (auto-detect)
+     *   - provider (string|null) optional — "gapgpt", "metisai", or null (GapGPT default)
      *   - image    (string|null) optional base64 or URL for img2img
      *   - mask     (string|null) optional base64 or URL for inpainting
      *   - size     (string) optional, default '1024x1024'
@@ -59,7 +59,13 @@ class AIService
 
         // Route by provider from the ai_models table
         if (strtolower($provider) === 'metisai') {
-            return $this->metisaiGenerate($prompt, $model, $image, $mask, $size, $n);
+            // Clean model name: strip trailing description like "gpt-image-2 metis" -> "gpt-image-2"
+            $cleanModel = preg_replace('/\s+metis.*$/i', '', $model);
+            $cleanModel = trim(preg_replace('/\s+/', ' ', $cleanModel));
+            // Also take only the first word if there's a space
+            $parts = explode(' ', $cleanModel);
+            $cleanModel = $parts[0];
+            return $this->metisaiGenerate($prompt, $cleanModel, $image, $mask, $size, $n);
         }
 
         // Default: GapGPT (OpenAI-compatible)
@@ -200,6 +206,12 @@ class AIService
      */
     private function metisaiGenerate(string $prompt, string $model, ?string $image, ?string $mask, string $size, int $n): array
     {
+        Logger::info('AIService MetisAI generate start', [
+            'model'  => $model,
+            'has_image' => $image ? 'yes' : 'no',
+            'has_mask'  => $mask  ? 'yes' : 'no',
+        ]);
+
         // Build args
         $args = [
             'prompt'        => $prompt,
@@ -210,28 +222,31 @@ class AIService
         ];
 
         if ($image) {
-            // If it's a valid URL, use as-is; otherwise treat as base64 and upload
+            // MetisAI needs a publicly accessible URL for the image
+            // If it's already a URL, use it directly
             if (filter_var($image, FILTER_VALIDATE_URL)) {
                 $args['image'] = $image;
             } else {
-                // Upload base64 to a temporary hosting or pass directly
-                // MetisAI may accept base64 data URIs
-                $args['image'] = $image;
+                // base64 — upload to a temporary file hosting or pass as data URI
+                // MetisAI accepts base64 data URIs: data:image/jpeg;base64,...
+                $args['image'] = 'data:image/jpeg;base64,' . $image;
             }
+            Logger::info('AIService MetisAI image arg', [
+                'is_url' => filter_var($image, FILTER_VALIDATE_URL) ? 'yes' : 'no',
+            ]);
         }
         if ($mask) {
             if (filter_var($mask, FILTER_VALIDATE_URL)) {
                 $args['mask'] = $mask;
             } else {
-                $args['mask'] = $mask;
+                $args['mask'] = 'data:image/png;base64,' . $mask;
             }
         }
 
         // Determine operation
+        // MetisAI: "Imagine" for text2img or img2img, "Inpaint" for mask-based editing
         $operation = 'Imagine';
-        if ($image && !$mask) {
-            $operation = 'Imagine';
-        } elseif ($image && $mask) {
+        if ($image && $mask) {
             $operation = 'Inpaint';
         }
 
@@ -244,9 +259,14 @@ class AIService
             'args'      => $args,
         ];
 
+        Logger::info('AIService MetisAI submitting', [
+            'payload' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+
         // Step 1: Submit generation
         $submitResult = $this->metisaiCallApi('/generate', $payload);
         if (isset($submitResult['error'])) {
+            Logger::error('AIService MetisAI submit failed', ['error' => $submitResult['error']]);
             return $submitResult;
         }
 
@@ -256,6 +276,8 @@ class AIService
             Logger::error('AIService MetisAI: no generation_id', ['response' => $submitResult]);
             return ['error' => 'Failed to get generation ID from MetisAI'];
         }
+
+        Logger::info('AIService MetisAI submitted', ['generation_id' => $generationId]);
 
         // Step 2: Poll for result
         $pollResult = $this->metisaiPoll($generationId);
@@ -281,8 +303,12 @@ class AIService
 
             $status = $result['status'] ?? $result['data']['status'] ?? 'unknown';
 
+            Logger::info('AIService MetisAI poll', [
+                'attempt' => $attempt,
+                'status'  => $status,
+            ]);
+
             if ($status === 'completed' || $status === 'succeeded') {
-                // Extract image URLs from result
                 return $this->metisaiExtractImages($result);
             }
 
@@ -359,14 +385,15 @@ class AIService
     {
         $images = [];
 
-        // Try various response structures
+        // MetisAI response structure from user's API:
+        // { "status": "completed", "data": { "results": [ { "url": "..." } ] } }
+        // or { "data": { "images": [ "url1", "url2" ] } }
         $data = $result['data'] ?? $result;
         $resultsArr = $data['results'] ?? $data['images'] ?? [];
 
         if (is_array($resultsArr)) {
             foreach ($resultsArr as $item) {
                 if (is_string($item)) {
-                    // Direct URL string
                     $images[] = $item;
                 } elseif (is_array($item)) {
                     if (isset($item['url'])) {
@@ -398,14 +425,15 @@ class AIService
     private function metisaiCallApi(string $endpoint, array $data): array
     {
         $url = $this->metisaiBaseUrl . $endpoint;
+        $payloadJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $ch = curl_init();
 
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($data),
+            CURLOPT_POSTFIELDS     => $payloadJson,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_TIMEOUT        => 60,
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_HTTPHEADER     => [
@@ -420,8 +448,18 @@ class AIService
         $error    = curl_error($ch);
         curl_close($ch);
 
+        // Log full payload and response for debugging
+        Logger::info('AIService MetisAI API call', [
+            'endpoint'  => $endpoint,
+            'http_code' => $httpCode,
+            'payload'   => mb_substr($payloadJson, 0, 2000),
+            'response'  => mb_substr($body ?? '', 0, 500),
+            'curl_errno' => $errno,
+            'curl_error' => $error,
+        ]);
+
         if ($errno !== 0) {
-            Logger::error('AIService MetisAI HTTP error', [
+            Logger::error('AIService MetisAI cURL error', [
                 'endpoint' => $endpoint,
                 'errno'    => $errno,
                 'error'    => $error,
@@ -439,7 +477,7 @@ class AIService
             return ['error' => 'Invalid response from MetisAI', '_http_code' => $httpCode];
         }
 
-        // MetisAI returns { "error": "..." } on failure
+        // MetisAI error responses
         if (isset($result['error'])) {
             $msg = is_array($result['error'])
                 ? ($result['error']['message'] ?? json_encode($result['error']))
@@ -457,7 +495,7 @@ class AIService
     }
 
     // ──────────────────────────────────────────────
-    //  Shared model utilities (unchanged)
+    //  Shared model utilities
     // ──────────────────────────────────────────────
 
     public function getModelById(int $id): ?array
