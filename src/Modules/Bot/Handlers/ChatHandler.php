@@ -558,7 +558,7 @@ class ChatHandler extends BaseHandler
     private function getChatActiveKeyboard(): array
     {
         return [
-            'keyboard' => [[['text' => '🚪 خروج از گفتگو'], ['text' => 'منو اصلی']]],
+            'keyboard' => [[['text' => '🚪 خروج از گفتگو'], ['text' => '/cancel']], [['text' => 'منو اصلی']]],
             'resize_keyboard' => true,
         ];
     }

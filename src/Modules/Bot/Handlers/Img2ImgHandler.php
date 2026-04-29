@@ -49,8 +49,8 @@ class Img2ImgHandler extends BaseHandler
             }
 
             // Model selection
-            if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
-                $modelId = (int) str_replace('select_model_', '', $callbackData);
+            if ($update->isCallback() && is_string($callbackData) && str_starts_with($callbackData, 'edit_select_model_')) {
+                $modelId = (int) str_replace('edit_select_model_', '', $callbackData);
                 $this->saveModelAndAskPhotos($chatId, $userId, $modelId);
                 return;
             }
@@ -111,7 +111,7 @@ class Img2ImgHandler extends BaseHandler
         foreach ($models as $model) {
             $keyboard['inline_keyboard'][] = [[
                 'text' => "🖼 {$model['name']} ({$model['cost_per_image']} اعتبار)",
-                'callback_data' => "select_model_{$model['id']}"
+                'callback_data' => "edit_select_model_{$model['id']}"
             ]];
         }
 

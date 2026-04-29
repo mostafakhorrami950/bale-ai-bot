@@ -128,24 +128,15 @@ class Router
             ];
 
             
-            // Check prefix for select_model_ — route based on current state
-            if (str_starts_with($data, 'select_model_')) {
-                // Check user state to determine if this is for image or edit flow
-                try {
-                    $db = Database::getInstance();
-                    $stmt = $db->query(
-                        "SELECT bs.state FROM bot_state bs 
-                         JOIN users u ON bs.user_id = u.id 
-                         WHERE u.bale_user_id = ?",
-                        [$userId]
-                    );
-                    $row = $stmt->fetch();
-                    $currentState = $row['state'] ?? '';
-                    if ($currentState === 'selecting_model_edit') {
-                        return new Img2ImgHandler($this->baleClient);
-                    }
-                } catch (\Throwable $e) {}
+            // Unique prefixes — each handler owns its own namespace
+            if (str_starts_with($data, 'img_select_model_')) {
                 return new ImageHandler($this->baleClient);
+            }
+            if (str_starts_with($data, 'edit_select_model_')) {
+                return new Img2ImgHandler($this->baleClient);
+            }
+            if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_')) {
+                return new ChatHandler($this->baleClient);
             }
             if (isset($map[$data])) {
                 $class = 'Modules\\Bot\\Handlers\\' . $map[$data];

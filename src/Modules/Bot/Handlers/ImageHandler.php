@@ -38,8 +38,8 @@ class ImageHandler extends BaseHandler
             }
 
             // Step 2: Handle Model Selection
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
-                $modelId = (int) str_replace('select_model_', '', $callbackData);
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'img_select_model_')) {
+                $modelId = (int) str_replace('img_select_model_', '', $callbackData);
                 $this->saveSelectedModelAndAskPrompt($chatId, $userId, $modelId);
                 return;
             }
@@ -81,10 +81,10 @@ class ImageHandler extends BaseHandler
             }
             $keyboard = ['inline_keyboard' => []];
             foreach ($models as $model) {
-                $keyboard['inline_keyboard'][] = [[
-                    'text' => "🤖 {$model['name']} (هزینه: {$model['cost_per_image']} اعتبار)",
-                    'callback_data' => "select_model_{$model['id']}"
-                ]];
+            $keyboard['inline_keyboard'][] = [[
+                'text' => "🤖 {$model['name']} (هزینه: {$model['cost_per_image']} اعتبار)",
+                'callback_data' => "img_select_model_{$model['id']}"
+            ]];
             }
             $internalId = $this->resolveUserId($userId);
             $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
