@@ -14,23 +14,28 @@ class AIService
     private int $timeout;
     private string $logFile;
 
+    // OpenRouter
+    private string $openrouterApiKey;
+    private string $openrouterBaseUrl;
+
     public function __construct()
     {
         $this->gapgptApiKey = Config::get('GAPGPT_API_KEY', '');
         $this->gapgptBaseUrl = rtrim(Config::get('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1'), '/');
         $this->metisaiApiKey = Config::get('METISAI_API_KEY', '');
         $this->metisaiBaseUrl = rtrim(Config::get('METISAI_BASE_URL', 'https://api.metisai.ir/api/v2'), '/');
+
+        $this->openrouterApiKey = Config::get('OPENROUTER_API_KEY', '');
+        $this->openrouterBaseUrl = 'https://openrouter.ai/api/v1';
+
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
-        $this->logFile = BASE_PATH . '/logs_ai.txt';
+        $this->logFile = Config::get('AI_LOG_FILE', BASE_PATH . '/logs_ai.txt');
         $logDir = dirname($this->logFile);
         if (!is_dir($logDir)) {
             @mkdir($logDir, 0755, true);
         }
     }
 
-    /**
-     * Write a log entry to the AI log file (logs_ai.txt)
-     */
     private function aiLog(string $level, string $message, array $context = []): void
     {
         $timestamp = date('Y-m-d H:i:s');
@@ -43,9 +48,9 @@ class AIService
      * Generate image. Routes to correct provider.
      *
      * $params:
-     *   - model      (string) required — model name (cleaned, first word)
+     *   - model      (string) required — model name
      *   - prompt     (string) required
-     *   - provider   (string) — "gapgpt", "metisai"
+     *   - provider   (string) — "gapgpt", "metisai", "openrouter"
      *   - image      (string|null) URL or base64 for img2img
      *   - model_data (array|null) full model row from DB (includes model_config JSON)
      */
@@ -60,20 +65,202 @@ class AIService
         if (empty($prompt)) return ['error' => 'متن درخواست (Prompt) الزامی است'];
         if (empty($modelName)) return ['error' => 'مدل الزامی است'];
 
-        if (strtolower($provider) === 'metisai') {
+        $provider = strtolower(trim($provider));
+
+        if ($provider === 'metisai') {
             $parts = explode(' ', trim($modelName));
             $cleanModel = $parts[0];
             return $this->metisaiGenerate($prompt, $cleanModel, $image, $modelData);
         }
 
-        // GapGPT
+        if ($provider === 'openrouter') {
+            return $this->openrouterGenerate($prompt, $modelName, $image, $modelData);
+        }
+
+        // GapGPT (default)
         if ($image) {
             return $this->gapgptImageEdit($prompt, $image, $modelName);
         }
         return $this->gapgptImageGeneration($prompt, $modelName);
     }
 
-    // ─── GapGPT ─────────────────────────────────
+    // ═══════════════════════════════════════════════
+    //   OpenRouter (Chat Completions with images)
+    // ═══════════════════════════════════════════════
+
+    private function openrouterGenerate(string $prompt, string $modelName, ?string $image, ?array $modelData): array
+    {
+        // Read model_config for aspect_ratio / image_size
+        $cfg = [];
+        if ($modelData && !empty($modelData['model_config'])) {
+            $raw = is_string($modelData['model_config'])
+                ? json_decode($modelData['model_config'], true)
+                : $modelData['model_config'];
+            $cfg = is_array($raw) ? $raw : [];
+        }
+        $o = $cfg['openrouter'] ?? [];
+        $aspectRatio = $o['aspect_ratio'] ?? '1:1';
+        $imageSize   = $o['image_size'] ?? '1K';
+
+        // Build messages
+        $messages = [];
+
+        // If img2img: include the image as a user message content part
+        if (!empty($image)) {
+            $imageContent = $this->resolveImageContent($image);
+            $messages[] = [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'text', 'text' => $prompt],
+                    ['type' => 'image_url', 'image_url' => ['url' => $imageContent]],
+                ],
+            ];
+        } else {
+            $messages[] = [
+                'role' => 'user',
+                'content' => $prompt,
+            ];
+        }
+
+        // Determine modality
+        $modalities = ['image']; // image-only by default
+        // Gemini-like models output both text+image
+        if (str_contains($modelName, 'gemini')) {
+            $modalities = ['image', 'text'];
+        }
+
+        $payload = [
+            'model'      => $modelName,
+            'messages'   => $messages,
+            'modalities' => $modalities,
+            'stream'     => false,
+        ];
+
+        // image_config (for supported models)
+        $imageConfig = [];
+        if ($aspectRatio !== '1:1' || $imageSize !== '1K') {
+            $imageConfig['aspect_ratio'] = $aspectRatio;
+            $imageConfig['image_size']   = $imageSize;
+        }
+        if (!empty($imageConfig)) {
+            $payload['image_config'] = $imageConfig;
+        }
+
+        $this->aiLog('INFO', 'OpenRouter request', [
+            'model'      => $modelName,
+            'modalities' => $modalities,
+            'has_image'  => !empty($image),
+            'image_config' => $imageConfig ?: null,
+        ]);
+
+        $result = $this->openrouterCall($payload);
+
+        $this->aiLog('INFO', 'OpenRouter response', [
+            'result_keys' => array_keys($result),
+            'has_images'  => isset($result['images']),
+            'error'       => $result['error'] ?? null,
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * Convert image to data URI if it's raw base64 or URL
+     */
+    private function resolveImageContent(string $image): string
+    {
+        // Already a data URI
+        if (str_starts_with($image, 'data:')) {
+            return $image;
+        }
+        // HTTP URL
+        if (filter_var($image, FILTER_VALIDATE_URL)) {
+            return $image;
+        }
+        // Raw base64 — wrap as data URI
+        $decoded = base64_decode($image, true);
+        if ($decoded && strlen($decoded) > 100) {
+            // Detect mime
+            $mime = 'image/jpeg';
+            $first = substr($decoded, 0, 4);
+            if (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+            elseif (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+            return 'data:' . $mime . ';base64,' . $image;
+        }
+        return $image;
+    }
+
+    private function openrouterCall(array $payload): array
+    {
+        $ch = curl_init($this->openrouterBaseUrl . '/chat/completions');
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => $this->timeout,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . $this->openrouterApiKey,
+            ],
+        ]);
+        $body   = curl_exec($ch);
+        $errno  = curl_errno($ch);
+        $error  = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $this->aiLog('INFO', 'OpenRouter API call', [
+            'http'   => $httpCode,
+            'errno'  => $errno,
+            'error'  => $error,
+            'body'   => mb_substr($body ?? '', 0, 3000),
+        ]);
+
+        if ($errno) return ['error' => 'OpenRouter connection error: ' . $error];
+        if ($httpCode >= 400) {
+            return ['error' => "OpenRouter HTTP {$httpCode}: " . mb_substr($body, 0, 500)];
+        }
+
+        $r = json_decode($body, true);
+        if (!is_array($r)) return ['error' => 'OpenRouter: پاسخ نامعتبر'];
+
+        // Standard OpenAI-compatible error
+        if (isset($r['error'])) {
+            $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
+            $this->aiLog('ERROR', 'OpenRouter API error', ['msg' => $msg]);
+            return ['error' => $msg];
+        }
+
+        // Extract images from response
+        $images = [];
+        $choices = $r['choices'] ?? [];
+        foreach ($choices as $choice) {
+            $message = $choice['message'] ?? [];
+            // OpenRouter returns images in an "images" field
+            foreach (($message['images'] ?? []) as $img) {
+                $url = $img['image_url']['url'] ?? '';
+                if (!empty($url)) $images[] = $url;
+            }
+            // Also check content for data URIs (fallback)
+            $content = $message['content'] ?? '';
+            if (empty($images) && str_starts_with($content, 'data:image')) {
+                $images[] = $content;
+            }
+        }
+
+        if (empty($images)) {
+            $this->aiLog('WARN', 'OpenRouter: no images in response', ['full' => mb_substr(json_encode($r, JSON_UNESCAPED_UNICODE), 0, 2000)]);
+            return ['error' => 'OpenRouter: تصویری در پاسخ یافت نشد'];
+        }
+
+        return ['images' => $images];
+    }
+
+    // ═══════════════════════════════════════════════
+    //   GapGPT
+    // ═══════════════════════════════════════════════
 
     private function gapgptImageGeneration(string $prompt, string $model): array
     {
@@ -82,183 +269,83 @@ class AIService
         ]));
     }
 
-    /**
-     * Convert image from any format (base64, URL) to temp file and detect mime.
-     * Returns [tmpPath, mimeType] or throws on failure.
-     */
     private function imageToTempFile(string $image): array
     {
         $imageData = null;
-
-        // 1) data: URI
         if (str_starts_with($image, 'data:image/')) {
             $parts = explode('base64,', $image, 2);
             $imageData = base64_decode($parts[1] ?? $parts[0], true);
-        }
-        // 2) URL
-        elseif (filter_var($image, FILTER_VALIDATE_URL)) {
+        } elseif (filter_var($image, FILTER_VALIDATE_URL)) {
             $ch = curl_init($image);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30,
-                CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => true,
-            ]);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => true]);
             $imageData = curl_exec($ch);
             curl_close($ch);
-        }
-        // 3) Raw base64
-        else {
+        } else {
             $imageData = base64_decode($image, true);
         }
-
-        if (empty($imageData) || strlen($imageData) < 100) {
-            throw new \Exception('تصویر ورودی نامعتبر است (کمتر از 100 بایت)');
+        if (empty($imageData) || strlen($imageData) < 100) throw new \Exception('تصویر نامعتبر');
+        $mime = 'image/jpeg'; $ext = 'jpg';
+        $first = substr($imageData, 0, 4);
+        if (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+        elseif (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+        if (function_exists('finfo_open')) {
+            $detected = finfo_buffer(finfo_open(FILEINFO_MIME_TYPE), $imageData);
+            if ($detected && str_starts_with($detected, 'image/')) $mime = $detected;
         }
-
-        // Detect mime from magic bytes
-        $mime = 'image/jpeg';
-        $ext  = 'jpg';
-        $firstBytes = substr($imageData, 0, 4);
-        if (str_starts_with($firstBytes, "\x89PNG")) {
-            $mime = 'image/png';
-            $ext  = 'png';
-        } elseif (str_starts_with($firstBytes, "\xff\xd8")) {
-            $mime = 'image/jpeg';
-            $ext  = 'jpg';
-        } elseif (str_starts_with($firstBytes, "GIF8") || str_starts_with($firstBytes, "GIF89") || str_starts_with($firstBytes, "GIF87")) {
-            $mime = 'image/gif';
-            $ext  = 'gif';
-        } elseif (str_starts_with($firstBytes, "RIFF") && substr($imageData, 8, 4) === "WEBP") {
-            $mime = 'image/webp';
-            $ext  = 'webp';
-        }
-
-        // Try finfo if available
-        if (function_exists('finfo_open') && function_exists('finfo_buffer')) {
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            $detected = finfo_buffer($finfo, $imageData);
-            finfo_close($finfo);
-            if ($detected && $detected !== 'application/octet-stream' && str_starts_with($detected, 'image/')) {
-                $mime = $detected;
-                $extMap = ['png' => 'png', 'jpeg' => 'jpg', 'jpg' => 'jpg', 'gif' => 'gif', 'webp' => 'webp'];
-                $ext = $extMap[explode('/', $mime)[1]] ?? $ext;
-            }
-        }
-
         $tmpFile = tempnam(sys_get_temp_dir(), 'gpt_') . '.' . $ext;
         file_put_contents($tmpFile, $imageData);
-
         return [$tmpFile, $mime];
     }
 
     private function gapgptImageEdit(string $prompt, string $image, string $model): array
     {
-        // Convert image to temp file for multipart upload
-        try {
-            [$tmpFile, $mime] = $this->imageToTempFile($image);
-        } catch (\Throwable $e) {
-            $this->aiLog('ERROR', 'gapgptImageEdit: decode failed', ['error' => $e->getMessage()]);
-            return ['error' => $e->getMessage()];
-        }
+        try { [$tmpFile, $mime] = $this->imageToTempFile($image); }
+        catch (\Throwable $e) { return ['error' => $e->getMessage()]; }
 
-        // Strategy 1: Try /images/edits with multipart (OpenAI-compatible)
         $result = $this->tryMultipartEdit($prompt, $tmpFile, $mime, $model);
-        if (isset($result['images'])) {
-            @unlink($tmpFile);
-            return $result;
-        }
+        if (isset($result['images'])) { @unlink($tmpFile); return $result; }
+        $this->aiLog('WARN', 'gapgpt /images/edits failed', $result);
 
-        $this->aiLog('WARN', 'gapgptImageEdit: /images/edits failed, trying generations with embedded prompt', $result);
-
-        // Strategy 2: Fallback — embed image as base64 data URI in prompt for /images/generations
-        $imageData = file_get_contents($tmpFile);
-        @unlink($tmpFile);
-
+        $imageData = file_get_contents($tmpFile); @unlink($tmpFile);
         if (!empty($imageData)) {
-            $base64Image = base64_encode($imageData);
-            $dataUri = "data:{$mime};base64,{$base64Image}";
-            $enhancedPrompt = "Edit this image: {$prompt}\nReference image: {$dataUri}";
-
-            $this->aiLog('INFO', 'gapgptImageEdit: trying generations with embedded image', [
-                'model' => $model, 'image_size' => strlen($imageData),
-            ]);
-
-            $result2 = $this->gapgptImageGeneration($enhancedPrompt, $model);
-            if (isset($result2['images'])) {
-                return $result2;
-            }
-            $this->aiLog('WARN', 'gapgptImageEdit: generations also failed', $result2);
+            $b64 = base64_encode($imageData);
+            $dataUri = "data:{$mime};base64,{$b64}";
+            $enhanced = "Edit this image: {$prompt}\nReference image: {$dataUri}";
+            $result2 = $this->gapgptImageGeneration($enhanced, $model);
+            if (isset($result2['images'])) return $result2;
         }
-
-        return ['error' => 'ویرایش تصویر با GapGPT ممکن نیست. لطفاً از مدل MetisAI استفاده کنید.'];
+        return ['error' => 'ویرایش تصویر با GapGPT ممکن نیست.'];
     }
 
-    /**
-     * Try multipart upload to /images/edits
-     */
     private function tryMultipartEdit(string $prompt, string $tmpFile, string $mime, string $model): array
     {
         $ext = pathinfo($tmpFile, PATHINFO_EXTENSION);
-        $curlFile = new \CURLFile($tmpFile, $mime, 'image.' . $ext);
-
         $postFields = [
-            'image'  => $curlFile,
-            'prompt' => $prompt,
-            'model'  => $model,
-            'n'      => '1',
-            'size'   => '1024x1024',
+            'image' => new \CURLFile($tmpFile, $mime, 'image.' . $ext),
+            'prompt' => $prompt, 'model' => $model, 'n' => '1', 'size' => '1024x1024',
         ];
-
-        $url = $this->gapgptBaseUrl . '/images/edits';
-        $ch = curl_init($url);
+        $ch = curl_init($this->gapgptBaseUrl . '/images/edits');
         curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $postFields,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 120, // 120s max for CDN
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_VERBOSE        => true,
-            CURLOPT_HEADER         => true,
-            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $this->gapgptApiKey],
+            CURLOPT_POST => true, CURLOPT_POSTFIELDS => $postFields,
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 120, CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => true, CURLOPT_HEADER => true, CURLOPT_VERBOSE => true,
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $this->gapgptApiKey],
         ]);
-        $verboseFile = tmpfile();
-        curl_setopt($ch, CURLOPT_STDERR, $verboseFile);
-
+        $vf = tmpfile(); curl_setopt($ch, CURLOPT_STDERR, $vf);
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $errno    = curl_errno($ch);
-        $error    = curl_error($ch);
-        $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-        curl_close($ch);
-
-        rewind($verboseFile);
-        $verboseLog = stream_get_contents($verboseFile);
-        fclose($verboseFile);
-
-        $responseHeader = substr($response, 0, $headerSize);
-        $responseBody   = substr($response, $headerSize);
-
-        $this->aiLog('INFO', 'tryMultipartEdit', [
-            'http'  => $httpCode,
-            'errno' => $errno,
-            'error' => $error,
-            'header' => mb_substr($responseHeader, 0, 500),
-            'body'   => mb_substr($responseBody, 0, 1000),
-            'verbose' => mb_substr($verboseLog, 0, 500),
-        ]);
-
-        if ($errno || $httpCode >= 500) {
-            return ['error' => "HTTP {$httpCode}: {$error}"];
-        }
-
-        $r = json_decode($responseBody, true);
+        $errno = curl_errno($ch); $error = curl_error($ch);
+        $hs = curl_getinfo($ch, CURLINFO_HEADER_SIZE); curl_close($ch);
+        rewind($vf); $verbose = stream_get_contents($vf); fclose($vf);
+        $body = substr($response, $hs);
+        $this->aiLog('INFO', 'tryMultipartEdit', ['http' => $httpCode, 'body' => mb_substr($body, 0, 1000)]);
+        if ($errno || $httpCode >= 500) return ['error' => "HTTP {$httpCode}"];
+        $r = json_decode($body, true);
         if (!is_array($r)) return ['error' => 'Invalid JSON'];
-
         if (isset($r['error'])) {
             $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
             return ['error' => $msg];
         }
-
         return $this->gapgptParse($r);
     }
 
@@ -290,7 +377,9 @@ class AIService
         return ['images' => $images];
     }
 
-    // ─── MetisAI (per-model config supported) ─────
+    // ═══════════════════════════════════════════════
+    //   MetisAI
+    // ═══════════════════════════════════════════════
 
     private function metisaiGenerate(string $prompt, string $modelName, ?string $image, ?array $modelData): array
     {
@@ -310,26 +399,20 @@ class AIService
         $fmt      = $m['output_format'] ?? 'png';
 
         $hasImage = !empty($image);
-
         $args = ['prompt' => $prompt, 'moderation' => 'low', 'output_format' => $fmt, 'quality' => $qual];
         if ($sz !== 'auto') $args['size'] = $sz;
-
-        if ($hasImage && $imgSupp) {
-            $args[$imgParam] = $image;
-        }
+        if ($hasImage && $imgSupp) $args[$imgParam] = $image;
 
         $payload = [
-            'model'     => ['name' => $apiName, 'model' => $apiModel],
+            'model' => ['name' => $apiName, 'model' => $apiModel],
             'operation' => 'Imagine',
-            'args'      => $args,
+            'args' => $args,
         ];
 
         $res = $this->metisaiPost('/generate', $payload);
         if (isset($res['error'])) return $res;
-
         $taskId = $res['id'] ?? null;
         if (!$taskId) return ['error' => 'شناسه تسک از سرور دریافت نشد'];
-
         return $this->metisaiPoll($taskId);
     }
 
@@ -341,7 +424,6 @@ class AIService
             if (isset($r['error'])) return $r;
             $s = $r['status'] ?? '';
             $lastResponse = json_encode($r, JSON_UNESCAPED_UNICODE);
-
             if ($s === 'COMPLETED') {
                 $images = [];
                 foreach (($r['generations'] ?? []) as $g) {
@@ -392,9 +474,7 @@ class AIService
             CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Authorization: Bearer ' . $this->metisaiApiKey],
         ]);
         $body = curl_exec($ch); $errno = curl_errno($ch); $error = curl_error($ch); curl_close($ch);
-
         Logger::info('MetisAI API', ['ep' => $endpoint, 'response' => mb_substr($body ?? '', 0, 1000)]);
-
         if ($errno) return ['error' => "MetisAI connection error: $error"];
         $r = json_decode($body, true);
         if (!is_array($r)) return ['error' => 'Invalid response from MetisAI'];
@@ -405,7 +485,9 @@ class AIService
         return $r;
     }
 
-    // ─── Model helpers ────────────────────────────
+    // ═══════════════════════════════════════════════
+    //   Model helpers
+    // ═══════════════════════════════════════════════
 
     public function getModelById(int $id): ?array
     {
