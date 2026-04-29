@@ -21,7 +21,7 @@ class ImageHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            // Priority: Block user if AI is processing
+            // Block user if AI is processing
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
                     $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش توسط هوش مصنوعی است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
@@ -38,7 +38,7 @@ class ImageHandler extends BaseHandler
             }
 
             // Step 2: Handle Model Selection
-            if ($isCallback && str_starts_with($callbackData, 'select_model_')) {
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'select_model_')) {
                 $modelId = (int) str_replace('select_model_', '', $callbackData);
                 $this->saveSelectedModelAndAskPrompt($chatId, $userId, $modelId);
                 return;
@@ -46,7 +46,7 @@ class ImageHandler extends BaseHandler
 
             // Step 3: Handle Prompt Input
             if ($state === 'awaiting_image_prompt') {
-                if ($text === '/cancel' || $text === 'منو اصلی') return; // Handled by Router but safety first
+                if ($text === '/cancel' || $text === 'منو اصلی') return;
                 $this->processPrompt($chatId, $userId, $text);
                 return;
             }
@@ -55,10 +55,7 @@ class ImageHandler extends BaseHandler
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:");
         } catch (\Throwable $e) {
             error_log("ImageHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
-            Logger::error('ImageHandler exception', [
-                'user_id' => $update->getUserId(),
-                'error'   => $e->getMessage()
-            ]);
+            Logger::error('ImageHandler exception', ['user_id' => $update->getUserId(), 'error' => $e->getMessage()]);
             $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
         }
     }
@@ -70,9 +67,7 @@ class ImageHandler extends BaseHandler
             $stmt = $db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId]);
             $row = $stmt->fetch();
             return $row ? (int) $row['id'] : null;
-        } catch (\Throwable $e) {
-            return null;
-        }
+        } catch (\Throwable $e) { return null; }
     }
 
     private function showModelSelection(int $chatId, int $userId, string $type): void
@@ -80,12 +75,10 @@ class ImageHandler extends BaseHandler
         try {
             $db = Database::getInstance();
             $models = $db->query("SELECT id, name, cost_per_image FROM ai_models WHERE is_active = 1")->fetchAll();
-
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ در حال حاضر هیچ مدل فعالی یافت نشد.");
                 return;
             }
-
             $keyboard = ['inline_keyboard' => []];
             foreach ($models as $model) {
                 $keyboard['inline_keyboard'][] = [[
@@ -93,16 +86,12 @@ class ImageHandler extends BaseHandler
                     'callback_data' => "select_model_{$model['id']}"
                 ]];
             }
-
             $internalId = $this->resolveUserId($userId);
             $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
-            
             $db->query(
-                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
+                "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
                 [$internalId, $nextState, $nextState]
             );
-
             $this->baleClient->sendMessage($chatId, "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:", $keyboard);
         } catch (\Throwable $e) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
@@ -113,18 +102,15 @@ class ImageHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        
         $model = $db->query("SELECT * FROM ai_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
             $this->baleClient->sendMessage($chatId, "⚠️ مدل انتخاب شده معتبر نیست.");
             return;
         }
-
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_image_prompt', extra_data = ? WHERE user_id = ?",
             [json_encode(['model_id' => $modelId]), $internalId]
         );
-
         $this->baleClient->sendMessage($chatId, "🎨 مدل «{$model['name']}» انتخاب شد.\n\nلطفاً متن تصویر مورد نظر خود را بنویسید:");
     }
 
@@ -137,8 +123,7 @@ class ImageHandler extends BaseHandler
 
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        
-        // Lock user first to prevent loops/double spending
+
         $db->query("UPDATE bot_state SET state = 'ai_processing' WHERE user_id = ?", [$internalId]);
 
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
@@ -147,7 +132,7 @@ class ImageHandler extends BaseHandler
 
         $aiService = new AIService();
         $model = $aiService->getActiveModelById((int)$modelId);
-        
+
         if (!$model) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد. لطفاً دوباره انتخاب کنید.");
@@ -161,11 +146,8 @@ class ImageHandler extends BaseHandler
             return;
         }
 
-        // Generate unique reference for this request
         $referenceId = 'ai_' . bin2hex(random_bytes(8));
 
-        // Deduct credits IMMEDIATELY before API call (issue #3 fix)
-        // This ensures credits are deducted even if AI server is slow or fails
         if (!CreditService::deduct($internalId, $cost, $referenceId)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
@@ -174,29 +156,23 @@ class ImageHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
 
+        // Pass full model_data for MetisAI config support
         $result = $aiService->generate([
-            'model'    => $model['name'],
-            'prompt'   => $prompt,
-            'provider' => $model['provider'] ?? '',
+            'model'      => $model['name'],
+            'prompt'     => $prompt,
+            'provider'   => $model['provider'] ?? '',
+            'model_data' => $model,
         ]);
 
         if (isset($result['error'])) {
-            // Log as failed
-            $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'failed', ?)",
-                [$internalId, $modelId, $prompt, $referenceId]
-            );
+            $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $prompt, $referenceId]);
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
             return;
         }
 
-        // Log successful request
-        $db->query(
-            "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)",
-            [$internalId, $modelId, $prompt, $referenceId]
-        );
-        
+        $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)", [$internalId, $modelId, $prompt, $referenceId]);
+
         $images = $result['images'] ?? [];
         foreach ($images as $url) {
             $this->baleClient->sendPhoto($chatId, $url, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
@@ -210,33 +186,15 @@ class ImageHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $stmt = $db->query(
-                "SELECT bs.state FROM bot_state bs 
-                 JOIN users u ON bs.user_id = u.id 
-                 WHERE u.bale_user_id = ?",
-                [$baleUserId]
-            );
+            $stmt = $db->query("SELECT bs.state FROM bot_state bs JOIN users u ON bs.user_id = u.id WHERE u.bale_user_id = ?", [$baleUserId]);
             $row = $stmt->fetch();
             return $row['state'] ?? null;
-        } catch (\Throwable $e) {
-            return null;
-        }
+        } catch (\Throwable $e) { return null; }
     }
 
     private function clearUserState(int $internalId): void
     {
-        try {
-            $db = Database::getInstance();
-            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
-        } catch (\Throwable $e) {}
-    }
-
-    private function getPersistentKeyboard(): array
-    {
-        return [
-            'keyboard' => [[['text' => '/cancel'], ['text' => "منو اصلی"]]],
-            'resize_keyboard' => true
-        ];
+        try { $db = Database::getInstance(); $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]); } catch (\Throwable $e) {}
     }
 
     private function getMainMenuInlineKeyboard(): array

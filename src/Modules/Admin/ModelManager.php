@@ -28,24 +28,35 @@ class ModelManager
     public function createModel($data)
     {
         $this->validate($data);
-        $sql = "INSERT INTO ai_models (name, provider, cost_per_image, is_active) VALUES (?, ?, ?, ?)";
+        $modelConfig = $data['model_config'] ?? '{}';
+        // Normalize JSON
+        if (is_array($modelConfig)) {
+            $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
+        }
+        $sql = "INSERT INTO ai_models (name, provider, cost_per_image, is_active, model_config) VALUES (?, ?, ?, ?, ?)";
         return $this->db->query($sql, [
             $data['name'],
             $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
-            isset($data['is_active']) ? (int)$data['is_active'] : 1
+            isset($data['is_active']) ? (int)$data['is_active'] : 1,
+            $modelConfig,
         ]);
     }
 
     public function updateModel($id, $data)
     {
         $this->validate($data);
-        $sql = "UPDATE ai_models SET name = ?, provider = ?, cost_per_image = ?, is_active = ? WHERE id = ?";
+        $modelConfig = $data['model_config'] ?? '{}';
+        if (is_array($modelConfig)) {
+            $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
+        }
+        $sql = "UPDATE ai_models SET name = ?, provider = ?, cost_per_image = ?, is_active = ?, model_config = ? WHERE id = ?";
         return $this->db->query($sql, [
             $data['name'],
             $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
             (int)$data['is_active'],
+            $modelConfig,
             (int)$id
         ]);
     }

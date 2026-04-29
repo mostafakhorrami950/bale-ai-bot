@@ -6,7 +6,6 @@ node_modules/
 Thumbs.db
 *.sqlite3
 ai_chatbot.sqlite3
-schema_migration_*.sql
 test_*.php
 
 .env

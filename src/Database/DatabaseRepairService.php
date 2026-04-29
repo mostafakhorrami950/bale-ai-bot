@@ -33,6 +33,8 @@ class DatabaseRepairService
         $this->ensureApiKeysProviderColumn();
         $this->ensureUsersColumns();
         $this->ensureBotStateExtraDataColumn();
+        $this->ensureAiModelsModelConfigColumn();
+        $this->ensureUploadedFilesTable();
         $this->seedDefaultModel();
 
         return $this->messages;
@@ -392,6 +394,36 @@ class DatabaseRepairService
             $this->conn->exec($sql);
         } catch (\Throwable $e) {
             // Ignore duplicate key errors
+        }
+    }
+
+    private function ensureAiModelsModelConfigColumn(): void
+    {
+        if ($this->tableExists('ai_models') && !$this->columnExists('ai_models', 'model_config')) {
+            $this->exec("ALTER TABLE ai_models ADD COLUMN model_config JSON NULL AFTER cost_per_image");
+            $this->log('✅ ستون model_config به جدول ai_models اضافه شد.');
+        }
+    }
+
+    private function ensureUploadedFilesTable(): void
+    {
+        if (!$this->tableExists('uploaded_files')) {
+            $this->exec("
+                CREATE TABLE uploaded_files (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    original_filename VARCHAR(255),
+                    local_path VARCHAR(500) NOT NULL,
+                    public_url VARCHAR(500) NOT NULL,
+                    file_size INT DEFAULT 0,
+                    mime_type VARCHAR(100) DEFAULT 'image/jpeg',
+                    source VARCHAR(50) DEFAULT 'img2img',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_created_at (created_at),
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول uploaded_files ایجاد شد.');
         }
     }
 
