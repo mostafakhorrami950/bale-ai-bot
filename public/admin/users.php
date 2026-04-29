@@ -14,44 +14,21 @@ $message = '';
 $search = $_GET['search'] ?? '';
 $searchParam = "%{$search}%";
 
-// Safe query: handle missing user_profiles table gracefully
-$hasProfiles = false;
-try {
-    $db->query("SELECT 1 FROM user_profiles LIMIT 1");
-    $hasProfiles = true;
-} catch (\Throwable $e) {
-    $hasProfiles = false;
-}
-
-$userSelect = $hasProfiles
-    ? "SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id"
-    : "SELECT u.*, u.bale_user_id AS fallback_name FROM users u";
-
-$userWhere = $hasProfiles
-    ? "WHERE u.bale_user_id LIKE ? OR up.username LIKE ? OR up.first_name LIKE ? OR u.phone_number LIKE ?"
-    : "WHERE u.bale_user_id LIKE ? OR u.phone_number LIKE ?";
-
+$users = [];
 if (!empty($search)) {
-    if ($hasProfiles) {
-        $users = $db->query(
-            "$userSelect $userWhere ORDER BY u.last_active_at DESC",
-            [$searchParam, $searchParam, $searchParam, $searchParam]
-        )->fetchAll();
-    } else {
-        $users = $db->query(
-            "$userSelect $userWhere ORDER BY u.last_active_at DESC",
-            [$searchParam, $searchParam]
-        )->fetchAll();
-    }
+    $users = $db->query(
+        "SELECT * FROM users WHERE bale_id LIKE ? OR username LIKE ? OR phone_number LIKE ? ORDER BY last_active_at DESC",
+        [$searchParam, $searchParam, $searchParam]
+    )->fetchAll();
 } else {
-    $users = $db->query("$userSelect ORDER BY u.last_active_at DESC")->fetchAll();
+    $users = $db->query("SELECT * FROM users ORDER BY last_active_at DESC")->fetchAll();
 }
 
 ob_start();
 ?>
 <form method="GET" class="mb-3">
     <div class="input-group">
-        <input type="text" name="search" class="form-control" placeholder="جستجو با شناسه تلگرام، نام کاربری، نام یا شماره تلفن..."
+        <input type="text" name="search" class="form-control" placeholder="جستجو با شناسه بله، نام کاربری یا شماره تلفن..."
                value="<?php echo htmlspecialchars($search); ?>">
         <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> جستجو</button>
         <?php if (!empty($search)): ?>
@@ -83,11 +60,11 @@ ob_start();
                 <?php foreach ($users as $u): ?>
                 <tr>
                     <td><?php echo $u['id']; ?></td>
-                    <td style="font-family:monospace;"><?php echo $u['bale_user_id']; ?></td>
+                    <td style="font-family:monospace;"><?php echo $u['bale_id']; ?></td>
                     <td><?php echo htmlspecialchars(($u['first_name'] ?? '') . ' ' . ($u['last_name'] ?? '')); ?></td>
                     <td><?php echo htmlspecialchars($u['username'] ?? '-'); ?></td>
                     <td dir="ltr"><?php echo htmlspecialchars($u['phone_number'] ?? '-'); ?></td>
-                    <td><strong><?php echo number_format((int) $u['credits']); ?></strong></td>
+                    <td><strong><?php echo number_format((int)($u['credits'] ?? 0)); ?></strong></td>
                     <td>
                         <?php if ($u['is_registered']): ?>
                             <span class="badge-active">✅ فعال</span>
@@ -95,7 +72,7 @@ ob_start();
                             <span class="badge-inactive">❌ غیرفعال</span>
                         <?php endif; ?>
                     </td>
-                    <td style="font-size:0.85rem;"><?php echo $u['last_active_at']; ?></td>
+                    <td style="font-size:0.85rem;"><?php echo $u['last_active_at'] ?? '-'; ?></td>
                     <td>
                         <a href="user_detail.php?id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-info">👁️</a>
                     </td>

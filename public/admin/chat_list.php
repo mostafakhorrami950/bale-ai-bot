@@ -23,7 +23,7 @@ $total = $db->query("SELECT COUNT(*) as c FROM chat_conversations")->fetch()['c'
 $totalPages = max(1, ceil($total / $perPage));
 
 $convs = $db->query(
-    "SELECT c.*, u.bale_user_id, u.username, 
+    "SELECT c.*, u.bale_id, u.username, 
             (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = c.id) as msg_count
      FROM chat_conversations c
      LEFT JOIN users u ON c.user_id = u.id

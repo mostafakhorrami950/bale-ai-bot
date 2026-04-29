@@ -38,20 +38,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? '';
         if ($action === 'create') {
             $modelManager->createModel([
-                'name'          => trim($_POST['name']),
-                'provider'      => $provider,
-                'cost_per_image'=> (int) $_POST['cost_per_image'],
-                'is_active'     => isset($_POST['is_active']) ? 1 : 0,
-                'model_config'  => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
+                'name'                => trim($_POST['name']),
+                'provider'            => $provider,
+                'cost_per_image'      => (int) $_POST['cost_per_image'],
+                'is_active'           => isset($_POST['is_active']) ? 1 : 0,
+                'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
+                'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
+                'free_model'          => isset($_POST['free_model']) ? 1 : 0,
+                'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
             ]);
             $message = '✅ مدل جدید با موفقیت اضافه شد.';
         } elseif ($action === 'update' && isset($_POST['id'])) {
             $modelManager->updateModel((int) $_POST['id'], [
-                'name'          => trim($_POST['name']),
-                'provider'      => $provider,
-                'cost_per_image'=> (int) $_POST['cost_per_image'],
-                'is_active'     => isset($_POST['is_active']) ? 1 : 0,
-                'model_config'  => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
+                'name'                => trim($_POST['name']),
+                'provider'            => $provider,
+                'cost_per_image'      => (int) $_POST['cost_per_image'],
+                'is_active'           => isset($_POST['is_active']) ? 1 : 0,
+                'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
+                'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
+                'free_model'          => isset($_POST['free_model']) ? 1 : 0,
+                'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
             ]);
             $message = '✅ مدل با موفقیت بروزرسانی شد.';
         } elseif ($action === 'toggle' && isset($_POST['id'])) {
