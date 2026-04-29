@@ -16,7 +16,6 @@ $totalPages = 1;
 try {
     $db->query("SELECT 1 FROM chat_conversations LIMIT 1");
 } catch (\Throwable $e) {
-    // Table doesn't exist — show empty state
     ob_start();
     ?>
     <div class="table-container">
@@ -40,18 +39,25 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 30;
 $offset = ($page - 1) * $perPage;
 
-$total = $db->query("SELECT COUNT(*) as c FROM chat_conversations")->fetch()['c'] ?? 0;
+try {
+    $total = $db->query("SELECT COUNT(*) as c FROM chat_conversations")->fetch()['c'] ?? 0;
+} catch (\Throwable $e) {
+    $total = 0;
+}
 $totalPages = max(1, ceil($total / $perPage));
 
-$convs = $db->query(
-    "SELECT c.*, u.bale_id, u.username, 
-            (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = c.id) as msg_count
-     FROM chat_conversations c
-     LEFT JOIN users u ON c.user_id = u.id
-     ORDER BY c.updated_at DESC
-     LIMIT ? OFFSET ?",
-    [$perPage, $offset]
-)->fetchAll();
+try {
+    $convs = $db->query(
+        "SELECT c.*, u.bale_user_id, u.username
+         FROM chat_conversations c
+         LEFT JOIN users u ON c.user_id = u.id
+         ORDER BY c.id DESC
+         LIMIT ? OFFSET ?",
+        [$perPage, $offset]
+    )->fetchAll();
+} catch (\Throwable $e) {
+    $convs = [];
+}
 
 ob_start();
 ?>
@@ -70,10 +76,6 @@ ob_start();
                 <th>کاربر</th>
                 <th>مدل</th>
                 <th>عنوان</th>
-                <th>پیام‌ها</th>
-                <th>ورودی</th>
-                <th>خروجی</th>
-                <th>هزینه</th>
                 <th>وضعیت</th>
                 <th>تاریخ</th>
                 <th>عملیات</th>
@@ -81,7 +83,7 @@ ob_start();
         </thead>
         <tbody>
             <?php if (empty($convs)): ?>
-                <tr><td colspan="11" class="text-center text-muted">مکالمه‌ای یافت نشد.</td></tr>
+                <tr><td colspan="7" class="text-center text-muted">مکالمه‌ای یافت نشد.</td></tr>
             <?php else: ?>
                 <?php foreach ($convs as $c): ?>
                 <tr>
@@ -91,24 +93,19 @@ ob_start();
                             <?php echo htmlspecialchars($c['username'] ?? 'User#' . $c['user_id']); ?>
                         </a>
                     </td>
-                    <td><code style="font-size:0.8rem;"><?php echo htmlspecialchars(mb_substr($c['model'], 0, 30)); ?></code></td>
+                    <td><code style="font-size:0.8rem;"><?php echo htmlspecialchars(mb_substr($c['model'] ?? '?', 0, 30)); ?></code></td>
                     <td style="max-width:150px; overflow:hidden; text-overflow:ellipsis;">
                         <?php echo htmlspecialchars(mb_substr($c['title'] ?? 'بدون عنوان', 0, 40)); ?>
                     </td>
-                    <td><?php echo $c['msg_count']; ?></td>
-                    <td><?php echo number_format($c['total_input_chars']); ?></td>
-                    <td><?php echo number_format($c['total_output_chars']); ?></td>
-                    <td><?php echo number_format($c['total_cost_credits']); ?></td>
                     <td>
-                        <?php if ($c['status'] === 'active'): ?>
+                        <?php if (($c['status'] ?? '') === 'active'): ?>
                             <span class="badge-active">✅ فعال</span>
                         <?php else: ?>
                             <span class="badge-inactive">📁 بایگانی</span>
                         <?php endif; ?>
                     </td>
-                    <td style="font-size:0.8rem;"><?php echo substr($c['created_at'], 0, 16); ?></td>
+                    <td style="font-size:0.8rem;"><?php echo substr($c['created_at'] ?? '', 0, 16); ?></td>
                     <td>
-                        <a href="chat_detail.php?conv=<?php echo $c['id']; ?>" class="btn btn-sm btn-outline-info">👁️</a>
                         <form method="POST" style="display:inline;" onsubmit="return confirm('حذف شود؟');">
                             <input type="hidden" name="delete_conv" value="<?php echo $c['id']; ?>">
                             <button type="submit" class="btn btn-sm btn-outline-danger">🗑️</button>

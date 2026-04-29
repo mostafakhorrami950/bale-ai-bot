@@ -86,6 +86,7 @@ if ($editMode && !empty($editModel['model_config'])) {
 }
 
 $editModelType = $editMode ? ($editModel['model_type'] ?? 'image_generation') : 'image_generation';
+$editProvider = $editMode ? ($editModel['provider'] ?? 'gapgpt') : 'gapgpt';
 
 $models = $modelManager->getAllModels();
 
@@ -99,7 +100,7 @@ ob_start();
 <?php endif; ?>
 
 <style>
-.model-type-section { display: none; }
+.model-type-section { display: none; padding: 10px 0; }
 .model-type-section.active { display: block; }
 </style>
 
@@ -123,22 +124,22 @@ ob_start();
                 <div class="mb-3">
                     <label class="form-label">ارائه‌دهنده (Provider):</label>
                     <select name="provider" class="form-select" id="providerSelect" onchange="toggleConfigSections()">
-                        <option value="gapgpt" <?php echo ($editMode && ($editModel['provider'] ?? 'gapgpt') === 'gapgpt') ? 'selected' : ''; ?>>GapGPT</option>
-                        <option value="openrouter" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'openrouter') ? 'selected' : ''; ?>>OpenRouter</option>
-                        <option value="metisai" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'metisai') ? 'selected' : ''; ?>>MetisAI</option>
-                        <option value="custom" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'custom') ? 'selected' : ''; ?>>Custom</option>
+                        <option value="gapgpt" <?php echo $editProvider === 'gapgpt' ? 'selected' : ''; ?>>GapGPT</option>
+                        <option value="openrouter" <?php echo $editProvider === 'openrouter' ? 'selected' : ''; ?>>OpenRouter</option>
+                        <option value="metisai" <?php echo $editProvider === 'metisai' ? 'selected' : ''; ?>>MetisAI</option>
+                        <option value="custom" <?php echo $editProvider === 'custom' ? 'selected' : ''; ?>>Custom</option>
                     </select>
-                    <div class="form-text text-muted" style="font-size:0.8rem;">Provider و نوع مدل مستقل هستند. هر Provider می‌تواند انواع مختلف مدل داشته باشد.</div>
+                    <div class="form-text text-muted" style="font-size:0.8rem;">Provider و نوع مدل مستقل هستند.</div>
                 </div>
 
-                <!-- Model Type Selection (Independent of Provider) -->
+                <!-- Model Type (Independent of Provider) -->
                 <div class="mb-3">
                     <label class="form-label">نوع مدل:</label>
                     <select name="model_type" class="form-select" id="modelTypeSelect" onchange="toggleModelTypeSections()">
-                        <option value="text" <?php echo $editModelType === 'text' ? 'selected' : ''; ?>>📝 مدل متنی (Chat)</option>
-                        <option value="image_generation" <?php echo $editModelType === 'image_generation' ? 'selected' : ''; ?>>🎨 ساخت تصویر (Text2Img)</option>
-                        <option value="image_editing" <?php echo $editModelType === 'image_editing' ? 'selected' : ''; ?>>🖼 ویرایش تصویر (Img2Img)</option>
-                        <option value="video" <?php echo $editModelType === 'video' ? 'selected' : ''; ?>>🎬 ویدئو (Video)</option>
+                        <option value="text" <?php echo $editModelType === 'text' ? 'selected' : ''; ?>>📝 متنی</option>
+                        <option value="image_generation" <?php echo $editModelType === 'image_generation' ? 'selected' : ''; ?>>🎨 ساخت تصویر</option>
+                        <option value="image_editing" <?php echo $editModelType === 'image_editing' ? 'selected' : ''; ?>>🖼 ویرایش تصویر</option>
+                        <option value="video" <?php echo $editModelType === 'video' ? 'selected' : ''; ?>>🎬 ویدئو</option>
                     </select>
                 </div>
 
@@ -149,33 +150,29 @@ ob_start();
                     <label class="form-check-label" for="modelActive">فعال</label>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- SECTION: Text Model (chat / OpenRouter)      -->
-                <!-- ============================================ -->
+                <!-- Text Model -->
                 <div class="model-type-section <?php echo $editModelType === 'text' ? 'active' : ''; ?>" id="section_text">
                     <hr>
                     <h6>📝 تنظیمات مدل متنی</h6>
-                    <p class="text-muted" style="font-size:0.85rem;">هزینه بر اساس کاراکتر محاسبه می‌شود</p>
+                    <p class="text-muted" style="font-size:0.85rem;">هزینه بر اساس کاراکتر</p>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">هزینه ورودی (به ازای هر کاراکتر):</label>
+                        <label style="font-size:0.9rem;">هزینه ورودی (هر کاراکتر):</label>
                         <input type="number" name="cost_per_input_char" class="form-control form-control-sm" step="0.000001" min="0"
                                value="<?php echo $editMode ? ($editModel['cost_per_input_char'] ?? '0.000001') : '0.000001'; ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">هزینه خروجی (به ازای هر کاراکتر):</label>
+                        <label style="font-size:0.9rem;">هزینه خروجی (هر کاراکتر):</label>
                         <input type="number" name="cost_per_output_char" class="form-control form-control-sm" step="0.000001" min="0"
                                value="<?php echo $editMode ? ($editModel['cost_per_output_char'] ?? '0.000002') : '0.000002'; ?>">
                     </div>
                     <div class="mb-2 form-check">
                         <input type="checkbox" name="free_model" class="form-check-input" id="modelFree" value="1"
                                <?php echo $editMode ? (($editModel['free_model'] ?? 0) ? 'checked' : '') : ''; ?>>
-                        <label class="form-check-label" for="modelFree">🆓 مدل رایگان (هزینه صفر)</label>
+                        <label class="form-check-label" for="modelFree">🆓 رایگان</label>
                     </div>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- SECTION: Image Generation                     -->
-                <!-- ============================================ -->
+                <!-- Image Generation -->
                 <div class="model-type-section <?php echo $editModelType === 'image_generation' ? 'active' : ''; ?>" id="section_image_generation">
                     <hr>
                     <h6>🎨 تنظیمات ساخت تصویر</h6>
@@ -184,16 +181,9 @@ ob_start();
                         <input type="number" name="cost_per_image" class="form-control" min="1"
                                value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
                     </div>
-                    <!-- Provider-specific configs -->
-                    <div id="imgProviderConfigs">
-                        <?php $this->renderMetisConfig($editMetisConfig, $editMode ? ($editModel['provider'] ?? '') : '', 'image_generation'); ?>
-                        <?php $this->renderOrConfig($editOrConfig, $editMode ? ($editModel['provider'] ?? '') : ''); ?>
-                    </div>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- SECTION: Image Editing                        -->
-                <!-- ============================================ -->
+                <!-- Image Editing -->
                 <div class="model-type-section <?php echo $editModelType === 'image_editing' ? 'active' : ''; ?>" id="section_image_editing">
                     <hr>
                     <h6>🖼 تنظیمات ویرایش تصویر</h6>
@@ -202,15 +192,9 @@ ob_start();
                         <input type="number" name="cost_per_image" class="form-control" min="1"
                                value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
                     </div>
-                    <div id="editProviderConfigs">
-                        <?php $this->renderMetisConfig($editMetisConfig, $editMode ? ($editModel['provider'] ?? '') : '', 'image_editing'); ?>
-                        <?php $this->renderOrConfig($editOrConfig, $editMode ? ($editModel['provider'] ?? '') : ''); ?>
-                    </div>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- SECTION: Video                                -->
-                <!-- ============================================ -->
+                <!-- Video -->
                 <div class="model-type-section <?php echo $editModelType === 'video' ? 'active' : ''; ?>" id="section_video">
                     <hr>
                     <h6>🎬 تنظیمات ویدئو</h6>
@@ -221,81 +205,77 @@ ob_start();
                     </div>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- MetisAI Config (shown for MetisAI provider)  -->
-                <!-- ============================================ -->
+                <!-- MetisAI Config -->
                 <div id="metisConfigSection" style="display:none;">
                     <hr>
-                    <h6 id="metisHeader" style="color: #0984e3;">⚙️ تنظیمات MetisAI API</h6>
+                    <h6 style="color: #0984e3;">⚙️ MetisAI</h6>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">model_name (provider name):</label>
+                        <label style="font-size:0.9rem;">model_name:</label>
                         <input type="text" name="mc_model_name" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['model_name'] ?? 'openai'); ?>" placeholder="openai">
+                               value="<?php echo htmlspecialchars($editMetisConfig['model_name'] ?? 'openai'); ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">model_model (actual model):</label>
+                        <label style="font-size:0.9rem;">model_model:</label>
                         <input type="text" name="mc_model_model" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['model_model'] ?? ($editMode ? $editModel['name'] : '')); ?>" placeholder="gpt-image-2">
+                               value="<?php echo htmlspecialchars($editMetisConfig['model_model'] ?? ($editMode ? $editModel['name'] : '')); ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">image_param:</label>
+                        <label style="font-size:0.9rem;">image_param:</label>
                         <input type="text" name="mc_image_param" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['image_param'] ?? 'image'); ?>" placeholder="image">
+                               value="<?php echo htmlspecialchars($editMetisConfig['image_param'] ?? 'image'); ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">size:</label>
+                        <label style="font-size:0.9rem;">size:</label>
                         <input type="text" name="mc_size" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['size'] ?? 'auto'); ?>" placeholder="auto">
+                               value="<?php echo htmlspecialchars($editMetisConfig['size'] ?? 'auto'); ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">quality:</label>
+                        <label style="font-size:0.9rem;">quality:</label>
                         <input type="text" name="mc_quality" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['quality'] ?? 'medium'); ?>" placeholder="medium">
+                               value="<?php echo htmlspecialchars($editMetisConfig['quality'] ?? 'medium'); ?>">
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">output_format:</label>
+                        <label style="font-size:0.9rem;">output_format:</label>
                         <input type="text" name="mc_output_format" class="form-control form-control-sm"
-                               value="<?php echo htmlspecialchars($editMetisConfig['output_format'] ?? 'png'); ?>" placeholder="png">
+                               value="<?php echo htmlspecialchars($editMetisConfig['output_format'] ?? 'png'); ?>">
                     </div>
                     <div class="mb-2 form-check">
-                        <input type="checkbox" name="mc_supports_image" class="form-check-input" id="mcSupportsImage" value="1"
+                        <input type="checkbox" name="mc_supports_image" class="form-check-input" value="1"
                                <?php echo ($editMetisConfig['supports_image'] ?? true) ? 'checked' : ''; ?>>
-                        <label class="form-check-label" for="mcSupportsImage" style="font-size:0.9rem;">پشتیبانی از ویرایش تصویر</label>
+                        <label class="form-check-label" style="font-size:0.9rem;">پشتیبانی از ویرایش تصویر</label>
                     </div>
                     <div class="mb-2 form-check">
-                        <input type="checkbox" name="mc_supports_mask" class="form-check-input" id="mcSupportsMask" value="1"
+                        <input type="checkbox" name="mc_supports_mask" class="form-check-input" value="1"
                                <?php echo ($editMetisConfig['supports_mask'] ?? false) ? 'checked' : ''; ?>>
-                        <label class="form-check-label" for="mcSupportsMask" style="font-size:0.9rem;">پشتیبانی از ماسک</label>
+                        <label class="form-check-label" style="font-size:0.9rem;">پشتیبانی از ماسک</label>
                     </div>
                 </div>
 
-                <!-- ============================================ -->
-                <!-- OpenRouter Config                             -->
-                <!-- ============================================ -->
+                <!-- OpenRouter Config -->
                 <div id="orConfigSection" style="display:none;">
                     <hr>
-                    <h6 id="orHeader" style="color: #e17055;">🔗 تنظیمات OpenRouter</h6>
+                    <h6 style="color: #e17055;">🔗 OpenRouter</h6>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">aspect_ratio (نسبت تصویر):</label>
+                        <label style="font-size:0.9rem;">aspect_ratio:</label>
                         <select name="or_aspect_ratio" class="form-select form-select-sm">
-                            <option value="1:1"  <?php echo ($editOrConfig['aspect_ratio'] ?? '1:1') === '1:1' ? 'selected' : ''; ?>>1:1 (1024×1024)</option>
-                            <option value="2:3"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '2:3' ? 'selected' : ''; ?>>2:3 (832×1248)</option>
-                            <option value="3:2"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '3:2' ? 'selected' : ''; ?>>3:2 (1248×832)</option>
-                            <option value="3:4"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '3:4' ? 'selected' : ''; ?>>3:4 (864×1184)</option>
-                            <option value="4:3"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '4:3' ? 'selected' : ''; ?>>4:3 (1184×864)</option>
-                            <option value="4:5"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '4:5' ? 'selected' : ''; ?>>4:5 (896×1152)</option>
-                            <option value="5:4"  <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '5:4' ? 'selected' : ''; ?>>5:4 (1152×896)</option>
-                            <option value="9:16" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '9:16' ? 'selected' : ''; ?>>9:16 (768×1344)</option>
-                            <option value="16:9" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '16:9' ? 'selected' : ''; ?>>16:9 (1344×768)</option>
-                            <option value="21:9" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '21:9' ? 'selected' : ''; ?>>21:9 (1536×672)</option>
+                            <option value="1:1" <?php echo ($editOrConfig['aspect_ratio'] ?? '1:1') === '1:1' ? 'selected' : ''; ?>>1:1</option>
+                            <option value="16:9" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '16:9' ? 'selected' : ''; ?>>16:9</option>
+                            <option value="9:16" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '9:16' ? 'selected' : ''; ?>>9:16</option>
+                            <option value="4:3" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '4:3' ? 'selected' : ''; ?>>4:3</option>
+                            <option value="3:4" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '3:4' ? 'selected' : ''; ?>>3:4</option>
+                            <option value="2:3" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '2:3' ? 'selected' : ''; ?>>2:3</option>
+                            <option value="3:2" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '3:2' ? 'selected' : ''; ?>>3:2</option>
+                            <option value="4:5" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '4:5' ? 'selected' : ''; ?>>4:5</option>
+                            <option value="5:4" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '5:4' ? 'selected' : ''; ?>>5:4</option>
+                            <option value="21:9" <?php echo ($editOrConfig['aspect_ratio'] ?? '') === '21:9' ? 'selected' : ''; ?>>21:9</option>
                         </select>
                     </div>
                     <div class="mb-2">
-                        <label class="form-label" style="font-size:0.9rem;">image_size (رزولوشن):</label>
+                        <label style="font-size:0.9rem;">image_size:</label>
                         <select name="or_image_size" class="form-select form-select-sm">
-                            <option value="1K" <?php echo ($editOrConfig['image_size'] ?? '1K') === '1K' ? 'selected' : ''; ?>>1K (استاندارد)</option>
-                            <option value="2K" <?php echo ($editOrConfig['image_size'] ?? '') === '2K' ? 'selected' : ''; ?>>2K (بالا)</option>
-                            <option value="4K" <?php echo ($editOrConfig['image_size'] ?? '') === '4K' ? 'selected' : ''; ?>>4K (بالاترین)</option>
+                            <option value="1K" <?php echo ($editOrConfig['image_size'] ?? '1K') === '1K' ? 'selected' : ''; ?>>1K</option>
+                            <option value="2K" <?php echo ($editOrConfig['image_size'] ?? '') === '2K' ? 'selected' : ''; ?>>2K</option>
+                            <option value="4K" <?php echo ($editOrConfig['image_size'] ?? '') === '4K' ? 'selected' : ''; ?>>4K</option>
                         </select>
                     </div>
                 </div>
@@ -312,7 +292,7 @@ ob_start();
 
     <div class="col-md-7">
         <div class="table-container">
-            <h5>📋 لیست مدل‌ها</h5>
+            <h5>📋 لیست مدل‌ها (<?php echo count($models); ?>)</h5>
             <table class="table table-hover align-middle">
                 <thead>
                     <tr>
@@ -322,13 +302,12 @@ ob_start();
                         <th>نوع</th>
                         <th>هزینه</th>
                         <th>وضعیت</th>
-                        <th>تاریخ</th>
                         <th>عملیات</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($models)): ?>
-                        <tr><td colspan="8" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
+                        <tr><td colspan="7" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
                     <?php else: ?>
                         <?php foreach ($models as $m): ?>
                         <?php
@@ -338,13 +317,13 @@ ob_start();
                                 'image_editing' => '🖼 ویرایش',
                                 'video' => '🎬 ویدئو',
                             ];
-                            $typeLabel = $typeLabels[$m['model_type'] ?? 'image_generation'] ?? '🎨 تصویرساز';
+                            $tl = $typeLabels[$m['model_type'] ?? 'image_generation'] ?? '🎨 تصویرساز';
                         ?>
                         <tr>
                             <td><?php echo $m['id']; ?></td>
                             <td><?php echo htmlspecialchars($m['name']); ?></td>
                             <td><code><?php echo htmlspecialchars($m['provider'] ?? 'gapgpt'); ?></code></td>
-                            <td><span class="badge bg-secondary"><?php echo $typeLabel; ?></span></td>
+                            <td><span class="badge bg-secondary"><?php echo $tl; ?></span></td>
                             <td><?php echo number_format($m['cost_per_image']); ?></td>
                             <td>
                                 <?php if ($m['is_active']): ?>
@@ -353,7 +332,6 @@ ob_start();
                                     <span class="badge-inactive">❌ غیرفعال</span>
                                 <?php endif; ?>
                             </td>
-                            <td style="font-size:0.85rem;"><?php echo $m['created_at']; ?></td>
                             <td>
                                 <a href="models.php?edit=<?php echo $m['id']; ?>" class="btn btn-sm btn-outline-primary">✏️</a>
                                 <form method="POST" style="display:inline;" onsubmit="return confirm('آیا مطمئن هستید؟');">
@@ -378,34 +356,20 @@ ob_start();
 
 <script>
 function toggleConfigSections() {
-    var provider = document.getElementById('providerSelect').value;
-    document.getElementById('metisConfigSection').style.display = provider === 'metisai' ? 'block' : 'none';
-    document.getElementById('metisHeader').style.display = provider === 'metisai' ? 'block' : 'none';
-    document.getElementById('orConfigSection').style.display = provider === 'openrouter' ? 'block' : 'none';
-    document.getElementById('orHeader').style.display = provider === 'openrouter' ? 'block' : 'none';
+    var p = document.getElementById('providerSelect').value;
+    document.getElementById('metisConfigSection').style.display = p === 'metisai' ? 'block' : 'none';
+    document.getElementById('orConfigSection').style.display = p === 'openrouter' ? 'block' : 'none';
 }
-
 function toggleModelTypeSections() {
-    var type = document.getElementById('modelTypeSelect').value;
-    var sections = document.querySelectorAll('.model-type-section');
-    sections.forEach(function(s) { s.classList.remove('active'); });
-    var target = document.getElementById('section_' + type);
-    if (target) target.classList.add('active');
+    var t = document.getElementById('modelTypeSelect').value;
+    document.querySelectorAll('.model-type-section').forEach(function(s) { s.classList.remove('active'); });
+    var el = document.getElementById('section_' + t);
+    if (el) el.classList.add('active');
 }
-
 toggleConfigSections();
 toggleModelTypeSections();
 </script>
 
 <?php
 $pageContent = ob_get_clean();
-
-// Helper functions for rendering provider configs
-function renderMetisConfig($config, $currentProvider, $type) {
-    // For now, MetisAI config is rendered in the main form
-}
-function renderOrConfig($config, $currentProvider) {
-    // For now, OpenRouter config is rendered in the main form
-}
-
 require __DIR__ . '/../../views/admin/layout.php';

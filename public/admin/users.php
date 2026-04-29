@@ -17,7 +17,7 @@ $searchParam = "%{$search}%";
 $users = [];
 if (!empty($search)) {
     $users = $db->query(
-        "SELECT * FROM users WHERE bale_id LIKE ? OR username LIKE ? OR phone_number LIKE ? ORDER BY last_active_at DESC",
+        "SELECT * FROM users WHERE bale_user_id LIKE ? OR username LIKE ? OR phone_number LIKE ? ORDER BY last_active_at DESC",
         [$searchParam, $searchParam, $searchParam]
     )->fetchAll();
 } else {
