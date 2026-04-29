@@ -172,8 +172,12 @@ class AIService
             'moderation'    => 'low',
             'output_format' => 'png',
             'quality'       => 'medium',
-            'size'          => $size,
         ];
+
+        // MetisAI uses "auto" for default size (not all models support custom sizes)
+        if ($size !== '1024x1024') {
+            $args['size'] = $size;
+        }
 
         // IMPORTANT: MetisAI requires publicly accessible URLs for images
         if ($image) {
