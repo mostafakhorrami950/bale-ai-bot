@@ -31,7 +31,7 @@ class ModelManager
         $sql = "INSERT INTO ai_models (name, provider, cost_per_image, is_active) VALUES (?, ?, ?, ?)";
         return $this->db->query($sql, [
             $data['name'],
-            'gapgpt',
+            $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
             isset($data['is_active']) ? (int)$data['is_active'] : 1
         ]);
@@ -40,9 +40,10 @@ class ModelManager
     public function updateModel($id, $data)
     {
         $this->validate($data);
-        $sql = "UPDATE ai_models SET name = ?, cost_per_image = ?, is_active = ? WHERE id = ?";
+        $sql = "UPDATE ai_models SET name = ?, provider = ?, cost_per_image = ?, is_active = ? WHERE id = ?";
         return $this->db->query($sql, [
             $data['name'],
+            $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
             (int)$data['is_active'],
             (int)$id
