@@ -15,10 +15,8 @@ class AIService
 
     public function __construct()
     {
-        // GapGPT (OpenAI-compatible)
         $this->gapgptApiKey = Config::get('GAPGPT_API_KEY', '');
         $this->gapgptBaseUrl = rtrim(Config::get('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1'), '/');
-        // MetisAI
         $this->metisaiApiKey = Config::get('METISAI_API_KEY', '');
         $this->metisaiBaseUrl = rtrim(Config::get('METISAI_BASE_URL', 'https://api.metisai.ir/api/v2'), '/');
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
@@ -27,16 +25,15 @@ class AIService
     /**
      * Generate image(s). Routes to the correct provider.
      *
-     * $params can contain:
-     *   - model    (string) required — e.g. "gpt-image-2"
+     * $params:
+     *   - model    (string) required
      *   - prompt   (string) required
-     *   - provider (string|null) optional — "gapgpt", "metisai", or null (GapGPT default)
+     *   - provider (string) — "gapgpt", "metisai"
      *   - image    (string|null) optional base64 or URL for img2img
-     *   - mask     (string|null) optional base64 or URL for inpainting
+     *   - mask     (string|null) optional
      *   - size     (string) optional, default '1024x1024'
      *   - n        (int)    optional, default 1
      *
-     * @param array $params
      * @return array  ['images' => [url1, url2, ...]] on success
      *                ['error' => 'message'] on failure
      */
@@ -51,19 +48,15 @@ class AIService
         $n        = (int) ($params['n'] ?? 1);
 
         if (empty($prompt)) {
-            return ['error' => 'Prompt is required'];
+            return ['error' => 'متن درخواست (Prompt) الزامی است'];
         }
         if (empty($model)) {
-            return ['error' => 'Model is required'];
+            return ['error' => 'مدل الزامی است'];
         }
 
-        // Route by provider from the ai_models table
+        // Route by provider
         if (strtolower($provider) === 'metisai') {
-            // Clean model name: strip trailing description like "gpt-image-2 metis" -> "gpt-image-2"
-            $cleanModel = preg_replace('/\s+metis.*$/i', '', $model);
-            $cleanModel = trim(preg_replace('/\s+/', ' ', $cleanModel));
-            // Also take only the first word if there's a space
-            $parts = explode(' ', $cleanModel);
+            $parts = explode(' ', trim($model));
             $cleanModel = $parts[0];
             return $this->metisaiGenerate($prompt, $cleanModel, $image, $mask, $size, $n);
         }
@@ -71,47 +64,43 @@ class AIService
         // Default: GapGPT (OpenAI-compatible)
         if ($image !== null && $image !== '') {
             return $this->gapgptImageEdit($prompt, $image, $model, $n, $size);
-        } else {
-            return $this->gapgptImageGeneration($prompt, $model, $n, $size);
         }
+        return $this->gapgptImageGeneration($prompt, $model, $n, $size);
     }
 
     // ──────────────────────────────────────────────
-    //  GapGPT (OpenAI-compatible) implementation
+    //  GapGPT (OpenAI-compatible)
     // ──────────────────────────────────────────────
 
     private function gapgptImageGeneration(string $prompt, string $model, int $n, string $size): array
     {
-        $payload = [
-            'model'  => $model,
-            'prompt' => $prompt,
-            'n'      => $n,
-            'size'   => $size,
-        ];
-
-        $response = $this->gapgptCallApi('/images/generations', $payload);
-        return $this->gapgptParseResponse($response);
+        return $this->gapgptParseResponse(
+            $this->gapgptCallApi('/images/generations', [
+                'model'  => $model,
+                'prompt' => $prompt,
+                'n'      => $n,
+                'size'   => $size,
+            ])
+        );
     }
 
     private function gapgptImageEdit(string $prompt, string $imageBase64, string $model, int $n, string $size): array
     {
-        $payload = [
-            'model'   => $model,
-            'image'   => $imageBase64,
-            'prompt'  => $prompt,
-            'n'       => $n,
-            'size'    => $size,
-        ];
-
-        $response = $this->gapgptCallApi('/images/edits', $payload);
-        return $this->gapgptParseResponse($response);
+        return $this->gapgptParseResponse(
+            $this->gapgptCallApi('/images/edits', [
+                'model'   => $model,
+                'image'   => $imageBase64,
+                'prompt'  => $prompt,
+                'n'       => $n,
+                'size'    => $size,
+            ])
+        );
     }
 
     private function gapgptCallApi(string $endpoint, array $data): array
     {
         $url = $this->gapgptBaseUrl . $endpoint;
         $ch = curl_init();
-
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_POST           => true,
@@ -125,7 +114,6 @@ class AIService
                 'Authorization: Bearer ' . $this->gapgptApiKey,
             ],
         ]);
-
         $body     = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $errno    = curl_errno($ch);
@@ -133,36 +121,18 @@ class AIService
         curl_close($ch);
 
         if ($errno !== 0) {
-            Logger::error('AIService GapGPT cURL error', [
-                'endpoint' => $endpoint,
-                'errno'    => $errno,
-                'error'    => $error,
-            ]);
+            Logger::error('AIService GapGPT cURL error', ['endpoint' => $endpoint, 'errno' => $errno, 'error' => $error]);
             return ['error' => 'Connection error: ' . $error, '_http_code' => $httpCode];
         }
-
         $result = json_decode($body, true);
         if (!is_array($result)) {
-            Logger::error('AIService GapGPT invalid JSON', [
-                'endpoint'  => $endpoint,
-                'http_code' => $httpCode,
-                'body'      => mb_substr($body, 0, 500),
-            ]);
             return ['error' => 'Invalid response from AI service', '_http_code' => $httpCode];
         }
-
         if (isset($result['error'])) {
-            $msg = is_array($result['error'])
-                ? ($result['error']['message'] ?? json_encode($result['error']))
-                : $result['error'];
-            Logger::error('AIService GapGPT API error', [
-                'endpoint' => $endpoint,
-                'error'    => $msg,
-                'http'     => $httpCode,
-            ]);
+            $msg = is_array($result['error']) ? ($result['error']['message'] ?? json_encode($result['error'])) : $result['error'];
+            Logger::error('AIService GapGPT API error', ['endpoint' => $endpoint, 'error' => $msg, 'http' => $httpCode]);
             return ['error' => $msg, '_http_code' => $httpCode];
         }
-
         $result['_http_code'] = $httpCode;
         return $result;
     }
@@ -172,47 +142,31 @@ class AIService
         if (isset($response['error'])) {
             return $response;
         }
-
         $data = $response['data'] ?? [];
         if (empty($data)) {
-            Logger::error('AIService GapGPT empty data', ['response' => $response]);
             return ['error' => 'AI service returned no images'];
         }
-
         $images = [];
         foreach ($data as $item) {
             if (isset($item['url'])) {
                 $images[] = $item['url'];
-            } elseif (isset($item['b64_json'])) {
-                // Could decode and save, but for now skip
             }
         }
-
         if (empty($images)) {
-            Logger::error('AIService GapGPT no URLs', ['data' => $data]);
             return ['error' => 'No image URLs found in AI response'];
         }
-
         return ['images' => $images];
     }
 
     // ──────────────────────────────────────────────
-    //  MetisAI implementation (2-step async)
+    //  MetisAI API (2-step async)
+    //  ── POST /api/v2/generate  →  { id, status: "WAITING", ... }
+    //  ── GET  /api/v2/generate/{id}  →  { id, status: "COMPLETED", generations: [{url,contentType}], usage: {cost} }
+    //  Statuses: QUEUE, WAITING, RUNNING, COMPLETED, ERROR, CANCELLED
     // ──────────────────────────────────────────────
 
-    /**
-     * Step 1: Submit generation request → get generation_id
-     * Step 2: Poll until ready → get result images
-     */
     private function metisaiGenerate(string $prompt, string $model, ?string $image, ?string $mask, string $size, int $n): array
     {
-        Logger::info('AIService MetisAI generate start', [
-            'model'  => $model,
-            'has_image' => $image ? 'yes' : 'no',
-            'has_mask'  => $mask  ? 'yes' : 'no',
-        ]);
-
-        // Build args
         $args = [
             'prompt'        => $prompt,
             'moderation'    => 'low',
@@ -221,30 +175,18 @@ class AIService
             'size'          => $size,
         ];
 
+        // IMPORTANT: MetisAI requires publicly accessible URLs for images
+        // For image editing, use 'image_input' field
         if ($image) {
-            // MetisAI needs a publicly accessible URL for the image
-            // If it's already a URL, use it directly
             if (filter_var($image, FILTER_VALIDATE_URL)) {
-                $args['image'] = $image;
+                $args['image_input'] = $image;
             } else {
-                // base64 — upload to a temporary file hosting or pass as data URI
-                // MetisAI accepts base64 data URIs: data:image/jpeg;base64,...
-                $args['image'] = 'data:image/jpeg;base64,' . $image;
-            }
-            Logger::info('AIService MetisAI image arg', [
-                'is_url' => filter_var($image, FILTER_VALIDATE_URL) ? 'yes' : 'no',
-            ]);
-        }
-        if ($mask) {
-            if (filter_var($mask, FILTER_VALIDATE_URL)) {
-                $args['mask'] = $mask;
-            } else {
-                $args['mask'] = 'data:image/png;base64,' . $mask;
+                // base64 — we must upload somewhere accessible or pass as data URI
+                // Try data URI first (MetisAI may reject large payloads)
+                $args['image_input'] = 'data:image/jpeg;base64,' . $image;
             }
         }
 
-        // Determine operation
-        // MetisAI: "Imagine" for text2img or img2img, "Inpaint" for mask-based editing
         $operation = 'Imagine';
         if ($image && $mask) {
             $operation = 'Inpaint';
@@ -260,86 +202,77 @@ class AIService
         ];
 
         Logger::info('AIService MetisAI submitting', [
-            'payload' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'payload' => mb_substr(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 0, 2000),
         ]);
 
-        // Step 1: Submit generation
+        // Step 1: POST /generate
         $submitResult = $this->metisaiCallApi('/generate', $payload);
         if (isset($submitResult['error'])) {
-            Logger::error('AIService MetisAI submit failed', ['error' => $submitResult['error']]);
             return $submitResult;
         }
 
-        // Extract generation_id from response
-        $generationId = $submitResult['generation_id'] ?? $submitResult['data']['generation_id'] ?? null;
-        if (!$generationId) {
-            Logger::error('AIService MetisAI: no generation_id', ['response' => $submitResult]);
-            return ['error' => 'Failed to get generation ID from MetisAI'];
+        // Extract task ID from response — MetisAI uses "id" field
+        $taskId = $submitResult['id'] ?? $submitResult['data']['id'] ?? null;
+        if (!$taskId) {
+            Logger::error('AIService MetisAI: no id in response', ['response' => $submitResult]);
+            return ['error' => 'Failed to get task ID from MetisAI'];
         }
 
-        Logger::info('AIService MetisAI submitted', ['generation_id' => $generationId]);
+        Logger::info('AIService MetisAI submitted', ['task_id' => $taskId, 'initial_status' => $submitResult['status'] ?? 'unknown']);
 
-        // Step 2: Poll for result
-        $pollResult = $this->metisaiPoll($generationId);
-        return $pollResult;
+        // Step 2: Poll GET /generate/{id}
+        return $this->metisaiPoll($taskId);
     }
 
     /**
-     * Poll MetisAI for the generation result.
-     * Retries up to timeout/2 seconds with 2-second intervals.
+     * Poll MetisAI for result — minimum 5 seconds between requests per docs.
      */
-    private function metisaiPoll(string $generationId): array
+    private function metisaiPoll(string $taskId): array
     {
-        $maxAttempts = max(1, (int) ($this->timeout / 2)); // every 2 seconds
+        // Max attempts = timeout / 5 seconds
+        $maxAttempts = max(1, (int) ($this->timeout / 5));
         $attempt = 0;
 
         while ($attempt < $maxAttempts) {
             $attempt++;
-            $result = $this->metisaiGetResult($generationId);
+            $result = $this->metisaiGetResult($taskId);
 
             if (isset($result['error'])) {
                 return $result;
             }
 
-            $status = $result['status'] ?? $result['data']['status'] ?? 'unknown';
+            $status = $result['status'] ?? '';
 
-            Logger::info('AIService MetisAI poll', [
-                'attempt' => $attempt,
-                'status'  => $status,
-            ]);
+            Logger::info('AIService MetisAI poll', ['attempt' => $attempt, 'status' => $status]);
 
-            if ($status === 'completed' || $status === 'succeeded') {
+            // Statuses (case-sensitive): QUEUE, WAITING, RUNNING, COMPLETED, ERROR, CANCELLED
+            if ($status === 'COMPLETED') {
                 return $this->metisaiExtractImages($result);
             }
 
-            if ($status === 'failed' || $status === 'error') {
-                $errorMsg = $result['error'] ?? $result['data']['error'] ?? 'Generation failed';
-                Logger::error('AIService MetisAI generation failed', [
-                    'generation_id' => $generationId,
-                    'response'      => $result,
+            if (in_array($status, ['ERROR', 'CANCELLED', 'FAILED'], true)) {
+                $errorMsg = $result['error'] ?? ($status === 'CANCELLED' ? 'Cancelled' : 'Generation failed');
+                Logger::error('AIService MetisAI generation ended with status', [
+                    'task_id' => $taskId, 'status' => $status, 'error' => $errorMsg,
                 ]);
-                return ['error' => 'Image generation failed: ' . $errorMsg];
+                return ['error' => 'Image generation ' . strtolower($status) . ': ' . $errorMsg];
             }
 
-            // Still processing — wait 2 seconds
-            sleep(2);
+            // Still processing (QUEUE, WAITING, RUNNING) — wait 5 seconds
+            sleep(5);
         }
 
-        Logger::error('AIService MetisAI poll timeout', [
-            'generation_id' => $generationId,
-            'attempts'      => $maxAttempts,
-        ]);
+        Logger::error('AIService MetisAI poll timeout', ['task_id' => $taskId, 'attempts' => $maxAttempts]);
         return ['error' => 'Image generation timed out after ' . $this->timeout . ' seconds'];
     }
 
     /**
-     * GET /generate/{generationId} to check status.
+     * GET /generate/{taskId}
      */
-    private function metisaiGetResult(string $generationId): array
+    private function metisaiGetResult(string $taskId): array
     {
-        $url = $this->metisaiBaseUrl . '/generate/' . urlencode($generationId);
+        $url = $this->metisaiBaseUrl . '/generate/' . urlencode($taskId);
         $ch = curl_init();
-
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_HTTPGET        => true,
@@ -352,7 +285,6 @@ class AIService
                 'Authorization: Bearer ' . $this->metisaiApiKey,
             ],
         ]);
-
         $body     = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $errno    = curl_errno($ch);
@@ -362,58 +294,62 @@ class AIService
         if ($errno !== 0) {
             return ['error' => 'MetisAI poll connection error: ' . $error];
         }
-
         $result = json_decode($body, true);
         if (!is_array($result)) {
-            return ['error' => 'MetisAI poll invalid response', 'body' => mb_substr($body, 0, 500)];
+            return ['error' => 'MetisAI poll invalid response'];
         }
-
         if (isset($result['error'])) {
-            $msg = is_array($result['error'])
-                ? ($result['error']['message'] ?? json_encode($result['error']))
-                : $result['error'];
+            $msg = is_array($result['error']) ? ($result['error']['message'] ?? json_encode($result['error'])) : $result['error'];
             return ['error' => 'MetisAI poll error: ' . $msg];
         }
-
         return $result;
     }
 
     /**
-     * Parse MetisAI completed result to extract image URLs.
+     * Extract image URLs from MetisAI completed response.
+     *
+     * Response structure when COMPLETED:
+     * {
+     *   "id": "...",
+     *   "status": "COMPLETED",
+     *   "generations": [
+     *     { "url": "https://...", "contentType": "IMAGE", "content": null }
+     *   ],
+     *   "usage": { "cost": 0.14 }
+     * }
      */
     private function metisaiExtractImages(array $result): array
     {
         $images = [];
 
-        // MetisAI response structure from user's API:
-        // { "status": "completed", "data": { "results": [ { "url": "..." } ] } }
-        // or { "data": { "images": [ "url1", "url2" ] } }
-        $data = $result['data'] ?? $result;
-        $resultsArr = $data['results'] ?? $data['images'] ?? [];
-
-        if (is_array($resultsArr)) {
-            foreach ($resultsArr as $item) {
-                if (is_string($item)) {
-                    $images[] = $item;
-                } elseif (is_array($item)) {
-                    if (isset($item['url'])) {
-                        $images[] = $item['url'];
-                    } elseif (isset($item['image'])) {
-                        $images[] = $item['image'];
-                    } elseif (isset($item['src'])) {
-                        $images[] = $item['src'];
-                    }
+        // Primary: generations[] array with {url, contentType}
+        $generations = $result['generations'] ?? [];
+        if (is_array($generations)) {
+            foreach ($generations as $gen) {
+                if (is_array($gen) && isset($gen['url'])) {
+                    $images[] = $gen['url'];
+                } elseif (is_string($gen)) {
+                    $images[] = $gen;
                 }
             }
-        } elseif (is_string($data['url'] ?? null)) {
-            $images[] = $data['url'];
-        } elseif (is_string($data['image'] ?? null)) {
-            $images[] = $data['image'];
+        }
+
+        // Fallback: direct URL at top level
+        if (empty($images) && isset($result['url']) && is_string($result['url'])) {
+            $images[] = $result['url'];
         }
 
         if (empty($images)) {
-            Logger::error('AIService MetisAI no images in result', ['result' => $result]);
+            Logger::error('AIService MetisAI no images in completed result', ['result' => $result]);
             return ['error' => 'No images found in MetisAI response'];
+        }
+
+        // Log cost if available
+        if (isset($result['usage']['cost'])) {
+            Logger::info('AIService MetisAI completed', [
+                'images_count' => count($images),
+                'cost'         => $result['usage']['cost'] . ' cents',
+            ]);
         }
 
         return ['images' => $images];
@@ -427,7 +363,6 @@ class AIService
         $url = $this->metisaiBaseUrl . $endpoint;
         $payloadJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $ch = curl_init();
-
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_POST           => true,
@@ -441,55 +376,32 @@ class AIService
                 'Authorization: Bearer ' . $this->metisaiApiKey,
             ],
         ]);
-
         $body     = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $errno    = curl_errno($ch);
         $error    = curl_error($ch);
         curl_close($ch);
 
-        // Log full payload and response for debugging
         Logger::info('AIService MetisAI API call', [
             'endpoint'  => $endpoint,
             'http_code' => $httpCode,
-            'payload'   => mb_substr($payloadJson, 0, 2000),
-            'response'  => mb_substr($body ?? '', 0, 500),
-            'curl_errno' => $errno,
-            'curl_error' => $error,
+            'response'  => mb_substr($body ?? '', 0, 1000),
         ]);
 
         if ($errno !== 0) {
-            Logger::error('AIService MetisAI cURL error', [
-                'endpoint' => $endpoint,
-                'errno'    => $errno,
-                'error'    => $error,
-            ]);
+            Logger::error('AIService MetisAI cURL error', ['endpoint' => $endpoint, 'errno' => $errno, 'error' => $error]);
             return ['error' => 'MetisAI connection error: ' . $error];
         }
-
         $result = json_decode($body, true);
         if (!is_array($result)) {
-            Logger::error('AIService MetisAI invalid JSON', [
-                'endpoint'  => $endpoint,
-                'http_code' => $httpCode,
-                'body'      => mb_substr($body, 0, 500),
-            ]);
+            Logger::error('AIService MetisAI invalid JSON', ['endpoint' => $endpoint, 'http_code' => $httpCode, 'body' => mb_substr($body, 0, 500)]);
             return ['error' => 'Invalid response from MetisAI', '_http_code' => $httpCode];
         }
-
-        // MetisAI error responses
         if (isset($result['error'])) {
-            $msg = is_array($result['error'])
-                ? ($result['error']['message'] ?? json_encode($result['error']))
-                : $result['error'];
-            Logger::error('AIService MetisAI API error', [
-                'endpoint' => $endpoint,
-                'error'    => $msg,
-                'http'     => $httpCode,
-            ]);
+            $msg = is_array($result['error']) ? ($result['error']['message'] ?? json_encode($result['error'])) : $result['error'];
+            Logger::error('AIService MetisAI API error', ['endpoint' => $endpoint, 'error' => $msg, 'http' => $httpCode]);
             return ['error' => $msg, '_http_code' => $httpCode];
         }
-
         $result['_http_code'] = $httpCode;
         return $result;
     }
@@ -515,10 +427,7 @@ class AIService
                 'is_active' => 1
             ];
         } catch (\Throwable $e) {
-            Logger::error('AIService::getModelById failed', [
-                'model_id' => $id,
-                'error'    => $e->getMessage()
-            ]);
+            Logger::error('AIService::getModelById failed', ['model_id' => $id, 'error' => $e->getMessage()]);
             return null;
         }
     }
@@ -547,16 +456,10 @@ class AIService
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query(
-                "SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE id = ? AND is_active = 1",
-                [$id]
-            );
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE id = ? AND is_active = 1", [$id]);
             return $stmt->fetch() ?: null;
         } catch (\Throwable $e) {
-            Logger::error('AIService::getActiveModelById failed', [
-                'model_id' => $id,
-                'error'    => $e->getMessage()
-            ]);
+            Logger::error('AIService::getActiveModelById failed', ['model_id' => $id, 'error' => $e->getMessage()]);
             return null;
         }
     }
@@ -565,9 +468,7 @@ class AIService
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query(
-                "SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1"
-            );
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active FROM ai_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
             return $stmt->fetch() ?: null;
         } catch (\Throwable $e) {
             Logger::error('AIService::getFirstActiveModel failed', ['error' => $e->getMessage()]);
