@@ -8,6 +8,7 @@ use Modules\Bot\Handlers\CallbackHandler;
 use Modules\Bot\Handlers\CancelHandler;
 use Modules\Bot\Handlers\ImageHandler;
 use Modules\Bot\Handlers\Img2ImgHandler;
+use Modules\Bot\Handlers\ChatHandler;
 use Modules\Bot\Handlers\MessageHandler;
 use Modules\Bot\Handlers\StartHandler;
 use Modules\Bot\Handlers\BaseHandler;
@@ -89,6 +90,11 @@ class Router
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> Img2ImgHandler");
                 return new Img2ImgHandler($this->baleClient);
             }
+            // Chat states
+            if (in_array($state, ['chat_active', 'chat_selecting_model', 'chat_viewing_history'], true)) {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
         }
 
         // 5. Photo messages
@@ -115,6 +121,10 @@ class Router
                 'help' => 'ImageHandler',
                 'check_membership' => 'CallbackHandler',
                 'edit_photos_done' => 'Img2ImgHandler',
+                'start_chat' => 'ChatHandler',
+                'chat_use_default' => 'ChatHandler',
+                'chat_select_model' => 'ChatHandler',
+                'chat_history' => 'ChatHandler',
             ];
 
             

@@ -29,17 +29,22 @@ class ModelManager
     {
         $this->validate($data);
         $modelConfig = $data['model_config'] ?? '{}';
-        // Normalize JSON
         if (is_array($modelConfig)) {
             $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
         }
-        $sql = "INSERT INTO ai_models (name, provider, cost_per_image, is_active, model_config) VALUES (?, ?, ?, ?, ?)";
+        $costPerInput = (float)($data['cost_per_input_char'] ?? 0.000001);
+        $costPerOutput = (float)($data['cost_per_output_char'] ?? 0.000002);
+        $freeModel = isset($data['free_model']) ? (int)$data['free_model'] : 0;
+        $sql = "INSERT INTO ai_models (name, provider, cost_per_image, is_active, model_config, cost_per_input_char, cost_per_output_char, free_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         return $this->db->query($sql, [
             $data['name'],
             $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
             isset($data['is_active']) ? (int)$data['is_active'] : 1,
             $modelConfig,
+            $costPerInput,
+            $costPerOutput,
+            $freeModel,
         ]);
     }
 
@@ -50,13 +55,19 @@ class ModelManager
         if (is_array($modelConfig)) {
             $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
         }
-        $sql = "UPDATE ai_models SET name = ?, provider = ?, cost_per_image = ?, is_active = ?, model_config = ? WHERE id = ?";
+        $costPerInput = (float)($data['cost_per_input_char'] ?? 0.000001);
+        $costPerOutput = (float)($data['cost_per_output_char'] ?? 0.000002);
+        $freeModel = isset($data['free_model']) ? (int)$data['free_model'] : 0;
+        $sql = "UPDATE ai_models SET name = ?, provider = ?, cost_per_image = ?, is_active = ?, model_config = ?, cost_per_input_char = ?, cost_per_output_char = ?, free_model = ? WHERE id = ?";
         return $this->db->query($sql, [
             $data['name'],
             $data['provider'] ?? 'gapgpt',
             (int)$data['cost_per_image'],
             (int)$data['is_active'],
             $modelConfig,
+            $costPerInput,
+            $costPerOutput,
+            $freeModel,
             (int)$id
         ]);
     }

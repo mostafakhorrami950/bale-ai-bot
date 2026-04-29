@@ -134,6 +134,26 @@ ob_start();
                 </div>
 
                 <hr>
+                <h6>💰 هزینه کاراکتری (Chat AI)</h6>
+                <p class="text-muted" style="font-size:0.85rem;">برای گفتگوی هوش مصنوعی (OpenRouter) بر اساس کاراکتر</p>
+                <div class="mb-2">
+                    <label class="form-label" style="font-size:0.9rem;">هزینه ورودی (به ازای هر کاراکتر):</label>
+                    <input type="number" name="cost_per_input_char" class="form-control form-control-sm" step="0.000001" min="0"
+                           value="<?php echo $editMode ? ($editModel['cost_per_input_char'] ?? '0.000001') : '0.000001'; ?>">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" style="font-size:0.9rem;">هزینه خروجی (به ازای هر کاراکتر):</label>
+                    <input type="number" name="cost_per_output_char" class="form-control form-control-sm" step="0.000001" min="0"
+                           value="<?php echo $editMode ? ($editModel['cost_per_output_char'] ?? '0.000002') : '0.000002'; ?>">
+                </div>
+                <div class="mb-2 form-check">
+                    <input type="checkbox" name="free_model" class="form-check-input" id="modelFree"
+                           value="1"
+                           <?php echo $editMode ? (($editModel['free_model'] ?? 0) ? 'checked' : '') : ''; ?>>
+                    <label class="form-check-label" for="modelFree">🆓 مدل رایگان (هزینه صفر)</label>
+                </div>
+
+                <hr>
 
                 <!-- ─── MetisAI Config ─── -->
                 <h6 id="metisHeader" style="color: #0984e3; display:none;">⚙️ تنظیمات MetisAI API</h6>
