@@ -12,6 +12,7 @@ class AIService
     private string $metisaiApiKey;
     private string $metisaiBaseUrl;
     private int $timeout;
+    private string $logFile;
 
     public function __construct()
     {
@@ -20,6 +21,22 @@ class AIService
         $this->metisaiApiKey = Config::get('METISAI_API_KEY', '');
         $this->metisaiBaseUrl = rtrim(Config::get('METISAI_BASE_URL', 'https://api.metisai.ir/api/v2'), '/');
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
+        $this->logFile = BASE_PATH . '/logs_ai.txt';
+        $logDir = dirname($this->logFile);
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+    }
+
+    /**
+     * Write a log entry to the AI log file (logs_ai.txt)
+     */
+    private function aiLog(string $level, string $message, array $context = []): void
+    {
+        $timestamp = date('Y-m-d H:i:s');
+        $contextStr = !empty($context) ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
+        $line = "[{$timestamp}] [{$level}] {$message}{$contextStr}\n";
+        @file_put_contents($this->logFile, $line, FILE_APPEND | LOCK_EX);
     }
 
     /**
@@ -190,23 +207,22 @@ class AIService
         $responseHeader = substr($response, 0, $headerSize);
         $responseBody   = substr($response, $headerSize);
 
-        Logger::info('GapGPT edits response', [
-            'http'       => $httpCode,
-            'errno'      => $errno,
-            'error'      => $error,
-            'header'     => mb_substr($responseHeader, 0, 500),
-            'body'       => mb_substr($responseBody, 0, 2000),
-            'verbose'    => mb_substr($verboseLog, 0, 1000),
-            'mime'       => $mime,
-            'file_ext'   => $ext,
-            'file_size'  => filesize($tmpFile) ?: 'deleted',
+        $this->aiLog('INFO', 'GapGPT edits response', [
+            'http'     => $httpCode,
+            'errno'    => $errno,
+            'error'    => $error,
+            'header'   => mb_substr($responseHeader, 0, 500),
+            'body'     => mb_substr($responseBody, 0, 2000),
+            'verbose'  => mb_substr($verboseLog, 0, 1000),
+            'mime'     => $mime,
+            'file_ext' => $ext,
         ]);
 
         if ($errno) return ['error' => 'Connection error: ' . $error];
 
         $r = json_decode($responseBody, true);
         if (!is_array($r)) {
-            Logger::error('gapgptImageEdit: invalid JSON', ['body_raw' => mb_substr($responseBody, 0, 1000)]);
+            $this->aiLog('ERROR', 'gapgptImageEdit: invalid JSON', ['body_raw' => mb_substr($responseBody, 0, 3000)]);
             return ['error' => 'Invalid response from AI service (HTTP ' . $httpCode . ')'];
         }
         if (isset($r['error'])) {
