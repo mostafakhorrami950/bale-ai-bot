@@ -7,6 +7,27 @@ $activeMenu = 'chat_list';
 use Database\Database;
 
 $db = Database::getInstance();
+$message = '';
+$convs = [];
+$total = 0;
+$totalPages = 1;
+
+// Check if chat_conversations table exists
+try {
+    $db->query("SELECT 1 FROM chat_conversations LIMIT 1");
+} catch (\Throwable $e) {
+    // Table doesn't exist — show empty state
+    ob_start();
+    ?>
+    <div class="table-container">
+        <h5>💬 لیست مکالمات</h5>
+        <p class="text-muted text-center py-4">جدول chat_conversations هنوز ایجاد نشده است. لطفاً ابتدا از <a href="repair_db.php">صفحه تعمیر دیتابیس</a> استفاده کنید.</p>
+    </div>
+    <?php
+    $pageContent = ob_get_clean();
+    require __DIR__ . '/../../views/admin/layout.php';
+    return;
+}
 
 // Handle delete
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_conv'])) {

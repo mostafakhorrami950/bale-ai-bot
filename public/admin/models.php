@@ -15,6 +15,7 @@ $editModel = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $provider = trim($_POST['provider'] ?? 'gapgpt');
+        $modelType = trim($_POST['model_type'] ?? 'image_generation');
         $modelConfig = [];
 
         if ($provider === 'metisai') {
@@ -36,29 +37,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $action = $_POST['action'] ?? '';
+
+        $baseData = [
+            'name'                => trim($_POST['name']),
+            'provider'            => $provider,
+            'model_type'          => $modelType,
+            'cost_per_image'      => (int) ($_POST['cost_per_image'] ?? 1),
+            'is_active'           => isset($_POST['is_active']) ? 1 : 0,
+            'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
+            'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
+            'free_model'          => isset($_POST['free_model']) ? 1 : 0,
+            'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
+        ];
+
         if ($action === 'create') {
-            $modelManager->createModel([
-                'name'                => trim($_POST['name']),
-                'provider'            => $provider,
-                'cost_per_image'      => (int) $_POST['cost_per_image'],
-                'is_active'           => isset($_POST['is_active']) ? 1 : 0,
-                'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
-                'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
-                'free_model'          => isset($_POST['free_model']) ? 1 : 0,
-                'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
-            ]);
+            $modelManager->createModel($baseData);
             $message = '✅ مدل جدید با موفقیت اضافه شد.';
         } elseif ($action === 'update' && isset($_POST['id'])) {
-            $modelManager->updateModel((int) $_POST['id'], [
-                'name'                => trim($_POST['name']),
-                'provider'            => $provider,
-                'cost_per_image'      => (int) $_POST['cost_per_image'],
-                'is_active'           => isset($_POST['is_active']) ? 1 : 0,
-                'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
-                'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
-                'free_model'          => isset($_POST['free_model']) ? 1 : 0,
-                'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
-            ]);
+            $modelManager->updateModel((int) $_POST['id'], $baseData);
             $message = '✅ مدل با موفقیت بروزرسانی شد.';
         } elseif ($action === 'toggle' && isset($_POST['id'])) {
             $modelManager->toggleModel((int) $_POST['id']);
@@ -89,6 +85,8 @@ if ($editMode && !empty($editModel['model_config'])) {
     }
 }
 
+$editModelType = $editMode ? ($editModel['model_type'] ?? 'image_generation') : 'image_generation';
+
 $models = $modelManager->getAllModels();
 
 ob_start();
@@ -99,6 +97,11 @@ ob_start();
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
+
+<style>
+.model-type-section { display: none; }
+.model-type-section.active { display: block; }
+</style>
 
 <div class="row">
     <div class="col-md-5">
@@ -120,50 +123,110 @@ ob_start();
                 <div class="mb-3">
                     <label class="form-label">ارائه‌دهنده (Provider):</label>
                     <select name="provider" class="form-select" id="providerSelect" onchange="toggleConfigSections()">
-                        <option value="gapgpt" <?php echo ($editMode && $editModel['provider'] === 'gapgpt') ? 'selected' : ''; ?>>GapGPT</option>
-                        <option value="metisai" <?php echo ($editMode && $editModel['provider'] === 'metisai') ? 'selected' : ''; ?>>MetisAI</option>
-                        <option value="openrouter" <?php echo ($editMode && $editModel['provider'] === 'openrouter') ? 'selected' : ''; ?>>OpenRouter</option>
-                        <option value="custom" <?php echo ($editMode && $editModel['provider'] === 'custom') ? 'selected' : ''; ?>>Custom</option>
+                        <option value="gapgpt" <?php echo ($editMode && ($editModel['provider'] ?? 'gapgpt') === 'gapgpt') ? 'selected' : ''; ?>>GapGPT</option>
+                        <option value="openrouter" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'openrouter') ? 'selected' : ''; ?>>OpenRouter</option>
+                        <option value="metisai" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'metisai') ? 'selected' : ''; ?>>MetisAI</option>
+                        <option value="custom" <?php echo ($editMode && ($editModel['provider'] ?? '') === 'custom') ? 'selected' : ''; ?>>Custom</option>
+                    </select>
+                    <div class="form-text text-muted" style="font-size:0.8rem;">Provider و نوع مدل مستقل هستند. هر Provider می‌تواند انواع مختلف مدل داشته باشد.</div>
+                </div>
+
+                <!-- Model Type Selection (Independent of Provider) -->
+                <div class="mb-3">
+                    <label class="form-label">نوع مدل:</label>
+                    <select name="model_type" class="form-select" id="modelTypeSelect" onchange="toggleModelTypeSections()">
+                        <option value="text" <?php echo $editModelType === 'text' ? 'selected' : ''; ?>>📝 مدل متنی (Chat)</option>
+                        <option value="image_generation" <?php echo $editModelType === 'image_generation' ? 'selected' : ''; ?>>🎨 ساخت تصویر (Text2Img)</option>
+                        <option value="image_editing" <?php echo $editModelType === 'image_editing' ? 'selected' : ''; ?>>🖼 ویرایش تصویر (Img2Img)</option>
+                        <option value="video" <?php echo $editModelType === 'video' ? 'selected' : ''; ?>>🎬 ویدئو (Video)</option>
                     </select>
                 </div>
 
-                <div class="mb-3">
-                    <label class="form-label">هزینه هر تصویر (اعتبار):</label>
-                    <input type="number" name="cost_per_image" class="form-control" required min="1"
-                           value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
-                </div>
-
+                <!-- Common: Active -->
                 <div class="mb-3 form-check">
                     <input type="checkbox" name="is_active" class="form-check-input" id="modelActive"
                            <?php echo $editMode ? ($editModel['is_active'] ? 'checked' : '') : 'checked'; ?>>
                     <label class="form-check-label" for="modelActive">فعال</label>
                 </div>
 
-                <hr>
-                <h6>💰 هزینه کاراکتری (Chat AI)</h6>
-                <p class="text-muted" style="font-size:0.85rem;">برای گفتگوی هوش مصنوعی (OpenRouter) بر اساس کاراکتر</p>
-                <div class="mb-2">
-                    <label class="form-label" style="font-size:0.9rem;">هزینه ورودی (به ازای هر کاراکتر):</label>
-                    <input type="number" name="cost_per_input_char" class="form-control form-control-sm" step="0.000001" min="0"
-                           value="<?php echo $editMode ? ($editModel['cost_per_input_char'] ?? '0.000001') : '0.000001'; ?>">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label" style="font-size:0.9rem;">هزینه خروجی (به ازای هر کاراکتر):</label>
-                    <input type="number" name="cost_per_output_char" class="form-control form-control-sm" step="0.000001" min="0"
-                           value="<?php echo $editMode ? ($editModel['cost_per_output_char'] ?? '0.000002') : '0.000002'; ?>">
-                </div>
-                <div class="mb-2 form-check">
-                    <input type="checkbox" name="free_model" class="form-check-input" id="modelFree"
-                           value="1"
-                           <?php echo $editMode ? (($editModel['free_model'] ?? 0) ? 'checked' : '') : ''; ?>>
-                    <label class="form-check-label" for="modelFree">🆓 مدل رایگان (هزینه صفر)</label>
+                <!-- ============================================ -->
+                <!-- SECTION: Text Model (chat / OpenRouter)      -->
+                <!-- ============================================ -->
+                <div class="model-type-section <?php echo $editModelType === 'text' ? 'active' : ''; ?>" id="section_text">
+                    <hr>
+                    <h6>📝 تنظیمات مدل متنی</h6>
+                    <p class="text-muted" style="font-size:0.85rem;">هزینه بر اساس کاراکتر محاسبه می‌شود</p>
+                    <div class="mb-2">
+                        <label class="form-label" style="font-size:0.9rem;">هزینه ورودی (به ازای هر کاراکتر):</label>
+                        <input type="number" name="cost_per_input_char" class="form-control form-control-sm" step="0.000001" min="0"
+                               value="<?php echo $editMode ? ($editModel['cost_per_input_char'] ?? '0.000001') : '0.000001'; ?>">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label" style="font-size:0.9rem;">هزینه خروجی (به ازای هر کاراکتر):</label>
+                        <input type="number" name="cost_per_output_char" class="form-control form-control-sm" step="0.000001" min="0"
+                               value="<?php echo $editMode ? ($editModel['cost_per_output_char'] ?? '0.000002') : '0.000002'; ?>">
+                    </div>
+                    <div class="mb-2 form-check">
+                        <input type="checkbox" name="free_model" class="form-check-input" id="modelFree" value="1"
+                               <?php echo $editMode ? (($editModel['free_model'] ?? 0) ? 'checked' : '') : ''; ?>>
+                        <label class="form-check-label" for="modelFree">🆓 مدل رایگان (هزینه صفر)</label>
+                    </div>
                 </div>
 
-                <hr>
+                <!-- ============================================ -->
+                <!-- SECTION: Image Generation                     -->
+                <!-- ============================================ -->
+                <div class="model-type-section <?php echo $editModelType === 'image_generation' ? 'active' : ''; ?>" id="section_image_generation">
+                    <hr>
+                    <h6>🎨 تنظیمات ساخت تصویر</h6>
+                    <div class="mb-3">
+                        <label class="form-label">هزینه هر تصویر (اعتبار):</label>
+                        <input type="number" name="cost_per_image" class="form-control" min="1"
+                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
+                    </div>
+                    <!-- Provider-specific configs -->
+                    <div id="imgProviderConfigs">
+                        <?php $this->renderMetisConfig($editMetisConfig, $editMode ? ($editModel['provider'] ?? '') : '', 'image_generation'); ?>
+                        <?php $this->renderOrConfig($editOrConfig, $editMode ? ($editModel['provider'] ?? '') : ''); ?>
+                    </div>
+                </div>
 
-                <!-- ─── MetisAI Config ─── -->
-                <h6 id="metisHeader" style="color: #0984e3; display:none;">⚙️ تنظیمات MetisAI API</h6>
+                <!-- ============================================ -->
+                <!-- SECTION: Image Editing                        -->
+                <!-- ============================================ -->
+                <div class="model-type-section <?php echo $editModelType === 'image_editing' ? 'active' : ''; ?>" id="section_image_editing">
+                    <hr>
+                    <h6>🖼 تنظیمات ویرایش تصویر</h6>
+                    <div class="mb-3">
+                        <label class="form-label">هزینه هر ویرایش (اعتبار):</label>
+                        <input type="number" name="cost_per_image" class="form-control" min="1"
+                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
+                    </div>
+                    <div id="editProviderConfigs">
+                        <?php $this->renderMetisConfig($editMetisConfig, $editMode ? ($editModel['provider'] ?? '') : '', 'image_editing'); ?>
+                        <?php $this->renderOrConfig($editOrConfig, $editMode ? ($editModel['provider'] ?? '') : ''); ?>
+                    </div>
+                </div>
+
+                <!-- ============================================ -->
+                <!-- SECTION: Video                                -->
+                <!-- ============================================ -->
+                <div class="model-type-section <?php echo $editModelType === 'video' ? 'active' : ''; ?>" id="section_video">
+                    <hr>
+                    <h6>🎬 تنظیمات ویدئو</h6>
+                    <div class="mb-3">
+                        <label class="form-label">هزینه هر ویدئو (اعتبار):</label>
+                        <input type="number" name="cost_per_image" class="form-control" min="1"
+                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '5'; ?>">
+                    </div>
+                </div>
+
+                <!-- ============================================ -->
+                <!-- MetisAI Config (shown for MetisAI provider)  -->
+                <!-- ============================================ -->
                 <div id="metisConfigSection" style="display:none;">
+                    <hr>
+                    <h6 id="metisHeader" style="color: #0984e3;">⚙️ تنظیمات MetisAI API</h6>
                     <div class="mb-2">
                         <label class="form-label" style="font-size:0.9rem;">model_name (provider name):</label>
                         <input type="text" name="mc_model_name" class="form-control form-control-sm"
@@ -206,9 +269,12 @@ ob_start();
                     </div>
                 </div>
 
-                <!-- ─── OpenRouter Config ─── -->
-                <h6 id="orHeader" style="color: #e17055; display:none;">🔗 تنظیمات OpenRouter</h6>
+                <!-- ============================================ -->
+                <!-- OpenRouter Config                             -->
+                <!-- ============================================ -->
                 <div id="orConfigSection" style="display:none;">
+                    <hr>
+                    <h6 id="orHeader" style="color: #e17055;">🔗 تنظیمات OpenRouter</h6>
                     <div class="mb-2">
                         <label class="form-label" style="font-size:0.9rem;">aspect_ratio (نسبت تصویر):</label>
                         <select name="or_aspect_ratio" class="form-select form-select-sm">
@@ -253,6 +319,7 @@ ob_start();
                         <th>ID</th>
                         <th>نام</th>
                         <th>ارائه‌دهنده</th>
+                        <th>نوع</th>
                         <th>هزینه</th>
                         <th>وضعیت</th>
                         <th>تاریخ</th>
@@ -261,13 +328,23 @@ ob_start();
                 </thead>
                 <tbody>
                     <?php if (empty($models)): ?>
-                        <tr><td colspan="7" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
+                        <tr><td colspan="8" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
                     <?php else: ?>
                         <?php foreach ($models as $m): ?>
+                        <?php
+                            $typeLabels = [
+                                'text' => '📝 متنی',
+                                'image_generation' => '🎨 تصویرساز',
+                                'image_editing' => '🖼 ویرایش',
+                                'video' => '🎬 ویدئو',
+                            ];
+                            $typeLabel = $typeLabels[$m['model_type'] ?? 'image_generation'] ?? '🎨 تصویرساز';
+                        ?>
                         <tr>
                             <td><?php echo $m['id']; ?></td>
                             <td><?php echo htmlspecialchars($m['name']); ?></td>
                             <td><code><?php echo htmlspecialchars($m['provider'] ?? 'gapgpt'); ?></code></td>
+                            <td><span class="badge bg-secondary"><?php echo $typeLabel; ?></span></td>
                             <td><?php echo number_format($m['cost_per_image']); ?></td>
                             <td>
                                 <?php if ($m['is_active']): ?>
@@ -302,19 +379,33 @@ ob_start();
 <script>
 function toggleConfigSections() {
     var provider = document.getElementById('providerSelect').value;
-    var metisSection = document.getElementById('metisConfigSection');
-    var metisHeader = document.getElementById('metisHeader');
-    var orSection = document.getElementById('orConfigSection');
-    var orHeader = document.getElementById('orHeader');
-
-    metisSection.style.display = provider === 'metisai' ? 'block' : 'none';
-    metisHeader.style.display = provider === 'metisai' ? 'block' : 'none';
-    orSection.style.display = provider === 'openrouter' ? 'block' : 'none';
-    orHeader.style.display = provider === 'openrouter' ? 'block' : 'none';
+    document.getElementById('metisConfigSection').style.display = provider === 'metisai' ? 'block' : 'none';
+    document.getElementById('metisHeader').style.display = provider === 'metisai' ? 'block' : 'none';
+    document.getElementById('orConfigSection').style.display = provider === 'openrouter' ? 'block' : 'none';
+    document.getElementById('orHeader').style.display = provider === 'openrouter' ? 'block' : 'none';
 }
+
+function toggleModelTypeSections() {
+    var type = document.getElementById('modelTypeSelect').value;
+    var sections = document.querySelectorAll('.model-type-section');
+    sections.forEach(function(s) { s.classList.remove('active'); });
+    var target = document.getElementById('section_' + type);
+    if (target) target.classList.add('active');
+}
+
 toggleConfigSections();
+toggleModelTypeSections();
 </script>
 
 <?php
 $pageContent = ob_get_clean();
+
+// Helper functions for rendering provider configs
+function renderMetisConfig($config, $currentProvider, $type) {
+    // For now, MetisAI config is rendered in the main form
+}
+function renderOrConfig($config, $currentProvider) {
+    // For now, OpenRouter config is rendered in the main form
+}
+
 require __DIR__ . '/../../views/admin/layout.php';

@@ -16,7 +16,8 @@ if (!$userId) {
     exit;
 }
 
-$user = $db->query("SELECT u.*, up.first_name, up.last_name, up.username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.id = ?", [$userId])->fetch();
+// Fetch user — no JOIN to user_profiles (which may not exist)
+$user = $db->query("SELECT * FROM users WHERE id = ?", [$userId])->fetch();
 if (!$user) {
     header('Location: users.php');
     exit;
@@ -44,15 +45,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_credits'])) {
         }
 
         if ($success) {
-            // Log admin action
-            $db->query(
-                "INSERT INTO admin_actions (admin_username, action, target_type, target_id, details) VALUES (?, 'credit_adjust', 'user', ?, ?)",
-                [
-                    $_SESSION['admin_username'] ?? 'admin',
-                    $userId,
-                    json_encode(['amount' => $amount, 'reason' => $reason], JSON_UNESCAPED_UNICODE),
-                ]
-            );
+            $details = json_encode(['amount' => $amount, 'reason' => $reason], JSON_UNESCAPED_UNICODE);
+            try {
+                $db->query(
+                    "INSERT INTO admin_actions (admin_username, action, target_type, target_id, details) VALUES (?, 'credit_adjust', 'user', ?, ?)",
+                    [$_SESSION['admin_username'] ?? 'admin', $userId, $details]
+                );
+            } catch (\Throwable $e) {
+                // admin_actions table might not exist — ignore
+            }
             $message = '✅ اعتبار با موفقیت ' . ($amount > 0 ? 'افزودن' : 'کسر') . ' شد.';
         } else {
             $message = '❌ عملیات ناموفق. موجودی کافی نیست یا خطایی رخ داده.';
@@ -65,23 +66,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_credits'])) {
 // Refresh user data after adjustment
 $user = $db->query("SELECT * FROM users WHERE id = ?", [$userId])->fetch();
 
-// Fetch credit ledger
-$ledger = $db->query(
-    "SELECT * FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
-    [$userId]
-)->fetchAll();
+// Fetch credit ledger (handle missing table gracefully)
+$ledger = [];
+try {
+    $ledger = $db->query(
+        "SELECT * FROM credit_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+        [$userId]
+    )->fetchAll();
+} catch (\Throwable $e) {
+    $ledger = [];
+}
 
 // Fetch payment history
-$payments = $db->query(
-    "SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
-    [$userId]
-)->fetchAll();
+$payments = [];
+try {
+    $payments = $db->query(
+        "SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+        [$userId]
+    )->fetchAll();
+} catch (\Throwable $e) {
+    $payments = [];
+}
 
 // Fetch AI request history
-$aiRequests = $db->query(
-    "SELECT ar.*, am.name as model_name FROM ai_requests ar LEFT JOIN ai_models am ON ar.model_id = am.id WHERE ar.user_id = ? ORDER BY ar.created_at DESC LIMIT 20",
-    [$userId]
-)->fetchAll();
+$aiRequests = [];
+try {
+    $aiRequests = $db->query(
+        "SELECT ar.*, am.name as model_name FROM ai_requests ar LEFT JOIN ai_models am ON ar.model_id = am.id WHERE ar.user_id = ? ORDER BY ar.created_at DESC LIMIT 20",
+        [$userId]
+    )->fetchAll();
+} catch (\Throwable $e) {
+    $aiRequests = [];
+}
 
 ob_start();
 ?>
@@ -98,13 +114,13 @@ ob_start();
             <h5>👤 پروفایل کاربر #<?php echo $user['id']; ?></h5>
             <table class="table table-borderless">
                 <tr><td style="width:150px;">شناسه بله:</td><td style="font-family:monospace;"><?php echo $user['bale_user_id']; ?></td></tr>
-                <tr><td>نام:</td><td><?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name']); ?></td></tr>
+                <tr><td>نام:</td><td><?php echo htmlspecialchars(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')); ?></td></tr>
                 <tr><td>نام کاربری:</td><td><?php echo htmlspecialchars($user['username'] ?? '-'); ?></td></tr>
                 <tr><td>شماره تلفن:</td><td dir="ltr"><?php echo htmlspecialchars($user['phone_number'] ?? '-'); ?></td></tr>
-                <tr><td>اعتبار فعلی:</td><td><strong class="text-success"><?php echo number_format((int) $user['credits']); ?></strong> اعتبار</td></tr>
-                <tr><td>وضعیت ثبت‌نام:</td><td><?php echo $user['is_registered'] ? '✅ ثبت‌نام شده' : '❌ ثبت‌نام نشده'; ?></td></tr>
-                <tr><td>تاریخ ثبت‌نام:</td><td><?php echo $user['created_at']; ?></td></tr>
-                <tr><td>آخرین فعالیت:</td><td><?php echo $user['last_active_at']; ?></td></tr>
+                <tr><td>اعتبار فعلی:</td><td><strong class="text-success"><?php echo number_format((int) ($user['credits'] ?? 0)); ?></strong> اعتبار</td></tr>
+                <tr><td>وضعیت ثبت‌نام:</td><td><?php echo ($user['is_registered'] ?? 0) ? '✅ ثبت‌نام شده' : '❌ ثبت‌نام نشده'; ?></td></tr>
+                <tr><td>تاریخ ثبت‌نام:</td><td><?php echo $user['created_at'] ?? '-'; ?></td></tr>
+                <tr><td>آخرین فعالیت:</td><td><?php echo $user['last_active_at'] ?? '-'; ?></td></tr>
             </table>
         </div>
     </div>

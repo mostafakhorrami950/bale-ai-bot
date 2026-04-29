@@ -494,6 +494,10 @@ class DatabaseRepairService
             $this->exec("ALTER TABLE ai_models ADD COLUMN free_model TINYINT(1) DEFAULT 0 AFTER is_active");
             $this->log('✅ ستون free_model به ai_models اضافه شد.');
         }
+        if (!$this->columnExists('ai_models', 'model_type')) {
+            $this->exec("ALTER TABLE ai_models ADD COLUMN model_type VARCHAR(30) DEFAULT 'image_generation' AFTER provider");
+            $this->log('✅ ستون model_type به ai_models اضافه شد.');
+        }
     }
 
     private function log(string $msg): void
