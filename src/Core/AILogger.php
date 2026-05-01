@@ -2,13 +2,28 @@
 
 namespace Core;
 
+use Database\Logger;
+
 /**
  * AILogger — writes all AI requests/responses to a dedicated log file.
- * Log path: /home/tvhwswck/public_html/ai_debug.log
+ * Uses Config-driven path with fallback.
  */
 class AILogger
 {
-    private static string $logFile = '/home/tvhwswck/public_html/ai_debug.log';
+    private static ?string $logFile = null;
+
+    public static function getLogFile(): string
+    {
+        if (self::$logFile === null) {
+            $path = defined('BASE_PATH') ? BASE_PATH . '/ai_debug.log' : __DIR__ . '/../../ai_debug.log';
+            self::$logFile = \Core\Config::get('AI_LOG_FILE', $path);
+            $dir = dirname(self::$logFile);
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0755, true);
+            }
+        }
+        return self::$logFile;
+    }
 
     public static function setLogFile(string $path): void
     {
@@ -22,7 +37,7 @@ class AILogger
     {
         $ts = date('Y-m-d H:i:s');
         $line = "[{$ts}] [{$event}] " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
-        @file_put_contents(self::$logFile, $line, FILE_APPEND | LOCK_EX);
+        @file_put_contents(self::getLogFile(), $line, FILE_APPEND | LOCK_EX);
     }
 
     /**
