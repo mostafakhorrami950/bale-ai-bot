@@ -452,12 +452,32 @@ class AIService
 
     /**
      * Get a model by ID from ai_image_models or ai_edit_models (active).
+     * If $modelType is provided, only query that specific table.
      */
-    public function getActiveModelById(int $id): ?array
+    public function getActiveModelById(int $id, ?string $modelType = null): ?array
     {
         try {
             $db = \Database\Database::getInstance();
-            // Try image table first
+
+            // If type is specified, query only that table
+            if ($modelType === 'image_editing') {
+                $stmt = $db->query("SELECT id, name, provider, cost_per_edit AS cost_per_image, is_active, model_config FROM ai_edit_models WHERE id = ? AND is_active = 1", [$id]);
+                return $stmt->fetch() ?: null;
+            }
+            if ($modelType === 'image_generation' || $modelType === 'text2img') {
+                $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
+                return $stmt->fetch() ?: null;
+            }
+            if ($modelType === 'text') {
+                $stmt = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active FROM ai_text_models WHERE id = ? AND is_active = 1", [$id]);
+                return $stmt->fetch() ?: null;
+            }
+            if ($modelType === 'video') {
+                $stmt = $db->query("SELECT id, name, provider, cost_per_video AS cost_per_image, model_config, is_active FROM ai_video_models WHERE id = ? AND is_active = 1", [$id]);
+                return $stmt->fetch() ?: null;
+            }
+
+            // Fallback: try image table first (backward compat)
             $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
             $row = $stmt->fetch();
             if ($row) return $row;

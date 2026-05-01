@@ -134,7 +134,7 @@ class ImageHandler extends BaseHandler
         $modelId = $extra['model_id'] ?? null;
 
         $aiService = new AIService();
-        $model = $aiService->getActiveModelById((int)$modelId);
+        $model = $aiService->getActiveModelById((int)$modelId, 'image_generation');
 
         if (!$model) {
             $this->clearUserState($internalId);

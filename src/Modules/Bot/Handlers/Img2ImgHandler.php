@@ -274,7 +274,7 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $aiService = new AIService();
-        $model = $aiService->getActiveModelById($modelId);
+        $model = $aiService->getActiveModelById($modelId, 'image_editing');
 
         if (!$model) {
             $this->clearUserState($internalId);
