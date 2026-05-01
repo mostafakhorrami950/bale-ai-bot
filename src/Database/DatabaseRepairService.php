@@ -40,6 +40,7 @@ class DatabaseRepairService
         $this->ensureNewModelTables();
         $this->ensureAiModelsCostColumns();
         $this->seedDefaultModel();
+        $this->ensurePhase14Columns();
 
         return $this->messages;
     }
@@ -575,6 +576,46 @@ class DatabaseRepairService
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ");
             $this->log('✅ جدول ai_video_models ایجاد شد.');
+        }
+    }
+
+    /**
+     * Phase 14 columns: display_name, description, size, aspect_ratio.
+     */
+    private function ensurePhase14Columns(): void
+    {
+        $tables = [
+            'ai_image_models' => ['display_name', 'description', 'size', 'aspect_ratio'],
+            'ai_edit_models'  => ['display_name', 'description', 'size', 'aspect_ratio'],
+            'ai_text_models'  => ['display_name', 'description'],
+            'ai_video_models' => ['display_name', 'description'],
+        ];
+
+        foreach ($tables as $table => $cols) {
+            if (!$this->tableExists($table)) continue;
+            foreach ($cols as $col) {
+                if (!$this->columnExists($table, $col)) {
+                    $after = 'name';
+                    $type = 'VARCHAR(200) DEFAULT NULL';
+                    if ($col === 'description') {
+                        $after = 'display_name';
+                        $type = 'TEXT DEFAULT NULL';
+                    } elseif ($col === 'size') {
+                        $after = 'cost_per_image';
+                        $type = "VARCHAR(20) DEFAULT 'auto'";
+                    } elseif ($col === 'aspect_ratio') {
+                        $after = 'size';
+                        $type = "VARCHAR(10) DEFAULT 'auto'";
+                    }
+                    $this->exec("ALTER TABLE {$table} ADD COLUMN {$col} {$type} AFTER {$after}");
+                    $this->log("✅ ستون {$col} به جدول {$table} اضافه شد.");
+
+                    // Copy name to display_name if display_name was just added
+                    if ($col === 'display_name') {
+                        $this->exec("UPDATE {$table} SET display_name = name WHERE display_name IS NULL");
+                    }
+                }
+            }
         }
     }
 

@@ -101,7 +101,7 @@ class Img2ImgHandler extends BaseHandler
     private function showModelSelection(int $chatId, int $userId): void
     {
         $db = Database::getInstance();
-        $models = $db->query("SELECT id, name, cost_per_edit AS cost_per_image FROM ai_edit_models WHERE is_active = 1")->fetchAll();
+        $models = $db->query("SELECT id, name, display_name, cost_per_edit AS cost_per_image, description FROM ai_edit_models WHERE is_active = 1")->fetchAll();
 
         if (empty($models)) {
             $this->baleClient->sendMessage($chatId, '❌ هیچ مدل فعالی یافت نشد.');
@@ -109,16 +109,22 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $keyboard = ['inline_keyboard' => []];
+        $msg = "🎯 مدل مورد نظر را انتخاب کنید:\n\n";
         foreach ($models as $model) {
+            $displayName = $model['display_name'] ?? $model['name'];
+            $desc = $model['description'] ?? '';
+            $msg .= '• ' . $displayName . ' — هزینه: ' . $model['cost_per_image'] . ' اعتبار';
+            if ($desc) $msg .= ' — ' . $desc;
+            $msg .= "\n";
             $keyboard['inline_keyboard'][] = [[
-                'text' => "🖼 {$model['name']} ({$model['cost_per_image']} اعتبار)",
+                'text' => $displayName,
                 'callback_data' => "edit_select_model_{$model['id']}"
             ]];
         }
 
         $internalId = $this->resolveUserId($userId);
         $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);
-        $this->baleClient->sendMessage($chatId, '🎯 ابتدا مدل مورد نظر را انتخاب کنید:', $keyboard);
+        $this->baleClient->sendMessage($chatId, $msg, $keyboard);
     }
 
     private function saveModelAndAskPhotos(int $chatId, int $userId, int $modelId): void

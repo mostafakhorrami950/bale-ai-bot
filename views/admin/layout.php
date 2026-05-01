@@ -198,7 +198,19 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
             <i class="bi bi-speedometer2"></i> 📊 داشبورد
         </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'models' ? 'active' : ''; ?>" href="models.php">
-            <i class="bi bi-cpu"></i> 🤖 مدل‌های AI
+            <i class="bi bi-cpu"></i> 📋 همه مدل‌ها
+        </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'modelstext2img' ? 'active' : ''; ?>" href="modelstext2img.php" style="padding-right:40px;font-size:0.9rem;">
+            <i class="bi bi-image"></i> 🎨 ساخت تصویر
+        </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'modelsimg2img' ? 'active' : ''; ?>" href="modelsimg2img.php" style="padding-right:40px;font-size:0.9rem;">
+            <i class="bi bi-pencil-square"></i> 🖼 ویرایش تصویر
+        </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'modelstext' ? 'active' : ''; ?>" href="modelstext.php" style="padding-right:40px;font-size:0.9rem;">
+            <i class="bi bi-chat-dots"></i> 📝 متنی
+        </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'modelsvideo' ? 'active' : ''; ?>" href="modelsvideo.php" style="padding-right:40px;font-size:0.9rem;">
+            <i class="bi bi-camera-reels"></i> 🎬 ویدئو
         </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'plans' ? 'active' : ''; ?>" href="plans.php">
             <i class="bi bi-credit-card"></i> 💰 پلن‌های پرداخت

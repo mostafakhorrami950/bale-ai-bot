@@ -74,17 +74,23 @@ class ImageHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $models = $db->query("SELECT id, name, cost_per_image FROM ai_image_models WHERE is_active = 1")->fetchAll();
+            $models = $db->query("SELECT id, name, display_name, cost_per_image, description FROM ai_image_models WHERE is_active = 1")->fetchAll();
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ در حال حاضر هیچ مدل فعالی یافت نشد.");
                 return;
             }
             $keyboard = ['inline_keyboard' => []];
+            $msg = "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:\n\n";
             foreach ($models as $model) {
-            $keyboard['inline_keyboard'][] = [[
-                'text' => "🤖 {$model['name']} (هزینه: {$model['cost_per_image']} اعتبار)",
-                'callback_data' => "img_select_model_{$model['id']}"
-            ]];
+                $displayName = $model['display_name'] ?? $model['name'];
+                $desc = $model['description'] ?? '';
+                $msg .= "• {$displayName} — هزینه: {$model['cost_per_image']} اعتبار";
+                if ($desc) $msg .= " — {$desc}";
+                $msg .= "\n";
+                $keyboard['inline_keyboard'][] = [[
+                    'text' => $displayName,
+                    'callback_data' => "img_select_model_{$model['id']}"
+                ]];
             }
             $internalId = $this->resolveUserId($userId);
             $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
@@ -92,7 +98,7 @@ class ImageHandler extends BaseHandler
                 "INSERT INTO bot_state (user_id, state, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE state = ?, updated_at = NOW()",
                 [$internalId, $nextState, $nextState]
             );
-            $this->baleClient->sendMessage($chatId, "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:", $keyboard);
+            $this->baleClient->sendMessage($chatId, $msg, $keyboard);
         } catch (\Throwable $e) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
         }
