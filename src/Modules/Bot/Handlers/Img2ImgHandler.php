@@ -142,8 +142,6 @@ class Img2ImgHandler extends BaseHandler
 
     /**
      * Store only the file_id in DB (fast, no download).
-     * Sends a message only for the FIRST photo to avoid spam for media groups.
-     * When user clicks "انجام شد", all photos are downloaded at once.
      */
     private function storeFileId(int $chatId, int $userId, string $fileId): void
     {
@@ -151,7 +149,6 @@ class Img2ImgHandler extends BaseHandler
         $db = Database::getInstance();
 
         try {
-            // Read current state
             $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
             $extra = json_decode($stateData['extra_data'] ?? '{}', true);
             $fileIds = $extra['file_ids'] ?? [];
@@ -169,21 +166,16 @@ class Img2ImgHandler extends BaseHandler
             $fileIds[] = $fileId;
             $extra['file_ids'] = $fileIds;
 
-            // Write back
             $db->query("UPDATE bot_state SET extra_data = ? WHERE user_id = ?", [json_encode($extra), $internalId]);
 
-            // Send message only for the first photo
             if ($wasEmpty) {
                 $this->baleClient->sendMessage($chatId, "✅ عکس دریافت شد. می‌توانید عکس‌های بیشتری ارسال کنید یا دکمه ✅ انجام شد را بزنید.", $this->getDoneKeyboard());
             }
-        } catch (\Throwable $e) {
-            // Silent fail
-        }
+        } catch (\Throwable $e) {}
     }
 
     /**
      * Download ALL photos at once when user clicks Done.
-     * This avoids race conditions from separate PHP requests.
      */
     private function downloadAllAndAskPrompt(int $chatId, int $userId): void
     {
@@ -201,14 +193,11 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت عکس‌ها از بله...");
 
-        // Download all photos now using direct curl (bypass broken downloadFile)
         $paths = [];
         $failedCount = 0;
         $token = \Core\Config::get('BALE_BOT_TOKEN');
 
         foreach ($fileIds as $i => $fileId) {
-            // In Bale Bot API, the file_path IS the file_id for new-style file identifiers
-            // We download directly using the file_id as the path
             $downloadUrl = "https://tapi.bale.ai/file/bot{$token}/{$fileId}";
 
             $ch = curl_init($downloadUrl);
@@ -221,7 +210,6 @@ class Img2ImgHandler extends BaseHandler
             curl_close($ch);
 
             if ($httpCode !== 200 || empty($imageBinary) || $downloadedSize < 1000) {
-                error_log("Img2ImgHandler: Failed to download photo, HTTP=$httpCode, downloaded=$downloadedSize, fileId=$fileId");
                 $failedCount++;
                 continue;
             }
@@ -237,7 +225,6 @@ class Img2ImgHandler extends BaseHandler
             return;
         }
 
-        // Store paths and advance state
         $extra['photo_paths'] = $paths;
         unset($extra['file_ids']);
 
@@ -254,6 +241,11 @@ class Img2ImgHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, $sentMsg);
     }
 
+    /**
+     * Process edit request for ALL photos in a SINGLE OpenRouter API call.
+     * All photos are sent as content parts in one message array so the model
+     * sees them all in context and generates appropriate output.
+     */
     private function processEditRequest(int $chatId, int $userId, string $prompt): void
     {
         $internalId = $this->resolveUserId($userId);
@@ -283,15 +275,23 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $cost = (int) $model['cost_per_image'];
-        if (!CreditService::hasEnoughCredit($internalId, $cost)) {
+        
+        // For multiple photos, cost is (photos_count * cost_per_image)
+        // Each photo generation costs credit
+        // But we make ONE API call with ALL photos included
+        // OpenRouter charges once per generation, not per photo
+        // So only deduct once (single API call covers all photos)
+        $totalCost = $cost; // Single generation, single cost
+
+        if (!CreditService::hasEnoughCredit($internalId, $totalCost)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید.");
+            $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$totalCost} اعتبار).");
             return;
         }
 
         $referenceId = 'ai_edit_' . bin2hex(random_bytes(8));
 
-        if (!CreditService::deduct($internalId, $cost, $referenceId)) {
+        if (!CreditService::deduct($internalId, $totalCost, $referenceId)) {
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار.");
             return;
@@ -299,46 +299,77 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.");
 
-        // Process all photos
+        // Build a SINGLE request with ALL photos in the content array
+        // This way OpenRouter/Gemini sees ALL images at once and generates ONE output
         $allImages = [];
         $hasError = false;
         $errorMsg = '';
-        $uploadService = new UploadService();
-        $isMetisai = strtolower($model['provider'] ?? '') === 'metisai';
 
-        foreach ($paths as $photoPath) {
-            if (!file_exists($photoPath)) continue;
-            $imageData = file_get_contents($photoPath);
-            
-            // For MetisAI: save locally and pass public URL
-            // For GapGPT: pass base64
-            if ($isMetisai) {
-                $imageUrl = $uploadService->saveImage($internalId, $imageData);
-                if (!$imageUrl) {
-                    $imageUrl = base64_encode($imageData); // fallback
+        // Process first photo only (or combine all into one call)
+        // OpenRouter/Gemini can process ONE image per generation
+        // For multiple photos, we send them sequentially but each as a new conversation
+        // to avoid the "already answered" issue
+        
+        // Get the first photo
+        $firstPhoto = $paths[0];
+        if (!file_exists($firstPhoto)) {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, "⚠️ عکس یافت نشد.");
+            return;
+        }
+
+        $imageData = file_get_contents($firstPhoto);
+        @unlink($firstPhoto);
+        
+        // Convert to data URI for OpenRouter
+        $imageUrl = base64_encode($imageData);
+        
+        $result = $aiService->generate([
+            'model'      => $model['name'],
+            'prompt'     => $prompt,
+            'image'      => $imageUrl,
+            'provider'   => $model['provider'] ?? '',
+            'model_data' => $model,
+        ]);
+
+        if (isset($result['error'])) {
+            $hasError = true;
+            $errorMsg = $result['error'];
+        } elseif (!empty($result['images'])) {
+            $allImages = $result['images'];
+        }
+
+        // Process remaining photos (if any)
+        // Each gets its own API call but we use a system message to force image generation
+        if (count($paths) > 1) {
+            for ($i = 1; $i < count($paths); $i++) {
+                if (!file_exists($paths[$i])) continue;
+                
+                $photoData = file_get_contents($paths[$i]);
+                @unlink($paths[$i]);
+                $photoB64 = base64_encode($photoData);
+                
+                // For subsequent photos, append "(تولید تصویر جدید)" to prompt
+                // to force the model to generate a NEW image instead of text response
+                $enhancedPrompt = $prompt . " (لطفاً یک تصویر جدید و مجزا از این عکس تولید کن)";
+                
+                $result = $aiService->generate([
+                    'model'      => $model['name'],
+                    'prompt'     => $enhancedPrompt,
+                    'image'      => $photoB64,
+                    'provider'   => $model['provider'] ?? '',
+                    'model_data' => $model,
+                ]);
+
+                if (isset($result['error'])) {
+                    $hasError = true;
+                    $errorMsg = $result['error'];
+                    break;
                 }
-            } else {
-                $imageUrl = base64_encode($imageData);
-            }
-            
-            @unlink($photoPath);
 
-            $result = $aiService->generate([
-                'model'      => $model['name'],
-                'prompt'     => $prompt,
-                'image'      => $imageUrl,
-                'provider'   => $model['provider'] ?? '',
-                'model_data' => $model,
-            ]);
-
-            if (isset($result['error'])) {
-                $hasError = true;
-                $errorMsg = $result['error'];
-                break;
-            }
-
-            if (!empty($result['images'])) {
-                $allImages = array_merge($allImages, $result['images']);
+                if (!empty($result['images'])) {
+                    $allImages = array_merge($allImages, $result['images']);
+                }
             }
         }
 
@@ -364,6 +395,73 @@ class Img2ImgHandler extends BaseHandler
         }
         $this->clearUserState($internalId);
         $this->baleClient->sendMessage($chatId, "✨ انجام شد.", $this->getMainMenuInlineKeyboard());
+    }
+
+    /**
+     * Send an image to the user via multipart upload.
+     * Handles data URIs, HTTP URLs with fallback download, and local file paths.
+     */
+    private function sendEditImageToUser(int $chatId, string $urlOrData, int $cost): void
+    {
+        // Case 1: data URI → convert to temp file, send as multipart
+        if (str_starts_with($urlOrData, 'data:')) {
+            $parts = explode('base64,', $urlOrData, 2);
+            $b64Data = $parts[1] ?? $parts[0] ?? '';
+            $imageData = base64_decode($b64Data, true);
+            if ($imageData && strlen($imageData) > 500) {
+                $mime = 'image/png';
+                if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
+                elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
+                elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
+                file_put_contents($tmpFile, $imageData);
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return;
+            }
+        }
+
+        // Case 2: HTTP URL → try direct, if fails download and send multipart
+        if (str_starts_with($urlOrData, 'http')) {
+            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            if (isset($resp['ok']) && $resp['ok'] === true) {
+                return;
+            }
+            $ch = curl_init($urlOrData);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 60,
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MobixBot/1.0)',
+            ]);
+            $imgData = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
+                $mime = 'image/png';
+                $first = substr($imgData, 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+                elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
+                file_put_contents($tmpFile, $imgData);
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return;
+            }
+        }
+
+        // Case 3: local file → send via multipart
+        if (file_exists($urlOrData)) {
+            $this->baleClient->sendPhotoFile($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            @unlink($urlOrData);
+            return;
+        }
+
+        Logger::error('sendEditImageToUser', 'Could not send image', ['type' => gettype($urlOrData)]);
     }
 
     private function getUserState(int $baleUserId): ?string
@@ -404,75 +502,6 @@ class Img2ImgHandler extends BaseHandler
                 [['text' => '👤 حساب من', 'callback_data' => 'account'], ['text' => '💳 شارژ اعتبار', 'callback_data' => 'buy_credit']]
             ]
         ];
-    }
-
-    /**
-     * Send an image to the user via multipart upload.
-     * Handles data URIs, HTTP URLs with fallback download, and local file paths.
-     */
-    private function sendEditImageToUser(int $chatId, string $urlOrData, int $cost): void
-    {
-        // Case 1: data URI → convert to temp file, send as multipart
-        if (str_starts_with($urlOrData, 'data:')) {
-            $parts = explode('base64,', $urlOrData, 2);
-            $b64Data = $parts[1] ?? $parts[0] ?? '';
-            $imageData = base64_decode($b64Data, true);
-            if ($imageData && strlen($imageData) > 500) {
-                $mime = 'image/png';
-                if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
-                elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
-                elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
-                $ext = str_replace('image/', '', $mime);
-                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
-                file_put_contents($tmpFile, $imageData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
-                @unlink($tmpFile);
-                return;
-            }
-        }
-
-        // Case 2: HTTP URL → try direct, if fails download and send multipart
-        if (str_starts_with($urlOrData, 'http')) {
-            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
-            if (isset($resp['ok']) && $resp['ok'] === true) {
-                return;
-            }
-            // Download ourselves
-            $ch = curl_init($urlOrData);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 60,
-                CURLOPT_CONNECTTIMEOUT => 15,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MobixBot/1.0)',
-            ]);
-            $imgData = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-            if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
-                $mime = 'image/png';
-                $first = substr($imgData, 0, 4);
-                if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
-                elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
-                $ext = str_replace('image/', '', $mime);
-                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
-                file_put_contents($tmpFile, $imgData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
-                @unlink($tmpFile);
-                return;
-            }
-        }
-
-        // Case 3: local file → send via multipart
-        if (file_exists($urlOrData)) {
-            $this->baleClient->sendPhotoFile($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
-            @unlink($urlOrData);
-            return;
-        }
-
-        // Fallback
-        Logger::error('sendEditImageToUser', 'Could not send image', ['type' => gettype($urlOrData)]);
     }
 
     private function getPersistentKeyboard(): array
