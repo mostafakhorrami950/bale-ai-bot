@@ -461,25 +461,32 @@ class ChatHandler extends BaseHandler
         try {
             $memoryManager = new MemoryManager();
             $memoryHooks = new MemoryHooks($memoryManager);
-            // Build system prompt from history
+            
+            // Build messages from history first
+            $orMessages = ChatService::buildMessagesFromHistory($history);
+            
+            // Get or create system prompt for memory context
             $systemPrompt = '';
-            foreach ($history as $h) {
-                if ($h['role'] === 'system') {
-                    $systemPrompt = $h['content'];
-                    break;
-                }
+            $filteredHistory = array_filter($history, fn($h) => $h['role'] === 'system');
+            if (!empty($filteredHistory)) {
+                $firstSystem = reset($filteredHistory);
+                $systemPrompt = $firstSystem['content'] ?? '';
             }
-            $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt);
-            // If system prompt was modified, inject it back
+            
+            // Always inject memory context if there is user text
+            if (!empty($text)) {
+                $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt);
+            }
+            
+            // If system prompt was modified (memory added), prepend it
             if (!empty($systemPrompt)) {
                 $orMessages = array_merge(
                     [['role' => 'system', 'content' => $systemPrompt]],
-                    ChatService::buildMessagesFromHistory(array_filter($history, fn($h) => $h['role'] !== 'system'))
+                    array_filter($orMessages, fn($m) => ($m['role'] ?? '') !== 'system')
                 );
-            } else {
-                $orMessages = ChatService::buildMessagesFromHistory($history);
             }
         } catch (\Throwable $e) {
+            \Core\AILogger::error('memory', 'Inject error', ['error' => $e->getMessage()]);
             $orMessages = ChatService::buildMessagesFromHistory($history);
         }
 

@@ -36,16 +36,34 @@ class AccountHandler extends BaseHandler
                 $message .= "💎 اعتبار: " . number_format($credits) . " کردیت\n";
                 $message .= "🆔 شناسه: {$userId}\n";
 
-                // Memory info (if module enabled)
+                // Memory info (if module enabled) — WITH CLEAR EXAMPLES
                 $memoryManager = new MemoryManager();
                 if ($memoryManager->isEnabled()) {
                     $internalId = $this->resolveInternalId($userId);
                     if ($internalId) {
                         $memoryCount = $memoryManager->getMemoryCount($internalId);
                         $message .= "\n🧠 **حافظه**: {$memoryCount} مورد ذخیره شده\n";
-                        $message .= "   📌 با «یادت باشه [متن]» می‌توانید اطلاعات ذخیره کنید\n";
-                        $message .= "   📋 با «🧠 حافظه من» حافظه خود را ببینید\n";
-                        $message .= "   🗑 با «🗑 پاک کردن حافظه» همه را پاک کنید\n";
+                        $message .= "━━━━━━━━━━━━━━━━━━\n";
+                        $message .= "📌 **چگونه از حافظه استفاده کنم؟**\n\n";
+                        $message .= "**➕ اضافه کردن اطلاعات:**\n";
+                        $message .= "در حین گفتگو، این جمله‌ها را به ربات بگویید:\n";
+                        $message .= "「یادت باشه اسم من علی است」\n";
+                        $message .= "「به خاطر بسپار من برنامه‌نویس هستم」\n";
+                        $message .= "「ذخیره کن رنگ مورد علاقه‌ام آبی است」\n";
+                        $message .= "「فراموش نکن تولد من ۱۵ فروردین است」\n\n";
+                        $message .= "🤖 ربات همچنین به طور خودکار اطلاعات مهم\n";
+                        $message .= "(نام، سن، شغل، علایق و ...) را از\n";
+                        $message .= "گفتگوهای شما استخراج و ذخیره می‌کند.\n\n";
+                        $message .= "**👁️ مشاهده حافظه:**\n";
+                        $message .= "دکمه «🧠 حافظه من» را بزنید\n";
+                        $message .= "یا دستور `/حافظه` را ارسال کنید.\n\n";
+                        $message .= "**🗑️ پاک کردن حافظه:**\n";
+                        $message .= "دکمه «🗑️ پاک کردن حافظه» را بزنید\n";
+                        $message .= "یا دستور `/حذف_حافظه` را ارسال کنید.\n\n";
+                        $message .= "**💡 نکته:** حافظه در چت‌های بعدی به\n";
+                        $message .= "هوش مصنوعی گفته می‌شود تا پاسخ‌های\n";
+                        $message .= "شخصی‌سازی‌شده دریافت کنید.\n";
+                        $message .= "━━━━━━━━━━━━━━━━━━\n";
                     }
                 }
                 

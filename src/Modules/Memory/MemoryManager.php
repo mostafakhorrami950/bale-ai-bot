@@ -16,6 +16,20 @@ class MemoryManager
         $this->db = Database::getInstance();
         $this->aiService = $aiService;
         $this->config = $config;
+
+        // Load summarization model from settings if not provided in config
+        if (empty($this->config['summarization_model'])) {
+            try {
+                $row = $this->db->query(
+                    "SELECT value FROM settings WHERE key_name = 'memory_summarization_model'"
+                )->fetch();
+                if ($row && !empty($row['value'])) {
+                    $this->config['summarization_model'] = $row['value'];
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
     }
 
     /**

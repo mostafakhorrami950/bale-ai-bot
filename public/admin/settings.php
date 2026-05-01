@@ -110,8 +110,31 @@ ob_start();
                         <label class="form-check-label" for="memoryModule">🧠 ماژول حافظه (Memory)</label>
                         <div class="form-text">
                             با غیرفعال کردن این گزینه، تمام قابلیت‌های حافظه متوقف می‌شود. داده‌های قبلی حذف نمی‌شوند.
-                            کاربران می‌توانند با «یادت باشه» یا «🧠 حافظه من» اطلاعات را ذخیره/مشاهده کنند.
+                            کاربران می‌توانند با گفتن «یادت باشه [متن]» اطلاعات را ذخیره کنند.
                         </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">� مدل خلاصه‌سازی حافظه (memory_summarization_model):</label>
+                    <select name="settings[memory_summarization_model]" class="form-select">
+                        <option value="">— غیرفعال (خلاصه‌سازی ساده) —</option>
+                        <?php
+                        $db = \Database\Database::getInstance();
+                        $sumModels = $db->query("SELECT id, display_name, name FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, id ASC")->fetchAll();
+                        $currentSumModel = $currentSettings['memory_summarization_model'] ?? '';
+                        foreach ($sumModels as $sm):
+                            $selected = ((string)$sm['id'] === $currentSumModel) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo $sm['id']; ?>" <?php echo $selected; ?>>
+                                <?php echo htmlspecialchars($sm['display_name'] ?? $sm['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">
+                        مدل AI که برای خلاصه‌سازی مکالمات طولانی استفاده می‌شود.
+                        اگر خالی بماند، خلاصه‌سازی به صورت ساده (برش متن) انجام می‌شود.
+                        این خلاصه‌ها در حافظه بلندمدت کاربر ذخیره می‌شوند.
                     </div>
                 </div>
 
