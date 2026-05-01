@@ -138,11 +138,17 @@ $totalCount = count($messages);
 
         <div style="text-align:center;">
             <a href="repair_db.php" class="btn btn-primary">🔄 بررسی مجدد</a>
-            <a href="login.php" class="btn btn-secondary">← بازگشت به صفحه ورود</a>
+            <a href="../admin.php" class="btn btn-secondary">← بازگشت به پنل مدیریت</a>
         </div>
 
         <p style="text-align:center; color:#b2bec3; margin-top:20px; font-size:0.85rem;">
             <i class="bi bi-info-circle"></i> اگر خطایی مشاهده می‌کنید، دکمه "بررسی مجدد" را بزنید.
+            <br>این ابزار جداول و ستون‌های زیر را بررسی می‌کند:
+            <br>📦 جداول: required_channels, payment_plans, payments, settings, bot_logs,
+            ai_requests, credit_ledger, uploaded_files, chat_conversations, chat_messages,
+            ai_image_models, ai_edit_models, ai_text_models, ai_video_models, user_profiles,
+            user_memories, conversation_summaries
+            <br>🧠 ماژول حافظه (Memory) و تنظیمات پرداخت نیز بررسی می‌شود.
         </p>
     </div>
 </body>
