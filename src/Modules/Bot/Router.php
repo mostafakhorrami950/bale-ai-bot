@@ -132,7 +132,7 @@ class Router
                 'generate_image' => 'ImageHandler',
                 'edit_image' => 'Img2ImgHandler',
                 'account' => 'AccountHandler',
-                'help' => 'ImageHandler',
+                'help' => 'MessageHandler',
                 'check_membership' => 'CallbackHandler',
                 'edit_photos_done' => 'Img2ImgHandler',
                 'start_chat' => 'ChatHandler',

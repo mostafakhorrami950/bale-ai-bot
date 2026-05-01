@@ -109,6 +109,9 @@ class ModelHelper
                 }
                 $supportedFormats = implode(',', $clean);
             }
+            // sort_order for display ordering (text models only)
+            $sortOrder = (int)($post['sort_order'] ?? 0);
+            if ($sortOrder < 0) $sortOrder = 0;
         } else {
             // Image & video: cost_per_image is required, must be positive integer
             $rawCost = $post['cost_per_image'] ?? '';
@@ -145,6 +148,7 @@ class ModelHelper
             'cost_per_output_char' => $costPerOutputChar,
             'free_model'           => $freeModel,
             'supported_formats'    => $supportedFormats,
+            'sort_order'           => $sortOrder ?? 0,
             'size'                 => $post['size'] ?? 'auto',
             'aspect_ratio'         => $post['aspect_ratio'] ?? 'auto',
             'model_config'         => '{}',

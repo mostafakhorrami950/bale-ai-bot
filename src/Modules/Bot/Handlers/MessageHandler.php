@@ -11,6 +11,7 @@ class MessageHandler extends BaseHandler
     {
         try {
             $text = $update->getText();
+            $callbackData = $update->getCallbackData();
             $contact = $update->getContact();
 
             if ($contact) {
@@ -18,8 +19,8 @@ class MessageHandler extends BaseHandler
                 return;
             }
 
-            // Handle help text
-            if ($text === '❓ راهنما') {
+            // Handle help callback or text
+            if ($callbackData === 'help' || $text === "\xE2\x9D\x93 راهنما") {
                 $this->showHelp($update->getChatId());
                 return;
             }
@@ -90,17 +91,16 @@ class MessageHandler extends BaseHandler
     }
 
     /**
-     * Unified 6-button main menu (keyboard, not inline).
+     * Unified 6-button main menu (inline keyboard with callback_data).
      */
     public static function getMainMenuKeyboard(): array
     {
         return [
-            'keyboard' => [
-                [['text' => "\xF0\x9F\x8E\xA8 ساخت تصویر"], ['text' => "\xF0\x9F\x96\xBC ویرایش عکس"]],
-                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی"], ['text' => "\xF0\x9F\x91\xA4 حساب کاربری"]],
-                [['text' => "\xF0\x9F\x92\xB3 خرید اعتبار"], ['text' => "\xE2\x9D\x93 راهنما"]],
-            ],
-            'resize_keyboard' => true
+            'inline_keyboard' => [
+                [['text' => "\xF0\x9F\x8E\xA8 ساخت تصویر", 'callback_data' => 'generate_image'], ['text' => "\xF0\x9F\x96\xBC\xEF\xB8\x8F ویرایش عکس", 'callback_data' => 'edit_image']],
+                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account']],
+                [['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit'], ['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
+            ]
         ];
     }
 }
