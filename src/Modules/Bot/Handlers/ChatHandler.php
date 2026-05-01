@@ -138,10 +138,10 @@ class ChatHandler extends BaseHandler
         }
 
         $aiService = new AIService();
-        $model = $aiService->getFirstActiveModel();
+        $model = $aiService->getFirstActiveTextModel();
 
-        if (!$model || $model['id'] === 0) {
-            $msg = '❌ هیچ مدل فعالی یافت نشد. لطفاً ابتدا یک مدل اضافه کنید.';
+        if (!$model) {
+            $msg = '❌ هیچ مدل متنی فعالی یافت نشد. لطفاً ابتدا یک مدل اضافه کنید.';
             $this->baleClient->sendMessage($chatId, $msg);
             return;
         }
@@ -154,7 +154,7 @@ class ChatHandler extends BaseHandler
         $internalId = $this->resolveUserId($userId);
         try {
             $db = Database::getInstance();
-            $models = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_models WHERE is_active = 1 ORDER BY free_model DESC, id ASC")->fetchAll();
+            $models = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY free_model DESC, id ASC")->fetchAll();
 
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ هیچ مدل فعالی یافت نشد.");
@@ -190,7 +190,7 @@ class ChatHandler extends BaseHandler
         if (!$internalId) return;
 
         $db = Database::getInstance();
-        $model = $db->query("SELECT * FROM ai_models WHERE id = ? AND is_active = 1", [$modelId])->fetch();
+        $model = $db->query("SELECT * FROM ai_text_models WHERE id = ? AND is_active = 1", [$modelId])->fetch();
 
         if (!$model) {
             $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
@@ -249,7 +249,7 @@ class ChatHandler extends BaseHandler
         }
 
         $modelName = $conv['model'];
-        $model = $db->query("SELECT * FROM ai_models WHERE name = ? AND is_active = 1", [$modelName])->fetch();
+        $model = $db->query("SELECT * FROM ai_text_models WHERE name = ? AND is_active = 1", [$modelName])->fetch();
 
         $extra = json_encode([
             'conv_id' => $convId,
@@ -328,8 +328,8 @@ class ChatHandler extends BaseHandler
             return;
         }
 
-        // Get model cost settings
-        $model = $db->query("SELECT * FROM ai_models WHERE id = ?", [$modelId])->fetch();
+        // Get model cost settings from text models table
+        $model = $db->query("SELECT * FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
             $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
             return;

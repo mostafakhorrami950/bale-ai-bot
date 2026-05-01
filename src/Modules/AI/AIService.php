@@ -136,11 +136,15 @@ class AIService
             'stream'     => false,
         ];
 
-        // image_config (for supported models)
+        // image_config (for supported models) — only set if not "auto"
         $imageConfig = [];
-        if ($aspectRatio !== '1:1' || $imageSize !== '1K') {
-            $imageConfig['aspect_ratio'] = $aspectRatio;
-            $imageConfig['image_size']   = $imageSize;
+        if ($aspectRatio !== '1:1' || !empty($imageSize)) {
+            if ($aspectRatio !== '1:1') {
+                $imageConfig['aspect_ratio'] = $aspectRatio;
+            }
+            if (!empty($imageSize) && $imageSize !== 'auto') {
+                $imageConfig['image_size'] = $imageSize;
+            }
         }
         if (!empty($imageConfig)) {
             $payload['image_config'] = $imageConfig;
@@ -489,44 +493,98 @@ class AIService
     //   Model helpers
     // ═══════════════════════════════════════════════
 
+    /**
+     * Get an image generation model by ID.
+     */
     public function getModelById(int $id): ?array
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_models WHERE id = ? AND is_active = 1", [$id]);
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
             $row = $stmt->fetch();
             if ($row) return $row;
-            $fb = $this->getFirstActiveModel();
+            $fb = $this->getFirstActiveImageModel();
             if ($fb) return $fb;
             return ['id' => 0, 'name' => 'gpt-image-1', 'provider' => 'gapgpt', 'cost_per_image' => 2, 'is_active' => 1, 'model_config' => null];
         } catch (\Throwable $e) { Logger::error('getModelById', ['id' => $id, 'error' => $e->getMessage()]); return null; }
     }
 
+    /**
+     * Get active image generation model by ID.
+     */
     public function getActiveModelById(int $id): ?array
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_models WHERE id = ? AND is_active = 1", [$id]);
-            return $stmt->fetch() ?: null;
+            // Try image table first
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
+            $row = $stmt->fetch();
+            if ($row) return $row;
+            // Try edit table
+            $stmt = $db->query("SELECT id, name, provider, cost_per_edit AS cost_per_image, is_active, model_config FROM ai_edit_models WHERE id = ? AND is_active = 1", [$id]);
+            $row = $stmt->fetch();
+            if ($row) return $row;
+            return null;
         } catch (\Throwable $e) { Logger::error('getActiveModelById', ['id' => $id, 'error' => $e->getMessage()]); return null; }
     }
 
+    /**
+     * Get the first active image generation model.
+     */
     public function getFirstActiveModel(): ?array
+    {
+        return $this->getFirstActiveImageModel();
+    }
+
+    /**
+     * Get first active image generation model.
+     */
+    public function getFirstActiveImageModel(): ?array
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
             return $stmt->fetch() ?: null;
-        } catch (\Throwable $e) { Logger::error('getFirstActiveModel', ['error' => $e->getMessage()]); return null; }
+        } catch (\Throwable $e) { Logger::error('getFirstActiveImageModel', ['error' => $e->getMessage()]); return null; }
     }
 
+    /**
+     * Get first active edit model.
+     */
+    public function getFirstActiveEditModel(): ?array
+    {
+        try {
+            $db = \Database\Database::getInstance();
+            $stmt = $db->query("SELECT id, name, provider, cost_per_edit AS cost_per_image, is_active, model_config FROM ai_edit_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            return $stmt->fetch() ?: null;
+        } catch (\Throwable $e) { Logger::error('getFirstActiveEditModel', ['error' => $e->getMessage()]); return null; }
+    }
+
+    /**
+     * Get first active text model.
+     */
+    public function getFirstActiveTextModel(): ?array
+    {
+        try {
+            $db = \Database\Database::getInstance();
+            $stmt = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            return $stmt->fetch() ?: null;
+        } catch (\Throwable $e) { Logger::error('getFirstActiveTextModel', ['error' => $e->getMessage()]); return null; }
+    }
+
+    /**
+     * Get default model ID (image generation).
+     */
     public function getDefaultModelId(): ?int
     {
         $id = (int) Config::get('DEFAULT_AI_MODEL_ID', 0);
-        if ($id > 0) { $m = $this->getModelById($id); if ($m && $m['is_active']) return (int)$m['id']; }
+        if ($id > 0) { 
+            $m = $this->getModelById($id); 
+            if ($m && ($m['is_active'] ?? false)) return (int)$m['id']; 
+        }
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id FROM ai_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            $stmt = $db->query("SELECT id FROM ai_image_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
             $row = $stmt->fetch();
             return $row ? (int)$row['id'] : null;
         } catch (\Throwable $e) { return null; }

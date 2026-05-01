@@ -37,6 +37,7 @@ class DatabaseRepairService
         $this->ensureUploadedFilesTable();
         $this->ensureChatConversationsTable();
         $this->ensureChatMessagesTable();
+        $this->ensureNewModelTables();
         $this->ensureAiModelsCostColumns();
         $this->seedDefaultModel();
 
@@ -304,21 +305,28 @@ class DatabaseRepairService
 
     private function seedDefaultModel(): void
     {
-        if (!$this->tableExists('ai_models')) return;
-        try {
-            $stmt = $this->conn->query("SELECT COUNT(*) as c FROM ai_models");
-            $count = $stmt->fetch()['c'] ?? 0;
-            if ($count == 0) {
-                $this->exec("
-                    INSERT IGNORE INTO ai_models (name, provider, cost_per_image, is_active) VALUES 
-                    ('gpt-image-1', 'gapgpt', 2, 1),
-                    ('gemini-3-pro-image-preview', 'gapgpt', 3, 1),
-                    ('gemini-3.1-flash-image-preview', 'gapgpt', 1, 1)
-                ");
-                $this->log('✅ سه مدل پیش‌فرض AI در ai_models درج شد.');
-            }
-        } catch (\Throwable $e) {
-            $this->log("⚠️ خطا در seedDefaultModel: " . $e->getMessage());
+        // Seed ai_image_models
+        if ($this->tableExists('ai_image_models')) {
+            try {
+                $stmt = $this->conn->query("SELECT COUNT(*) as c FROM ai_image_models");
+                $count = $stmt->fetch()['c'] ?? 0;
+                if ($count == 0) {
+                    $this->execIgnored("INSERT INTO ai_image_models (name, provider, cost_per_image, is_active) VALUES ('gpt-image-1', 'gapgpt', 2, 1)");
+                    $this->execIgnored("INSERT INTO ai_image_models (name, provider, cost_per_image, is_active) VALUES ('gemini-3.1-flash-image-preview', 'gapgpt', 1, 1)");
+                    $this->log('✅ مدل‌های پیش‌فرض تصویرساز درج شد.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        // Seed ai_text_models
+        if ($this->tableExists('ai_text_models')) {
+            try {
+                $stmt = $this->conn->query("SELECT COUNT(*) as c FROM ai_text_models");
+                $count = $stmt->fetch()['c'] ?? 0;
+                if ($count == 0) {
+                    $this->execIgnored("INSERT INTO ai_text_models (name, provider, cost_per_input_char, cost_per_output_char, is_active) VALUES ('google/gemini-2.5-flash-image', 'openrouter', 0.000001, 0.000002, 1)");
+                    $this->log('✅ مدل پیش‌فرض متنی درج شد.');
+                }
+            } catch (\Throwable $e) {}
         }
     }
 
@@ -497,6 +505,76 @@ class DatabaseRepairService
         if (!$this->columnExists('ai_models', 'model_type')) {
             $this->exec("ALTER TABLE ai_models ADD COLUMN model_type VARCHAR(30) DEFAULT 'image_generation' AFTER provider");
             $this->log('✅ ستون model_type به ai_models اضافه شد.');
+        }
+    }
+
+    private function ensureNewModelTables(): void
+    {
+        // ai_image_models
+        if (!$this->tableExists('ai_image_models')) {
+            $this->exec("
+                CREATE TABLE ai_image_models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    provider VARCHAR(50) DEFAULT 'gapgpt',
+                    cost_per_image INT NOT NULL DEFAULT 2,
+                    model_config JSON DEFAULT NULL,
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_active (is_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول ai_image_models ایجاد شد.');
+        }
+        // ai_edit_models
+        if (!$this->tableExists('ai_edit_models')) {
+            $this->exec("
+                CREATE TABLE ai_edit_models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    provider VARCHAR(50) DEFAULT 'gapgpt',
+                    cost_per_edit INT NOT NULL DEFAULT 2,
+                    model_config JSON DEFAULT NULL,
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_active (is_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول ai_edit_models ایجاد شد.');
+        }
+        // ai_text_models
+        if (!$this->tableExists('ai_text_models')) {
+            $this->exec("
+                CREATE TABLE ai_text_models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    provider VARCHAR(50) DEFAULT 'openrouter',
+                    cost_per_input_char DECIMAL(10,6) DEFAULT 0.000001,
+                    cost_per_output_char DECIMAL(10,6) DEFAULT 0.000002,
+                    free_model TINYINT(1) DEFAULT 0,
+                    model_config JSON DEFAULT NULL,
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_active (is_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول ai_text_models ایجاد شد.');
+        }
+        // ai_video_models
+        if (!$this->tableExists('ai_video_models')) {
+            $this->exec("
+                CREATE TABLE ai_video_models (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(200) NOT NULL,
+                    provider VARCHAR(50) DEFAULT 'gapgpt',
+                    cost_per_video INT NOT NULL DEFAULT 5,
+                    model_config JSON DEFAULT NULL,
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_active (is_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول ai_video_models ایجاد شد.');
         }
     }
 

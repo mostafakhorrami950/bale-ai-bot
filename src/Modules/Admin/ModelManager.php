@@ -13,88 +13,247 @@ class ModelManager
         $this->db = Database::getInstance();
     }
 
-    public function getAllModels()
+    // ─────────────────────────────────────────────────────────────
+    //   Unified CRUD — reads/writes all model tables separately
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Get all models from all type tables (for admin list).
+     */
+    public function getAllModels(): array
     {
-        return $this->db->query("SELECT * FROM ai_models ORDER BY created_at DESC")->fetchAll();
+        $all = [];
+
+        // Image generation
+        $rows = $this->db->query("SELECT id, name, provider, cost_per_image AS cost, model_config, is_active, created_at, 'image_generation' AS model_type FROM ai_image_models ORDER BY created_at DESC")->fetchAll();
+        foreach ($rows as $r) { $r['cost_label'] = $r['cost'] . ' اعتبار'; $all[] = $r; }
+
+        // Image editing
+        $rows = $this->db->query("SELECT id, name, provider, cost_per_edit AS cost, model_config, is_active, created_at, 'image_editing' AS model_type FROM ai_edit_models ORDER BY created_at DESC")->fetchAll();
+        foreach ($rows as $r) { $r['cost_label'] = $r['cost'] . ' اعتبار'; $all[] = $r; }
+
+        // Text models
+        $rows = $this->db->query("SELECT id, name, provider, cost_per_input_char AS cost, cost_per_output_char, free_model, model_config, is_active, created_at, 'text' AS model_type FROM ai_text_models ORDER BY created_at DESC")->fetchAll();
+        foreach ($rows as $r) { 
+            $r['cost_label'] = $r['free_model'] ? '🆓 رایگان' : ($r['cost'] . '/' . ($r['cost_per_output_char'] ?? 0) . ' هر کاراکتر'); 
+            $all[] = $r; 
+        }
+
+        // Video models
+        $rows = $this->db->query("SELECT id, name, provider, cost_per_video AS cost, model_config, is_active, created_at, 'video' AS model_type FROM ai_video_models ORDER BY created_at DESC")->fetchAll();
+        foreach ($rows as $r) { $r['cost_label'] = $r['cost'] . ' اعتبار'; $all[] = $r; }
+
+        // Sort by created_at DESC
+        usort($all, function($a, $b) { return strcmp($b['created_at'] ?? '', $a['created_at'] ?? ''); });
+        return $all;
     }
 
+    /**
+     * Get a model by ID from the appropriate type table.
+     */
     public function getById(int $id): ?array
     {
-        $stmt = $this->db->query("SELECT * FROM ai_models WHERE id = ?", [$id]);
+        // Check image models first
+        $stmt = $this->db->query("SELECT *, 'image_generation' AS model_type FROM ai_image_models WHERE id = ?", [$id]);
         $row = $stmt->fetch();
-        return $row ?: null;
+        if ($row) return $this->normalizeRow($row, 'image_generation');
+
+        $stmt = $this->db->query("SELECT *, 'image_editing' AS model_type FROM ai_edit_models WHERE id = ?", [$id]);
+        $row = $stmt->fetch();
+        if ($row) return $this->normalizeRow($row, 'image_editing');
+
+        $stmt = $this->db->query("SELECT *, 'text' AS model_type FROM ai_text_models WHERE id = ?", [$id]);
+        $row = $stmt->fetch();
+        if ($row) return $this->normalizeRow($row, 'text');
+
+        $stmt = $this->db->query("SELECT *, 'video' AS model_type FROM ai_video_models WHERE id = ?", [$id]);
+        $row = $stmt->fetch();
+        if ($row) return $this->normalizeRow($row, 'video');
+
+        return null;
     }
 
-    public function createModel($data)
+    private function normalizeRow(array $row, string $type): array
     {
-        $this->validate($data);
-        $modelConfig = $data['model_config'] ?? '{}';
-        if (is_array($modelConfig)) {
-            $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
+        // Map type-specific cost to cost_per_image for backward compat
+        if (isset($row['cost_per_image'])) {
+            // already set
+        } elseif (isset($row['cost_per_edit'])) {
+            $row['cost_per_image'] = $row['cost_per_edit'];
+        } elseif (isset($row['cost_per_video'])) {
+            $row['cost_per_image'] = $row['cost_per_video'];
+        } else {
+            $row['cost_per_image'] = 0;
         }
-        $costPerInput = (float)($data['cost_per_input_char'] ?? 0.000001);
-        $costPerOutput = (float)($data['cost_per_output_char'] ?? 0.000002);
-        $freeModel = isset($data['free_model']) ? (int)$data['free_model'] : 0;
+        $row['model_type'] = $type;
+        return $row;
+    }
+
+    /**
+     * Create a model in the appropriate table based on model_type.
+     */
+    public function createModel(array $data): void
+    {
         $modelType = $data['model_type'] ?? 'image_generation';
-        $sql = "INSERT INTO ai_models (name, provider, model_type, cost_per_image, is_active, model_config, cost_per_input_char, cost_per_output_char, free_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        return $this->db->query($sql, [
-            $data['name'],
-            $data['provider'] ?? 'gapgpt',
-            $modelType,
-            (int)$data['cost_per_image'],
-            isset($data['is_active']) ? (int)$data['is_active'] : 1,
-            $modelConfig,
-            $costPerInput,
-            $costPerOutput,
-            $freeModel,
-        ]);
+
+        switch ($modelType) {
+            case 'text':
+                $name = trim($data['name']);
+                if (empty($name)) throw new \Exception("نام مدل الزامی است");
+                $this->db->query(
+                    "INSERT INTO ai_text_models (name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        $name,
+                        $data['provider'] ?? 'openrouter',
+                        (float)($data['cost_per_input_char'] ?? 0.000001),
+                        (float)($data['cost_per_output_char'] ?? 0.000002),
+                        isset($data['free_model']) ? (int)$data['free_model'] : 0,
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1
+                    ]
+                );
+                break;
+
+            case 'image_editing':
+                $name = trim($data['name']);
+                if (empty($name)) throw new \Exception("نام مدل الزامی است");
+                $cost = (int)($data['cost_per_image'] ?? 2);
+                if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
+                $this->db->query(
+                    "INSERT INTO ai_edit_models (name, provider, cost_per_edit, model_config, is_active) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        $name,
+                        $data['provider'] ?? 'gapgpt',
+                        $cost,
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1
+                    ]
+                );
+                break;
+
+            case 'video':
+                $name = trim($data['name']);
+                if (empty($name)) throw new \Exception("نام مدل الزامی است");
+                $cost = (int)($data['cost_per_image'] ?? 5);
+                if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
+                $this->db->query(
+                    "INSERT INTO ai_video_models (name, provider, cost_per_video, model_config, is_active) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        $name,
+                        $data['provider'] ?? 'gapgpt',
+                        $cost,
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1
+                    ]
+                );
+                break;
+
+            case 'image_generation':
+            default:
+                $name = trim($data['name']);
+                if (empty($name)) throw new \Exception("نام مدل الزامی است");
+                $cost = (int)($data['cost_per_image'] ?? 2);
+                if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
+                $this->db->query(
+                    "INSERT INTO ai_image_models (name, provider, cost_per_image, model_config, is_active) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        $name,
+                        $data['provider'] ?? 'gapgpt',
+                        $cost,
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1
+                    ]
+                );
+                break;
+        }
     }
 
-    public function updateModel($id, $data)
+    /**
+     * Update a model by table + id.
+     */
+    public function updateModel(int $id, array $data): void
     {
-        $this->validate($data);
-        $modelConfig = $data['model_config'] ?? '{}';
-        if (is_array($modelConfig)) {
-            $modelConfig = json_encode($modelConfig, JSON_UNESCAPED_UNICODE);
-        }
-        $costPerInput = (float)($data['cost_per_input_char'] ?? 0.000001);
-        $costPerOutput = (float)($data['cost_per_output_char'] ?? 0.000002);
-        $freeModel = isset($data['free_model']) ? (int)$data['free_model'] : 0;
         $modelType = $data['model_type'] ?? 'image_generation';
-        $sql = "UPDATE ai_models SET name = ?, provider = ?, model_type = ?, cost_per_image = ?, is_active = ?, model_config = ?, cost_per_input_char = ?, cost_per_output_char = ?, free_model = ? WHERE id = ?";
-        return $this->db->query($sql, [
-            $data['name'],
-            $data['provider'] ?? 'gapgpt',
-            $modelType,
-            (int)$data['cost_per_image'],
-            (int)$data['is_active'],
-            $modelConfig,
-            $costPerInput,
-            $costPerOutput,
-            $freeModel,
-            (int)$id
-        ]);
-    }
 
-    public function toggleModel($id)
-    {
-        $sql = "UPDATE ai_models SET is_active = 1 - is_active WHERE id = ?";
-        return $this->db->query($sql, [(int)$id]);
-    }
+        switch ($modelType) {
+            case 'text':
+                $this->db->query(
+                    "UPDATE ai_text_models SET name = ?, provider = ?, cost_per_input_char = ?, cost_per_output_char = ?, free_model = ?, model_config = ?, is_active = ? WHERE id = ?",
+                    [
+                        trim($data['name']),
+                        $data['provider'] ?? 'openrouter',
+                        (float)($data['cost_per_input_char'] ?? 0.000001),
+                        (float)($data['cost_per_output_char'] ?? 0.000002),
+                        isset($data['free_model']) ? (int)$data['free_model'] : 0,
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1,
+                        $id
+                    ]
+                );
+                break;
 
-    public function deleteModel($id)
-    {
-        $sql = "DELETE FROM ai_models WHERE id = ?";
-        return $this->db->query($sql, [(int)$id]);
-    }
+            case 'image_editing':
+                $this->db->query(
+                    "UPDATE ai_edit_models SET name = ?, provider = ?, cost_per_edit = ?, model_config = ?, is_active = ? WHERE id = ?",
+                    [
+                        trim($data['name']),
+                        $data['provider'] ?? 'gapgpt',
+                        (int)($data['cost_per_image'] ?? 2),
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1,
+                        $id
+                    ]
+                );
+                break;
 
-    private function validate($data)
-    {
-        if (empty($data['name'])) {
-            throw new \Exception("نام مدل الزامی است.");
+            case 'video':
+                $this->db->query(
+                    "UPDATE ai_video_models SET name = ?, provider = ?, cost_per_video = ?, model_config = ?, is_active = ? WHERE id = ?",
+                    [
+                        trim($data['name']),
+                        $data['provider'] ?? 'gapgpt',
+                        (int)($data['cost_per_image'] ?? 5),
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1,
+                        $id
+                    ]
+                );
+                break;
+
+            case 'image_generation':
+            default:
+                $this->db->query(
+                    "UPDATE ai_image_models SET name = ?, provider = ?, cost_per_image = ?, model_config = ?, is_active = ? WHERE id = ?",
+                    [
+                        trim($data['name']),
+                        $data['provider'] ?? 'gapgpt',
+                        (int)($data['cost_per_image'] ?? 2),
+                        ($data['model_config'] ?? '{}'),
+                        isset($data['is_active']) ? (int)$data['is_active'] : 1,
+                        $id
+                    ]
+                );
+                break;
         }
-        if (!isset($data['cost_per_image']) || !is_numeric($data['cost_per_image'])) {
-            throw new \Exception("هزینه تصویر باید عدد باشد.");
-        }
+    }
+
+    public function toggleModel(int $id): void
+    {
+        // Try each table
+        $affected = $this->db->query("UPDATE ai_image_models SET is_active = 1 - is_active WHERE id = ?", [$id])->rowCount();
+        if ($affected > 0) return;
+        $affected = $this->db->query("UPDATE ai_edit_models SET is_active = 1 - is_active WHERE id = ?", [$id])->rowCount();
+        if ($affected > 0) return;
+        $affected = $this->db->query("UPDATE ai_text_models SET is_active = 1 - is_active WHERE id = ?", [$id])->rowCount();
+        if ($affected > 0) return;
+        $this->db->query("UPDATE ai_video_models SET is_active = 1 - is_active WHERE id = ?", [$id]);
+    }
+
+    public function deleteModel(int $id): void
+    {
+        $this->db->query("DELETE FROM ai_image_models WHERE id = ?", [$id]);
+        $this->db->query("DELETE FROM ai_edit_models WHERE id = ?", [$id]);
+        $this->db->query("DELETE FROM ai_text_models WHERE id = ?", [$id]);
+        $this->db->query("DELETE FROM ai_video_models WHERE id = ?", [$id]);
     }
 }

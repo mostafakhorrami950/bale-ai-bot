@@ -100,7 +100,7 @@ class Img2ImgHandler extends BaseHandler
     private function showModelSelection(int $chatId, int $userId): void
     {
         $db = Database::getInstance();
-        $models = $db->query("SELECT id, name, cost_per_image FROM ai_models WHERE is_active = 1")->fetchAll();
+        $models = $db->query("SELECT id, name, cost_per_edit AS cost_per_image FROM ai_edit_models WHERE is_active = 1")->fetchAll();
 
         if (empty($models)) {
             $this->baleClient->sendMessage($chatId, "❌ هیچ مدل فعالی یافت نشد.");

@@ -74,7 +74,7 @@ class ImageHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $models = $db->query("SELECT id, name, cost_per_image FROM ai_models WHERE is_active = 1")->fetchAll();
+            $models = $db->query("SELECT id, name, cost_per_image FROM ai_image_models WHERE is_active = 1")->fetchAll();
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ در حال حاضر هیچ مدل فعالی یافت نشد.");
                 return;
@@ -102,7 +102,10 @@ class ImageHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         $db = Database::getInstance();
-        $model = $db->query("SELECT * FROM ai_models WHERE id = ?", [$modelId])->fetch();
+        $model = $db->query("SELECT * FROM ai_image_models WHERE id = ?", [$modelId])->fetch();
+        if (!$model) {
+            $model = $db->query("SELECT * FROM ai_edit_models WHERE id = ?", [$modelId])->fetch();
+        }
         if (!$model) {
             $this->baleClient->sendMessage($chatId, "⚠️ مدل انتخاب شده معتبر نیست.");
             return;
@@ -174,8 +177,34 @@ class ImageHandler extends BaseHandler
         $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)", [$internalId, $modelId, $prompt, $referenceId]);
 
         $images = $result['images'] ?? [];
-        foreach ($images as $url) {
-            $this->baleClient->sendPhoto($chatId, $url, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+        foreach ($images as $urlOrData) {
+            // Download remote images (OpenRouter URLs) or use data URIs directly
+            $photoToSend = $urlOrData;
+            if (str_starts_with($urlOrData, 'http')) {
+                // Download remote URL and send as file data
+                $ch = curl_init($urlOrData);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_SSL_VERIFYPEER => true,
+                ]);
+                $imageData = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($httpCode === 200 && strlen($imageData ?? '') > 500) {
+                    // Check if it's SVG or non-standard image
+                    $finfo = finfo_open(FINFO_MIME_TYPE);
+                    $mime = $finfo ? finfo_buffer($finfo, $imageData) : 'image/png';
+                    finfo_close($finfo);
+                    $b64 = base64_encode($imageData);
+                    $photoToSend = 'data:' . $mime . ';base64,' . $b64;
+                } else {
+                    // Fallback: try sending the URL directly
+                    error_log("ImageHandler: download failed for URL, http=$httpCode");
+                }
+            }
+            $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
         }
 
         $this->clearUserState($internalId);

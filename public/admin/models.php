@@ -273,7 +273,8 @@ ob_start();
                     <div class="mb-2">
                         <label style="font-size:0.9rem;">image_size:</label>
                         <select name="or_image_size" class="form-select form-select-sm">
-                            <option value="1K" <?php echo ($editOrConfig['image_size'] ?? '1K') === '1K' ? 'selected' : ''; ?>>1K</option>
+                            <option value="auto" <?php echo ($editOrConfig['image_size'] ?? 'auto') === 'auto' ? 'selected' : ''; ?>>auto (پیشنهادی)</option>
+                            <option value="1K" <?php echo ($editOrConfig['image_size'] ?? '') === '1K' ? 'selected' : ''; ?>>1K</option>
                             <option value="2K" <?php echo ($editOrConfig['image_size'] ?? '') === '2K' ? 'selected' : ''; ?>>2K</option>
                             <option value="4K" <?php echo ($editOrConfig['image_size'] ?? '') === '4K' ? 'selected' : ''; ?>>4K</option>
                         </select>
