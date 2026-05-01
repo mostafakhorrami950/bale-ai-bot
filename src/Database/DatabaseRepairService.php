@@ -42,6 +42,7 @@ class DatabaseRepairService
         $this->ensureAiModelsCostColumns();
         $this->seedDefaultModel();
         $this->ensureUserProfilesTable();
+        $this->ensureMemoryTables();
         $this->ensurePhase14Columns();
         $this->ensurePhase15Columns();
 
@@ -370,6 +371,46 @@ class DatabaseRepairService
                 }
             } catch (\Throwable $e) {}
         }
+    }
+
+    private function ensureMemoryTables(): void
+    {
+        // user_memories table
+        if (!$this->tableExists('user_memories')) {
+            $this->exec("
+                CREATE TABLE user_memories (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    memory_text TEXT NOT NULL,
+                    source_message TEXT NULL,
+                    memory_type ENUM('explicit', 'extracted') DEFAULT 'explicit',
+                    importance INT DEFAULT 1,
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_memories (user_id, is_active),
+                    INDEX idx_user_importance (user_id, importance DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->log('✅ جدول user_memories ایجاد شد.');
+        }
+        // conversation_summaries table
+        if (!$this->tableExists('conversation_summaries')) {
+            $this->exec("
+                CREATE TABLE conversation_summaries (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    summary_text TEXT NOT NULL,
+                    message_count INT DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_summaries_user (user_id, created_at DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->log('✅ جدول conversation_summaries ایجاد شد.');
+        }
+        // Memory module setting
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('memory_module_enabled', '1')");
+        $this->log('✅ تنظیم memory_module_enabled اضافه شد.');
     }
 
     private function ensureUserProfilesTable(): void

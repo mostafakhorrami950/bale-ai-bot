@@ -129,6 +129,21 @@ try {
     $payments = [];
 }
 
+// Fetch user memories
+$userMemories = [];
+try {
+    $userMemories = $db->query(
+        "SELECT id, memory_text, memory_type, importance, created_at 
+         FROM user_memories 
+         WHERE user_id = ? AND is_active = 1 
+         ORDER BY importance DESC, created_at DESC 
+         LIMIT 20",
+        [$userId]
+    )->fetchAll();
+} catch (\Throwable $e) {
+    $userMemories = [];
+}
+
 // Fetch AI request history (from ai_requests + chat_conversations)
 $aiRequests = [];
 try {
@@ -292,6 +307,40 @@ ob_start();
                                 <?php endif; ?>
                             </td>
                             <td style="font-size:0.75rem; font-family:monospace;"><?php echo htmlspecialchars($p['track_id']); ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="table-container">
+            <h5>🧠 حافظه کاربر (<?php echo count($userMemories); ?> مورد)</h5>
+            <table class="table table-sm table-hover">
+                <thead>
+                    <tr>
+                        <th>تاریخ</th>
+                        <th>نوع</th>
+                        <th>اهمیت</th>
+                        <th>متن حافظه</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($userMemories)): ?>
+                        <tr><td colspan="4" class="text-muted text-center">حافظه‌ای ثبت نشده.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ($userMemories as $mem): ?>
+                        <tr>
+                            <td style="font-size:0.85rem;"><?php echo substr($mem['created_at'], 0, 16); ?></td>
+                            <td><?php echo $mem['memory_type'] === 'explicit' ? '📝 دستی' : '🔍 خودکار'; ?></td>
+                            <td><?php echo str_repeat('⭐', (int)ceil($mem['importance'] / 3)); ?></td>
+                            <td style="max-width:300px;">
+                                <?php echo htmlspecialchars(mb_substr($mem['memory_text'], 0, 100)); ?>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
