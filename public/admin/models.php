@@ -325,7 +325,7 @@ ob_start();
                             <td><?php echo htmlspecialchars($m['name']); ?></td>
                             <td><code><?php echo htmlspecialchars($m['provider'] ?? 'gapgpt'); ?></code></td>
                             <td><span class="badge bg-secondary"><?php echo $tl; ?></span></td>
-                            <td><?php echo number_format($m['cost_per_image']); ?></td>
+                            <td><?php echo number_format($m['cost'] ?? $m['cost_per_image'] ?? 0); ?></td>
                             <td>
                                 <?php if ($m['is_active']): ?>
                                     <span class="badge-active">✅ فعال</span>

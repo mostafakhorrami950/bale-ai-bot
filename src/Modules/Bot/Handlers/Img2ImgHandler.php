@@ -299,83 +299,49 @@ class Img2ImgHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.");
 
-        // Build a SINGLE request with ALL photos in the content array
-        // This way OpenRouter/Gemini sees ALL images at once and generates ONE output
+        // Process each photo — try all, don't stop on individual failures
         $allImages = [];
-        $hasError = false;
         $errorMsg = '';
 
-        // Process first photo only (or combine all into one call)
-        // OpenRouter/Gemini can process ONE image per generation
-        // For multiple photos, we send them sequentially but each as a new conversation
-        // to avoid the "already answered" issue
-        
-        // Get the first photo
-        $firstPhoto = $paths[0];
-        if (!file_exists($firstPhoto)) {
-            $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ عکس یافت نشد.");
-            return;
-        }
+        foreach ($paths as $i => $photoPath) {
+            if (!file_exists($photoPath)) continue;
 
-        $imageData = file_get_contents($firstPhoto);
-        @unlink($firstPhoto);
-        
-        // Convert to data URI for OpenRouter
-        $imageUrl = base64_encode($imageData);
-        
-        $result = $aiService->generate([
-            'model'      => $model['name'],
-            'prompt'     => $prompt,
-            'image'      => $imageUrl,
-            'provider'   => $model['provider'] ?? '',
-            'model_data' => $model,
-        ]);
+            $photoData = file_get_contents($photoPath);
+            @unlink($photoPath);
+            
+            // Convert raw binary to data URI for OpenRouter
+            $mime = 'image/jpeg';
+            $first = substr($photoData, 0, 4);
+            if (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+            elseif (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+            $base64data = base64_encode($photoData);
+            $imageUrl = 'data:' . $mime . ';base64,' . $base64data;
+            
+            // For subsequent photos, add a note to force new image generation
+            $photoPrompt = $prompt;
+            if ($i > 0) {
+                $photoPrompt = $prompt . "\n\n(این یک عکس مجزا و متفاوت است. لطفاً یک تصویر جدید و مجزا از این عکس خاص تولید کن و توضیح اضافه نده.)";
+            }
+            
+            $result = $aiService->generate([
+                'model'      => $model['name'],
+                'prompt'     => $photoPrompt,
+                'image'      => $imageUrl,
+                'provider'   => $model['provider'] ?? '',
+                'model_data' => $model,
+            ]);
 
-        if (isset($result['error'])) {
-            $hasError = true;
-            $errorMsg = $result['error'];
-        } elseif (!empty($result['images'])) {
-            $allImages = $result['images'];
-        }
-
-        // Process remaining photos (if any)
-        // Each gets its own API call but we use a system message to force image generation
-        if (count($paths) > 1) {
-            for ($i = 1; $i < count($paths); $i++) {
-                if (!file_exists($paths[$i])) continue;
-                
-                $photoData = file_get_contents($paths[$i]);
-                @unlink($paths[$i]);
-                $photoB64 = base64_encode($photoData);
-                
-                // For subsequent photos, append "(تولید تصویر جدید)" to prompt
-                // to force the model to generate a NEW image instead of text response
-                $enhancedPrompt = $prompt . " (لطفاً یک تصویر جدید و مجزا از این عکس تولید کن)";
-                
-                $result = $aiService->generate([
-                    'model'      => $model['name'],
-                    'prompt'     => $enhancedPrompt,
-                    'image'      => $photoB64,
-                    'provider'   => $model['provider'] ?? '',
-                    'model_data' => $model,
-                ]);
-
-                if (isset($result['error'])) {
-                    $hasError = true;
-                    $errorMsg = $result['error'];
-                    break;
-                }
-
-                if (!empty($result['images'])) {
-                    $allImages = array_merge($allImages, $result['images']);
-                }
+            if (!empty($result['images'])) {
+                $allImages = array_merge($allImages, $result['images']);
+            } else {
+                $err = $result['error'] ?? 'خطای نامشخص';
+                $errorMsg = $err;
             }
         }
 
         $imageType = 'img2img';
 
-        if ($hasError && empty($allImages)) {
+        if (empty($allImages)) {
             $db->query(
                 "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
                 [$internalId, $modelId, $prompt, $imageType, $referenceId]
