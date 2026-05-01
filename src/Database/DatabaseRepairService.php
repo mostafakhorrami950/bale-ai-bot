@@ -637,13 +637,15 @@ class DatabaseRepairService
         // Decimal cost columns on chat_messages
         $this->ensureDecimalColumn('chat_messages', 'cost_input_credits');
         $this->ensureDecimalColumn('chat_messages', 'cost_output_credits');
-        // default_text_model, help_text, help_image settings
+        // default_text_model, help_text, help_image, chat_history_per_page settings
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('default_text_model', '')");
         $this->log('✅ تنظیم default_text_model اضافه شد.');
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('help_text', '')");
         $this->log('✅ تنظیم help_text اضافه شد.');
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('help_image', '')");
         $this->log('✅ تنظیم help_image اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('chat_history_per_page', '10')");
+        $this->log('✅ تنظیم chat_history_per_page اضافه شد.');
         // Set default supported_formats
         if ($this->tableExists('ai_text_models') && $this->columnExists('ai_text_models', 'supported_formats')) {
             $this->exec("UPDATE ai_text_models SET supported_formats = 'txt,doc,pdf,jpg,jpeg,png,gif,webp' WHERE supported_formats IS NULL");
