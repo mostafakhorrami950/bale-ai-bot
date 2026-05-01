@@ -66,17 +66,24 @@ class DatabaseRepairService
             ");
             $this->log('✅ جدول required_channels ایجاد شد.');
         } else {
-            // Ensure channel_id column exists (use VARCHAR for both @channel and numeric IDs)
+            // Ensure all columns exist — order matters for AFTER clause
+            // Start with columns that don't reference other new columns
             if (!$this->columnExists('required_channels', 'channel_id')) {
                 $this->exec("ALTER TABLE required_channels ADD COLUMN channel_id VARCHAR(100) NOT NULL AFTER id");
                 $this->log('✅ ستون channel_id به جدول required_channels اضافه شد.');
             }
+            if (!$this->columnExists('required_channels', 'title')) {
+                $this->exec("ALTER TABLE required_channels ADD COLUMN title VARCHAR(255) DEFAULT NULL AFTER channel_id");
+                $this->log('✅ ستون title به جدول required_channels اضافه شد.');
+            }
             if (!$this->columnExists('required_channels', 'invite_link')) {
-                $this->exec("ALTER TABLE required_channels ADD COLUMN invite_link VARCHAR(255) NULL AFTER title");
+                // Use channel_id as reference for AFTER since title may not exist yet
+                $after = $this->columnExists('required_channels', 'title') ? 'title' : 'channel_id';
+                $this->exec("ALTER TABLE required_channels ADD COLUMN invite_link VARCHAR(255) NULL AFTER {$after}");
                 $this->log('✅ ستون invite_link به جدول required_channels اضافه شد.');
             }
             if (!$this->columnExists('required_channels', 'is_active')) {
-                $this->exec("ALTER TABLE required_channels ADD COLUMN is_active TINYINT(1) DEFAULT 1");
+                $this->exec("ALTER TABLE required_channels ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER invite_link");
                 $this->log('✅ ستون is_active به جدول required_channels اضافه شد.');
             }
         }
