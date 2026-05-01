@@ -189,57 +189,7 @@ class ImageHandler extends BaseHandler
         \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);
         \Core\AILogger::log('IMAGE_SEND', ['count' => count($images)]);
         foreach ($images as $urlOrData) {
-            $sent = false;
-            
-            // If it's a data URI, convert to temp file and send as multipart
-            if (str_starts_with($urlOrData, 'data:')) {
-                $parts = explode('base64,', $urlOrData, 2);
-                $b64Data = $parts[1] ?? $parts[0] ?? '';
-                $imageData = base64_decode($b64Data, true);
-                if ($imageData && strlen($imageData) > 500) {
-                    // Detect mime from data URI
-                    $mime = 'image/png';
-                    if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
-                    elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
-                    elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
-                    $ext = str_replace('image/', '', $mime);
-                    $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
-                    file_put_contents($tmpFile, $imageData);
-                    $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
-                    @unlink($tmpFile);
-                }
-            } elseif (str_starts_with($urlOrData, 'http')) {
-                // For HTTP URLs, try sending directly first
-                $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
-                if (isset($resp['ok']) && $resp['ok'] === true) {
-                    $sent = true;
-                } else {
-                    // Bale can't download it — download ourselves and send as multipart
-                    \Core\AILogger::log('IMAGE_DOWNLOAD_RETRY', ['url' => substr($urlOrData, 0, 100)]);
-                    $ch = curl_init($urlOrData);
-                    curl_setopt_array($ch, [
-                        CURLOPT_RETURNTRANSFER => true,
-                        CURLOPT_TIMEOUT => 30,
-                        CURLOPT_FOLLOWLOCATION => true,
-                        CURLOPT_SSL_VERIFYPEER => true,
-                    ]);
-                    $imgData = curl_exec($ch);
-                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    curl_close($ch);
-                    if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
-                        $mime = 'image/png';
-                        $first = substr($imgData, 0, 4);
-                        if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
-                        elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
-                        $ext = str_replace('image/', '', $mime);
-                        $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
-                        file_put_contents($tmpFile, $imgData);
-                        $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
-                        @unlink($tmpFile);
-                    }
-                }
-            }
-            
+            $sent = $this->sendImageToUser($chatId, $urlOrData, $cost);
             if (!$sent) {
                 \Core\AILogger::error('image_send', 'Failed to send image to user', ['chat_id' => $chatId]);
             }
@@ -262,6 +212,84 @@ class ImageHandler extends BaseHandler
     private function clearUserState(int $internalId): void
     {
         try { $db = Database::getInstance(); $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]); } catch (\Throwable $e) {}
+    }
+
+    /**
+     * Send an image to the user, handling data URIs, HTTP URLs, and temp files.
+     * Returns true on success, false on failure.
+     */
+    private function sendImageToUser(int $chatId, string $urlOrData, int $cost): bool
+    {
+        // Case 1: data URI → convert to temp file, send as multipart
+        if (str_starts_with($urlOrData, 'data:')) {
+            $parts = explode('base64,', $urlOrData, 2);
+            $b64Data = $parts[1] ?? $parts[0] ?? '';
+            $imageData = base64_decode($b64Data, true);
+            if ($imageData && strlen($imageData) > 500) {
+                $mime = 'image/png';
+                if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
+                elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
+                elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
+                file_put_contents($tmpFile, $imageData);
+                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return $sent;
+            }
+            return false;
+        }
+
+        // Case 2: HTTP URL → try direct send first, if fails download and send multipart
+        if (str_starts_with($urlOrData, 'http')) {
+            // Try direct URL send first (Bale downloads it)
+            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            if (isset($resp['ok']) && $resp['ok'] === true) {
+                return true;
+            }
+
+            // Bale can't download it — download ourselves and send as multipart
+            \Core\AILogger::log('IMAGE_DOWNLOAD_RETRY', ['url' => substr($urlOrData, 0, 100)]);
+            $ch = curl_init($urlOrData);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 60,
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MobixBot/1.0)',
+            ]);
+            $imgData = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
+                $mime = 'image/png';
+                $first = substr($imgData, 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+                elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+                elseif (str_starts_with($first, "GIF8")) $mime = 'image/gif';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
+                file_put_contents($tmpFile, $imgData);
+                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return $sent;
+            }
+
+            \Core\AILogger::error('image_download_failed', 'Could not download image', ['http' => $httpCode, 'url' => substr($urlOrData, 0, 100)]);
+            return false;
+        }
+
+        // Case 3: local file path → send as multipart
+        if (file_exists($urlOrData)) {
+            $sent = $this->baleClient->sendPhotoFile($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            @unlink($urlOrData);
+            return $sent;
+        }
+
+        \Core\AILogger::error('image_send_unknown_type', 'Unknown image type', ['type' => gettype($urlOrData), 'val' => substr((string)$urlOrData, 0, 50)]);
+        return false;
     }
 
     private function getMainMenuInlineKeyboard(): array
