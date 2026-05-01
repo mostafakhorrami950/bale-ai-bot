@@ -119,9 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Edit mode (GET)
+// Edit mode (GET) — use model_type from URL to query correct table
 if (isset($_GET['edit'])) {
-    $editModel = $modelManager->getById((int) $_GET['edit']);
+    $editType = $_GET['type'] ?? null;
+    $editModel = $modelManager->getById((int) $_GET['edit'], $editType);
     if ($editModel) $editMode = true;
 }
 
@@ -396,7 +397,7 @@ ob_start();
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <a href="models.php?edit=<?php echo $m['id']; ?>" class="btn btn-sm btn-outline-primary">✏️</a>
+                                <a href="models.php?edit=<?php echo $m['id']; ?>&type=<?php echo urlencode($m['model_type'] ?? 'image_generation'); ?>" class="btn btn-sm btn-outline-primary">✏️</a>
                                 <form method="POST" style="display:inline;" onsubmit="return confirm('آیا مطمئن هستید؟');">
                                     <input type="hidden" name="action" value="toggle">
                                     <input type="hidden" name="id" value="<?php echo $m['id']; ?>">
