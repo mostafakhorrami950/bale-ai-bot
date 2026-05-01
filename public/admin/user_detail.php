@@ -28,6 +28,37 @@ if (!$user) {
     exit;
 }
 
+// Handle profile update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_profile') {
+    try {
+        $firstName = trim($_POST['first_name'] ?? '');
+        $lastName = trim($_POST['last_name'] ?? '');
+        $username = trim($_POST['username'] ?? '');
+
+        // Check if user_profiles row exists
+        $existing = $db->query("SELECT id FROM user_profiles WHERE user_id = ?", [$userId])->fetch();
+        if ($existing) {
+            $db->query("UPDATE user_profiles SET first_name = ?, last_name = ?, username = ? WHERE user_id = ?",
+                [$firstName, $lastName, $username, $userId]
+            );
+        } else {
+            $db->query("INSERT INTO user_profiles (user_id, first_name, last_name, username) VALUES (?, ?, ?, ?)",
+                [$userId, $firstName, $lastName, $username]
+            );
+        }
+        $message = '✅ پروفایل با موفقیت بروزرسانی شد.';
+    } catch (\Throwable $e) {
+        $message = '❌ خطا: ' . $e->getMessage();
+    }
+    // Refresh user data
+    $user = $db->query("
+        SELECT u.*, up.first_name, up.last_name, up.username
+        FROM users u
+        LEFT JOIN user_profiles up ON up.user_id = u.id
+        WHERE u.id = ?
+    ", [$userId])->fetch();
+}
+
 // Handle manual credit adjustment
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_credits'])) {
     try {
@@ -69,7 +100,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_credits'])) {
 }
 
 // Refresh user data after adjustment
-$user = $db->query("SELECT * FROM users WHERE id = ?", [$userId])->fetch();
+$user = $db->query("
+    SELECT u.*, up.first_name, up.last_name, up.username
+    FROM users u
+    LEFT JOIN user_profiles up ON up.user_id = u.id
+    WHERE u.id = ?
+", [$userId])->fetch();
 
 // Fetch credit ledger (handle missing table gracefully)
 $ledger = [];
@@ -143,7 +179,18 @@ ob_start();
             <h5>👤 پروفایل کاربر #<?php echo $user['id']; ?></h5>
             <table class="table table-borderless">
                 <tr><td style="width:150px;">شناسه بله:</td><td style="font-family:monospace;"><?php echo $user['bale_user_id']; ?></td></tr>
-                <tr><td>نام:</td><td><?php echo htmlspecialchars(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')); ?></td></tr>
+                <tr><td>نام:</td><td>
+                    <form method="POST" class="d-inline" id="nameForm">
+                        <input type="hidden" name="action" value="update_profile">
+                        <input type="text" name="first_name" value="<?php echo htmlspecialchars($user['first_name'] ?? ''); ?>" 
+                               class="form-control form-control-sm d-inline" style="width:150px;" placeholder="نام">
+                        <input type="text" name="last_name" value="<?php echo htmlspecialchars($user['last_name'] ?? ''); ?>" 
+                               class="form-control form-control-sm d-inline" style="width:150px;" placeholder="نام خانوادگی">
+                        <input type="text" name="username" value="<?php echo htmlspecialchars($user['username'] ?? ''); ?>" 
+                               class="form-control form-control-sm d-inline" style="width:150px;direction:ltr;" placeholder="username">
+                        <button type="submit" class="btn btn-sm btn-primary">ذخیره</button>
+                    </form>
+                </td></tr>
                 <tr><td>نام کاربری:</td><td><?php echo htmlspecialchars($user['username'] ?? '-'); ?></td></tr>
                 <tr><td>شماره تلفن:</td><td dir="ltr"><?php echo htmlspecialchars($user['phone_number'] ?? '-'); ?></td></tr>
                 <tr><td>اعتبار فعلی:</td><td><strong class="text-success"><?php echo number_format((int) ($user['credits'] ?? 0)); ?></strong> اعتبار</td></tr>

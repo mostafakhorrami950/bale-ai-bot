@@ -55,7 +55,12 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 $update = UpdateFactory::create($updateData);
 file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " RAW DATA: " . json_encode($updateData, JSON_UNESCAPED_UNICODE) . "\n", FILE_APPEND);
 debug_log("Webhook received", ['type' => $update->isMessage() ? 'message' : ($update->isCallback() ? 'callback' : 'other'), 'user_id' => $update->getUserId() ?? 'none']);
-if (!$update || !$update->getChatId()) {
+
+// NB: PreCheckoutQuery and SuccessfulPayment don't have a chat_id, so skip chat_id check
+$isPaymentQuery = $update->isPreCheckoutQuery();
+$isPaymentSuccess = $update->isSuccessfulPayment();
+
+if (!$update || (!$update->getChatId() && !$isPaymentQuery && !$isPaymentSuccess)) {
     bot_log('ERROR', 'Invalid Update or Missing Chat ID', ['data' => $updateData]);
     exit('Parse error');
 }

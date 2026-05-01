@@ -17,6 +17,26 @@ class StartHandler extends BaseHandler
         if (!$chatId) return;
 
         try {
+            // Save/update user profile info (first_name, username) on every /start
+            $firstName = $update->getFirstName();
+            $username = $update->getUsername();
+            if ($firstName || $username) {
+                try {
+                    $db = Database::getInstance();
+                    $user = User::findByBaleId($userId);
+                    if ($user) {
+                        $db->query(
+                            "INSERT INTO user_profiles (user_id, first_name, username)
+                             VALUES (?, ?, ?)
+                             ON DUPLICATE KEY UPDATE first_name = COALESCE(NULLIF(?, ''), first_name), username = COALESCE(NULLIF(?, ''), username)",
+                            [$user['id'], $firstName ?? '', $username ?? '', $firstName ?? '', $username ?? '']
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    error_log("StartHandler: profile save error: " . $e->getMessage());
+                }
+            }
+
             $isRegistered = User::isRegistered($userId);
 
             if (!$isRegistered) {

@@ -43,7 +43,12 @@ class Update
 
     public function getUserId(): ?int
     {
-        return $this->data['message']['from']['id'] ?? $this->data['callback_query']['from']['id'] ?? $this->data['callback_query']['message']['from']['id'] ?? null;
+        return $this->data['message']['from']['id'] 
+            ?? $this->data['callback_query']['from']['id'] 
+            ?? $this->data['callback_query']['message']['from']['id'] 
+            ?? $this->data['pre_checkout_query']['from']['id']
+            ?? $this->data['message']['successful_payment']['from']['id']
+            ?? null;
     }
 
     public function getFirstName(): ?string
