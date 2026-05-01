@@ -360,7 +360,7 @@ class Img2ImgHandler extends BaseHandler
         );
 
         foreach ($allImages as $url) {
-            $this->baleClient->sendPhoto($chatId, $url, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            $this->sendEditImageToUser($chatId, $url, $cost);
         }
         $this->clearUserState($internalId);
         $this->baleClient->sendMessage($chatId, "✨ انجام شد.", $this->getMainMenuInlineKeyboard());
@@ -404,6 +404,75 @@ class Img2ImgHandler extends BaseHandler
                 [['text' => '👤 حساب من', 'callback_data' => 'account'], ['text' => '💳 شارژ اعتبار', 'callback_data' => 'buy_credit']]
             ]
         ];
+    }
+
+    /**
+     * Send an image to the user via multipart upload.
+     * Handles data URIs, HTTP URLs with fallback download, and local file paths.
+     */
+    private function sendEditImageToUser(int $chatId, string $urlOrData, int $cost): void
+    {
+        // Case 1: data URI → convert to temp file, send as multipart
+        if (str_starts_with($urlOrData, 'data:')) {
+            $parts = explode('base64,', $urlOrData, 2);
+            $b64Data = $parts[1] ?? $parts[0] ?? '';
+            $imageData = base64_decode($b64Data, true);
+            if ($imageData && strlen($imageData) > 500) {
+                $mime = 'image/png';
+                if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
+                elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
+                elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
+                file_put_contents($tmpFile, $imageData);
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return;
+            }
+        }
+
+        // Case 2: HTTP URL → try direct, if fails download and send multipart
+        if (str_starts_with($urlOrData, 'http')) {
+            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            if (isset($resp['ok']) && $resp['ok'] === true) {
+                return;
+            }
+            // Download ourselves
+            $ch = curl_init($urlOrData);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 60,
+                CURLOPT_CONNECTTIMEOUT => 15,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; MobixBot/1.0)',
+            ]);
+            $imgData = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
+                $mime = 'image/png';
+                $first = substr($imgData, 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+                elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+                $ext = str_replace('image/', '', $mime);
+                $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
+                file_put_contents($tmpFile, $imgData);
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                @unlink($tmpFile);
+                return;
+            }
+        }
+
+        // Case 3: local file → send via multipart
+        if (file_exists($urlOrData)) {
+            $this->baleClient->sendPhotoFile($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            @unlink($urlOrData);
+            return;
+        }
+
+        // Fallback
+        Logger::error('sendEditImageToUser', 'Could not send image', ['type' => gettype($urlOrData)]);
     }
 
     private function getPersistentKeyboard(): array
