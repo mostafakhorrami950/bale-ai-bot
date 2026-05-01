@@ -48,9 +48,10 @@ $totalPages = max(1, ceil($total / $perPage));
 
 try {
     $convs = $db->query(
-        "SELECT c.*, u.bale_user_id, u.username
+        "SELECT c.*, u.bale_user_id, up.username, up.first_name, up.last_name
          FROM chat_conversations c
          LEFT JOIN users u ON c.user_id = u.id
+         LEFT JOIN user_profiles up ON up.user_id = u.id
          ORDER BY c.id DESC
          LIMIT ? OFFSET ?",
         [$perPage, $offset]
@@ -90,7 +91,17 @@ ob_start();
                     <td><?php echo $c['id']; ?></td>
                     <td>
                         <a href="user_detail.php?id=<?php echo $c['user_id']; ?>" class="text-decoration-none">
-                            <?php echo htmlspecialchars($c['username'] ?? 'User#' . $c['user_id']); ?>
+                            <?php 
+                            $displayName = '';
+                            if (!empty($c['first_name'])) {
+                                $displayName = $c['first_name'] . (!empty($c['last_name']) ? ' ' . $c['last_name'] : '');
+                            } elseif (!empty($c['username'])) {
+                                $displayName = $c['username'];
+                            } else {
+                                $displayName = 'User#' . $c['user_id'];
+                            }
+                            echo htmlspecialchars($displayName);
+                            ?>
                         </a>
                     </td>
                     <td><code style="font-size:0.8rem;"><?php echo htmlspecialchars(mb_substr($c['model'] ?? '?', 0, 30)); ?></code></td>

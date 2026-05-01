@@ -101,6 +101,21 @@ ob_start();
 
                 <h6>🤖 تنظیمات هوش مصنوعی</h6>
                 <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <?php $memoryEnabled = $currentSettings['memory_module_enabled'] ?? '0'; ?>
+                        <input type="hidden" name="settings[memory_module_enabled]" value="0">
+                        <input type="checkbox" name="settings[memory_module_enabled]" class="form-check-input" role="switch"
+                               id="memoryModule" value="1"
+                               <?php echo $memoryEnabled === '1' ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="memoryModule">🧠 ماژول حافظه (Memory)</label>
+                        <div class="form-text">
+                            با غیرفعال کردن این گزینه، تمام قابلیت‌های حافظه متوقف می‌شود. داده‌های قبلی حذف نمی‌شوند.
+                            کاربران می‌توانند با «یادت باشه» یا «🧠 حافظه من» اطلاعات را ذخیره/مشاهده کنند.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
                     <label class="form-label">مدل پیش‌فرض متنی (default_text_model):</label>
                     <select name="settings[default_text_model]" class="form-select">
                         <option value="">— خودکار (اولین مدل فعال) —</option>

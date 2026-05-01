@@ -5,6 +5,8 @@ namespace Modules\Bot\Handlers;
 use Modules\AI\AIService;
 use Modules\AI\ChatService;
 use Modules\Bot\CreditService;
+use Modules\Memory\MemoryManager;
+use Modules\Memory\Hooks as MemoryHooks;
 use Database\Database;
 use Database\Logger;
 
@@ -454,7 +456,32 @@ class ChatHandler extends BaseHandler
             [$convId]
         )->fetchAll();
 
-        $orMessages = ChatService::buildMessagesFromHistory($history);
+        // ─── MEMORY MODULE: Inject memory context before AI call ───
+        $memoryManager = null;
+        try {
+            $memoryManager = new MemoryManager();
+            $memoryHooks = new MemoryHooks($memoryManager);
+            // Build system prompt from history
+            $systemPrompt = '';
+            foreach ($history as $h) {
+                if ($h['role'] === 'system') {
+                    $systemPrompt = $h['content'];
+                    break;
+                }
+            }
+            $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt);
+            // If system prompt was modified, inject it back
+            if (!empty($systemPrompt)) {
+                $orMessages = array_merge(
+                    [['role' => 'system', 'content' => $systemPrompt]],
+                    ChatService::buildMessagesFromHistory(array_filter($history, fn($h) => $h['role'] !== 'system'))
+                );
+            } else {
+                $orMessages = ChatService::buildMessagesFromHistory($history);
+            }
+        } catch (\Throwable $e) {
+            $orMessages = ChatService::buildMessagesFromHistory($history);
+        }
 
         // Send to OpenRouter
         $chatService = new ChatService();
@@ -477,6 +504,15 @@ class ChatHandler extends BaseHandler
         if (!$freeModel && $outputCost > 0) {
             $refOut = 'chat_out_' . $convId . '_' . time();
             CreditService::deduct($internalId, $outputCost, $refOut);
+        }
+
+        // ─── MEMORY MODULE: Process after AI response ───
+        if ($memoryManager && $memoryManager->isEnabled()) {
+            try {
+                $memoryHooks->onAfterChatResponse($internalId, $text);
+            } catch (\Throwable $e) {
+                \Core\AILogger::error('memory', 'onAfterChatResponse failed', ['error' => $e->getMessage()]);
+            }
         }
 
         // Save assistant message

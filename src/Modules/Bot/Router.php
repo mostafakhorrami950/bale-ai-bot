@@ -13,6 +13,8 @@ use Modules\Bot\Handlers\MessageHandler;
 use Modules\Bot\Handlers\StartHandler;
 use Modules\Bot\Handlers\BaseHandler;
 use Modules\Bot\Handlers\UnknownUpdateHandler;
+use Modules\Memory\MemoryManager;
+use Modules\Memory\Handlers\MemoryCommandHandler;
 use Database\Database;
 
 class Router
@@ -161,6 +163,13 @@ class Router
 
         // 7. Regular message — route by text content
         if ($update->isMessage() && $text !== '') {
+            // Memory commands (if module enabled)
+            $memoryManager = new MemoryManager();
+            if ($memoryManager->isEnabled() && in_array($text, ['/حافظه', '🧠 حافظه من', '/حذف_حافظه', '🗑 پاک کردن حافظه'], true)) {
+                error_log("DEBUG ROUTER: memory command -> MemoryCommandHandler");
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            
             // Map Persian menu texts to handlers
             $menuMap = [
                 "\xF0\x9F\x8E\xA8 ساخت تصویر" => 'ImageHandler',
