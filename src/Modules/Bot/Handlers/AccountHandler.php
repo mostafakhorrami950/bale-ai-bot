@@ -74,9 +74,14 @@ class AccountHandler extends BaseHandler
             $memoryManager = new MemoryManager();
             $keyboard = null;
             if ($memoryManager->isEnabled()) {
+                $internalId = $this->resolveInternalId($userId);
+                $isDisabled = $internalId ? $memoryManager->isDisabledForUser($internalId) : false;
+                
                 $keyboard = [
                     'inline_keyboard' => [
                         [['text' => '🧠 حافظه من', 'callback_data' => 'show_memory']],
+                        [['text' => '➕ افزودن به حافظه', 'callback_data' => 'add_memory']],
+                        [['text' => $isDisabled ? '✅ فعال کردن حافظه' : '🚫 غیرفعال کردن حافظه', 'callback_data' => 'toggle_memory']],
                         [['text' => '🗑️ پاک کردن حافظه', 'callback_data' => 'clear_memory']],
                     ]
                 ];

@@ -473,9 +473,10 @@ class ChatHandler extends BaseHandler
                 $systemPrompt = $firstSystem['content'] ?? '';
             }
             
-            // Always inject memory context if there is user text
+            // Inject memory context ONLY ONCE per conversation (convKey tracks it)
             if (!empty($text)) {
-                $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt);
+                $convKey = 'conv_' . ($convId ?? 0);
+                $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt, $convKey);
             }
             
             // If system prompt was modified (memory added), prepend it

@@ -143,15 +143,25 @@ class Router
                 'chat_history' => 'ChatHandler',
                 'show_memory' => 'MemoryCommandHandler',
                 'clear_memory' => 'MemoryCommandHandler',
+                'toggle_memory' => 'MemoryCommandHandler',
+                'add_memory' => 'MemoryCommandHandler',
+                'confirm_clear_memory' => 'MemoryCommandHandler',
+                'cancel_clear_memory' => 'MemoryCommandHandler',
             ];
 
             
             // Memory callbacks — special handler with different namespace and constructor
-            if ($data === 'show_memory') {
+            if (in_array($data, ['show_memory', 'clear_memory', 'toggle_memory', 'add_memory', 'confirm_clear_memory', 'cancel_clear_memory'], true)) {
                 $memoryManager = new MemoryManager();
                 return new MemoryCommandHandler($this->baleClient, $memoryManager);
             }
-            if ($data === 'clear_memory') {
+            // Memory delete by ID: delete_mem_{id}
+            if (str_starts_with($data, 'delete_mem_')) {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            // Memory importance: mem_imp_{text}_{stars}
+            if (str_starts_with($data, 'mem_imp_')) {
                 $memoryManager = new MemoryManager();
                 return new MemoryCommandHandler($this->baleClient, $memoryManager);
             }

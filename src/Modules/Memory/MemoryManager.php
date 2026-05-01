@@ -146,9 +146,175 @@ class MemoryManager
     }
 
     /**
+     * Build memory context string to inject into system prompt.
+     * If there are >30 items and total chars >300, summarize with AI first.
+     */
+    public function buildMemoryContext(int $userId): string
+    {
+        if (!$this->isEnabled()) return '';
+
+        $parts = [];
+
+        // Get all active memories (up to 50 for summarization consideration)
+        $allMemories = $this->getAllActiveMemories($userId, 50);
+
+        if (!empty($allMemories)) {
+            // Calculate total character count
+            $totalChars = 0;
+            $memoryLines = [];
+            foreach ($allMemories as $mem) {
+                $line = '• ' . $mem['memory_text'];
+                $memoryLines[] = $line;
+                $totalChars += mb_strlen($line);
+            }
+
+            // If >30 items AND total chars >300, summarize with AI
+            if (count($allMemories) > 30 && $totalChars > 300) {
+                $summary = $this->summarizeMemoriesWithAI($userId, $memoryLines);
+                if (!empty($summary)) {
+                    $parts[] = "📝 اطلاعات خلاصه شده درباره کاربر:\n" . $summary;
+                } else {
+                    // Fallback: use top 10 most important
+                    $topMemories = $this->getUserMemories($userId, 10);
+                    $topLines = [];
+                    foreach ($topMemories as $mem) {
+                        $topLines[] = '• ' . $mem['memory_text'];
+                    }
+                    $parts[] = "📝 اطلاعات مهم درباره کاربر:\n" . implode("\n", $topLines);
+                }
+            } else {
+                // Few items — show all directly
+                $parts[] = "📝 اطلاعات ذخیره شده درباره کاربر:\n" . implode("\n", $memoryLines);
+            }
+        }
+
+        // Add recent summaries
+        $summaries = $this->getRecentSummaries($userId);
+        if (!empty($summaries)) {
+            $summaryLines = [];
+            foreach ($summaries as $sum) {
+                $summaryLines[] = '• ' . mb_substr($sum['summary_text'], 0, 200);
+            }
+            $parts[] = "📋 خلاصه گفتگوهای قبلی:\n" . implode("\n", $summaryLines);
+        }
+
+        return implode("\n\n", $parts);
+    }
+
+    /**
+     * Get all active memories for a user (unlimited).
+     */
+    private function getAllActiveMemories(int $userId, int $limit = 50): array
+    {
+        try {
+            return $this->db->query(
+                "SELECT id, memory_text, memory_type, importance, created_at 
+                 FROM user_memories 
+                 WHERE user_id = ? AND is_active = 1 
+                 ORDER BY importance DESC, created_at DESC 
+                 LIMIT ?",
+                [$userId, $limit]
+            )->fetchAll();
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Summarize a large list of memories using the configured AI model.
+     * Returns a compact Persian summary string.
+     */
+    private function summarizeMemoriesWithAI(int $userId, array $memoryLines): ?string
+    {
+        try {
+            // Get the summarization model from settings
+            $sumModelId = $this->getConfig('summarization_model', '');
+            $modelName = '';
+            $modelData = [];
+
+            if (!empty($sumModelId)) {
+                $modelRow = $this->db->query(
+                    "SELECT name, provider, cost_per_input_char, cost_per_output_char, free_model 
+                     FROM ai_text_models WHERE id = ? AND is_active = 1",
+                    [(int)$sumModelId]
+                )->fetch();
+                if ($modelRow) {
+                    $modelName = $modelRow['name'];
+                    $modelData = [
+                        'name' => $modelName,
+                        'provider' => $modelRow['provider'] ?? 'openrouter',
+                        'cost_per_input_char' => (float)($modelRow['cost_per_input_char'] ?? 0.000001),
+                        'cost_per_output_char' => (float)($modelRow['cost_per_output_char'] ?? 0.000002),
+                        'free_model' => (int)($modelRow['free_model'] ?? 0),
+                    ];
+                }
+            }
+
+            if (empty($modelName)) {
+                // Fallback: use first active text model
+                $modelRow = $this->db->query(
+                    "SELECT name, provider, cost_per_input_char, cost_per_output_char, free_model 
+                     FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1"
+                )->fetch();
+                if ($modelRow) {
+                    $modelName = $modelRow['name'];
+                    $modelData = [
+                        'name' => $modelName,
+                        'provider' => $modelRow['provider'] ?? 'openrouter',
+                        'cost_per_input_char' => (float)($modelRow['cost_per_input_char'] ?? 0.000001),
+                        'cost_per_output_char' => (float)($modelRow['cost_per_output_char'] ?? 0.000002),
+                        'free_model' => (int)($modelRow['free_model'] ?? 0),
+                    ];
+                }
+            }
+
+            if (empty($modelName)) return null;
+
+            $systemPrompt = "تو یک دستیار خلاصه‌ساز اطلاعات شخصی هستی.\n"
+                . "لیستی از اطلاعات ذخیره شده درباره یک کاربر به تو داده می‌شود.\n"
+                . "وظیفه تو: این اطلاعات را به صورت خلاصه و منظم به فارسی بنویس.\n"
+                . "قوانین:\n"
+                . "1. فقط اطلاعات مهم را نگه دار\n"
+                . "2. موارد تکراری را حذف کن\n"
+                . "3. خروجی باید حداکثر 300 کاراکتر باشد\n"
+                . "4. اطلاعات مشابه را ادغام کن\n"
+                . "5. از خط تیره برای بولت‌پوینت استفاده کن\n"
+                . "6. خروجی فقط متن فارسی باشد (بدون JSON)";
+
+            $userText = "لیست اطلاعات کاربر:\n" . implode("\n", $memoryLines);
+
+            $messages = [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $userText],
+            ];
+
+            $chatService = new ChatService();
+            $result = $chatService->chat($messages, $modelName, $modelData);
+
+            if (!isset($result['error']) && !empty($result['response'])) {
+                return trim($result['response']);
+            }
+
+            Logger::error('MemoryManager::summarizeMemoriesWithAI error', [
+                'user_id' => $userId,
+                'error' => $result['error'] ?? 'empty response',
+            ]);
+            return null;
+
+        } catch (\Throwable $e) {
+            Logger::error('MemoryManager::summarizeMemoriesWithAI exception', [
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    // ———— Auto-extraction with AI ————
+
+    /**
      * Auto-extract important personal information using AI.
-     * Sends the user message to an AI model with a system prompt asking it
-     * to extract important personal info. Only saves if AI determines it's important.
+     * Only called once per conversation (on the first user message).
      */
     public function extractMemoryFromMessage(int $userId, string $userMessage): void
     {
@@ -158,10 +324,9 @@ class MemoryManager
         if (mb_strlen(trim($userMessage)) < 10) return;
 
         try {
-            // Get the extraction model from config (default to first active text model)
+            // Get the default text model
             $modelName = $this->getConfig('extraction_model', '');
             if (empty($modelName)) {
-                // Try to get default text model from settings
                 $row = $this->db->query(
                     "SELECT value FROM settings WHERE key_name = 'default_text_model'"
                 )->fetch();
@@ -170,34 +335,23 @@ class MemoryManager
                         "SELECT name FROM ai_text_models WHERE id = ? AND is_active = 1",
                         [(int)$row['value']]
                     )->fetch();
-                    if ($modelRow) {
-                        $modelName = $modelRow['name'];
-                    }
+                    if ($modelRow) $modelName = $modelRow['name'];
                 }
             }
             if (empty($modelName)) {
-                // Fallback: get first active text model
                 $modelRow = $this->db->query(
                     "SELECT name FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1"
                 )->fetch();
-                if ($modelRow) {
-                    $modelName = $modelRow['name'];
-                }
+                if ($modelRow) $modelName = $modelRow['name'];
             }
-            if (empty($modelName)) return; // No model available
+            if (empty($modelName)) return;
 
-            // Build the AI extraction prompt
             $systemPrompt = "تو یک دستیار هوشمند هستی که وظیفه‌ات استخراج اطلاعات شخصی مهم از پیام‌های کاربران است.\n\n"
                 . "قوانین:\n"
                 . "1. فقط اطلاعات شخصی مهم را استخراج کن (نام، سن، شغل، علایق، آدرس، شماره تماس، وضعیت سلامتی، اهداف، تاریخ‌های مهم و ...)\n"
                 . "2. اگر اطلاعات مهمی در پیام وجود ندارد، خالی برگردان\n"
                 . "3. خروجی را به صورت JSON برگردان با این ساختار:\n"
-                . "{\n"
-                . "  \"has_important_info\": true/false,\n"
-                . "  \"memories\": [\n"
-                . "    {\"text\": \"متن حافظه به فارسی\", \"importance\": 1-10}\n"
-                . "  ]\n"
-                . "}\n"
+                . "{\"has_important_info\": true/false, \"memories\": [{\"text\": \"متن حافظه به فارسی\", \"importance\": 1-10}]}\n"
                 . "4. importance از 1 (کم اهمیت) تا 10 (بسیار مهم) باشد\n"
                 . "5. نام = 10, سن = 8, شغل = 8, شماره تماس = 9, آدرس = 8, وضعیت سلامتی = 7, اهداف = 6, علایق = 5\n"
                 . "6. حتماً خروجی JSON معتبر برگردان";
@@ -207,38 +361,26 @@ class MemoryManager
                 ['role' => 'user', 'content' => "پیام کاربر:\n" . $userMessage],
             ];
 
-            // Use ChatService to call AI
             $chatService = new ChatService();
             $modelData = $this->getModelData($modelName);
             $result = $chatService->chat($messages, $modelName, $modelData);
 
             if (isset($result['error'])) {
-                Logger::error('MemoryManager::extractMemoryFromMessage AI error', [
-                    'user_id' => $userId,
-                    'error' => $result['error'],
-                ]);
+                Logger::error('MemoryManager::extractMemoryFromMessage AI error', ['user_id' => $userId, 'error' => $result['error']]);
                 return;
             }
 
             $responseText = $result['response'] ?? '';
             if (empty($responseText)) return;
 
-            // Parse JSON from response
             $json = $this->extractJsonFromResponse($responseText);
             if ($json === null) {
-                Logger::error('MemoryManager::extractMemoryFromMessage parse error', [
-                    'user_id' => $userId,
-                    'response' => mb_substr($responseText, 0, 500),
-                ]);
+                Logger::error('MemoryManager::extractMemoryFromMessage parse error', ['user_id' => $userId, 'response' => mb_substr($responseText, 0, 500)]);
                 return;
             }
 
             if (!isset($json['has_important_info']) || $json['has_important_info'] !== true) {
-                // AI determined no important info — skip
-                Logger::info('MemoryManager::extractMemoryFromMessage skipped', [
-                    'user_id' => $userId,
-                    'reason' => 'AI determined no important info',
-                ]);
+                Logger::info('MemoryManager::extractMemoryFromMessage skipped', ['user_id' => $userId]);
                 return;
             }
 
@@ -253,42 +395,26 @@ class MemoryManager
                 }
             }
 
-            Logger::info('MemoryManager::extractMemoryFromMessage saved', [
-                'user_id' => $userId,
-                'count' => count($memories),
-            ]);
+            Logger::info('MemoryManager::extractMemoryFromMessage saved', ['user_id' => $userId, 'count' => count($memories)]);
 
         } catch (\Throwable $e) {
-            Logger::error('MemoryManager::extractMemoryFromMessage error', [
-                'user_id' => $userId,
-                'error' => $e->getMessage(),
-            ]);
+            Logger::error('MemoryManager::extractMemoryFromMessage error', ['user_id' => $userId, 'error' => $e->getMessage()]);
         }
     }
 
-    /**
-     * Extract JSON from AI response text (handles markdown code blocks).
-     */
     private function extractJsonFromResponse(string $text): ?array
     {
-        // Try to find JSON in code blocks first
         if (preg_match('/```(?:json)?\s*(\{.*?\})\s*```/s', $text, $m)) {
             $decoded = json_decode($m[1], true);
             if ($decoded !== null) return $decoded;
         }
-
-        // Try to find JSON directly
         if (preg_match('/\{.*\}/s', $text, $m)) {
             $decoded = json_decode($m[0], true);
             if ($decoded !== null) return $decoded;
         }
-
         return null;
     }
 
-    /**
-     * Get model data array for ChatService.
-     */
     private function getModelData(string $modelName): array
     {
         try {
@@ -306,9 +432,7 @@ class MemoryManager
                     'free_model' => (int)($row['free_model'] ?? 0),
                 ];
             }
-        } catch (\Throwable $e) {
-            // ignore
-        }
+        } catch (\Throwable $e) {}
         return [
             'name' => $modelName,
             'provider' => 'openrouter',
@@ -318,14 +442,12 @@ class MemoryManager
         ];
     }
 
-    /**
-     * Save explicit memory when user says "یادت باشه" type commands.
-     */
+    // ———— Explicit memory save ————
+
     public function saveExplicitMemory(int $userId, string $userMessage): void
     {
         if (!$this->isEnabled()) return;
 
-        // Extract the actual memory text after commands like "یادت باشه"
         $patterns = [
             '/یادت باشه\s*(.*)/u',
             '/به خاطر بسپار\s*(.*)/u',
@@ -345,7 +467,6 @@ class MemoryManager
             }
         }
 
-        // If no pattern matched but the message contains memory keywords, extract it
         if (preg_match('/(یادت باشه|به خاطر بسپار|ذخیره کن|فراموش نکن)/u', $userMessage)) {
             $cleaned = preg_replace('/^\s*(یادت باشه|به خاطر بسپار|ذخیره کن|فراموش نکن)[:\s]*/u', '', $userMessage);
             $cleaned = trim($cleaned);
@@ -355,50 +476,13 @@ class MemoryManager
         }
     }
 
-    /**
-     * Build memory context string to inject into system prompt.
-     */
-    public function buildMemoryContext(int $userId): string
-    {
-        if (!$this->isEnabled()) return '';
+    // ———— Delete ————
 
-        $parts = [];
-
-        // Add active memories
-        $memories = $this->getUserMemories($userId);
-        if (!empty($memories)) {
-            $memoryLines = [];
-            foreach ($memories as $mem) {
-                $memoryLines[] = '• ' . $mem['memory_text'];
-            }
-            $parts[] = "📝 اطلاعات ذخیره شده درباره کاربر:\n" . implode("\n", $memoryLines);
-        }
-
-        // Add recent summaries
-        $summaries = $this->getRecentSummaries($userId);
-        if (!empty($summaries)) {
-            $summaryLines = [];
-            foreach ($summaries as $sum) {
-                $summaryLines[] = '• ' . mb_substr($sum['summary_text'], 0, 200);
-            }
-            $parts[] = "📋 خلاصه گفتگوهای قبلی:\n" . implode("\n", $summaryLines);
-        }
-
-        return implode("\n\n", $parts);
-    }
-
-    /**
-     * Delete a specific memory by ID.
-     */
     public function deleteMemory(int $memoryId, int $userId): bool
     {
         if (!$this->isEnabled()) return false;
-
         try {
-            $this->db->query(
-                "UPDATE user_memories SET is_active = 0 WHERE id = ? AND user_id = ?",
-                [$memoryId, $userId]
-            );
+            $this->db->query("UPDATE user_memories SET is_active = 0 WHERE id = ? AND user_id = ?", [$memoryId, $userId]);
             return true;
         } catch (\Throwable $e) {
             Logger::error('MemoryManager::deleteMemory error', ['memory_id' => $memoryId, 'error' => $e->getMessage()]);
@@ -406,18 +490,11 @@ class MemoryManager
         }
     }
 
-    /**
-     * Delete all memories for a user.
-     */
     public function clearAllMemories(int $userId): bool
     {
         if (!$this->isEnabled()) return false;
-
         try {
-            $this->db->query(
-                "UPDATE user_memories SET is_active = 0 WHERE user_id = ?",
-                [$userId]
-            );
+            $this->db->query("UPDATE user_memories SET is_active = 0 WHERE user_id = ?", [$userId]);
             return true;
         } catch (\Throwable $e) {
             Logger::error('MemoryManager::clearAllMemories error', ['user_id' => $userId, 'error' => $e->getMessage()]);
@@ -425,69 +502,70 @@ class MemoryManager
         }
     }
 
-    /**
-     * Create a summary of recent conversation history.
-     * Uses the AI service if available, otherwise uses simple truncation.
-     */
-    public function summarizeConversation(int $userId, string $conversationText): ?string
+    public function getMemoryCount(int $userId): int
     {
-        if (!$this->isEnabled()) return null;
-
+        if (!$this->isEnabled()) return 0;
         try {
-            $summary = null;
+            $row = $this->db->query("SELECT COUNT(*) as c FROM user_memories WHERE user_id = ? AND is_active = 1", [$userId])->fetch();
+            return (int)($row['c'] ?? 0);
+        } catch (\Throwable $e) { return 0; }
+    }
 
-            // Try AI summarization if AI service is available
-            if ($this->aiService !== null && method_exists($this->aiService, 'chat')) {
-                $systemPrompt = "خلاصه‌ای مختصر و مفید از گفتگوی زیر به فارسی بنویس. فقط نکات مهم را بنویس.";
-                $messages = [
-                    ['role' => 'system', 'content' => $systemPrompt],
-                    ['role' => 'user', 'content' => $conversationText],
-                ];
-                $result = $this->aiService->chat($messages, $this->getConfig('summarization_model', 'gpt-4o-mini'));
-                if (!isset($result['error']) && !empty($result['response'])) {
-                    $summary = $result['response'];
-                }
-            }
+    /**
+     * Get a single memory by ID (scoped to user).
+     */
+    public function getMemoryById(int $memoryId, int $userId): ?array
+    {
+        try {
+            $row = $this->db->query(
+                "SELECT id, memory_text, memory_type, importance, created_at FROM user_memories WHERE id = ? AND user_id = ? AND is_active = 1",
+                [$memoryId, $userId]
+            )->fetch();
+            return $row ?: null;
+        } catch (\Throwable $e) { return null; }
+    }
 
-            // Fallback: simple truncation-based summary
-            if (empty($summary)) {
-                $lines = explode("\n", $conversationText);
-                $summary = implode("\n", array_slice($lines, 0, 20));
-                if (mb_strlen($summary) > 500) {
-                    $summary = mb_substr($summary, 0, 500) . '...';
-                }
-            }
+    // ———— User-level toggle ————
 
-            if (!empty($summary)) {
-                $messageCount = mb_substr_count($conversationText, "\n") + 1;
+    /**
+     * Toggle memory module on/off for a specific user.
+     * Uses user_memory_settings table.
+     */
+    public function toggleMemoryForUser(int $userId, bool $enabled): void
+    {
+        try {
+            $existing = $this->db->query(
+                "SELECT id FROM user_memory_settings WHERE user_id = ?",
+                [$userId]
+            )->fetch();
+            if ($existing) {
                 $this->db->query(
-                    "INSERT INTO conversation_summaries (user_id, summary_text, message_count) VALUES (?, ?, ?)",
-                    [$userId, $summary, $messageCount]
+                    "UPDATE user_memory_settings SET memory_disabled = ?, updated_at = NOW() WHERE user_id = ?",
+                    [$enabled ? 0 : 1, $userId]
+                );
+            } else {
+                $this->db->query(
+                    "INSERT INTO user_memory_settings (user_id, memory_disabled) VALUES (?, ?)",
+                    [$userId, $enabled ? 0 : 1]
                 );
             }
-
-            return $summary;
         } catch (\Throwable $e) {
-            Logger::error('MemoryManager::summarizeConversation error', ['user_id' => $userId, 'error' => $e->getMessage()]);
-            return null;
+            Logger::error('MemoryManager::toggleMemoryForUser error', ['user_id' => $userId, 'error' => $e->getMessage()]);
         }
     }
 
     /**
-     * Get the count of active memories for a user.
+     * Check if memory is disabled for a specific user.
+     * Returns true if user has explicitly disabled it.
      */
-    public function getMemoryCount(int $userId): int
+    public function isDisabledForUser(int $userId): bool
     {
-        if (!$this->isEnabled()) return 0;
-
         try {
             $row = $this->db->query(
-                "SELECT COUNT(*) as c FROM user_memories WHERE user_id = ? AND is_active = 1",
+                "SELECT memory_disabled FROM user_memory_settings WHERE user_id = ?",
                 [$userId]
             )->fetch();
-            return (int)($row['c'] ?? 0);
-        } catch (\Throwable $e) {
-            return 0;
-        }
+            return $row && (int)$row['memory_disabled'] === 1;
+        } catch (\Throwable $e) { return false; }
     }
 }

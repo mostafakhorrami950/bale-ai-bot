@@ -43,6 +43,7 @@ class DatabaseRepairService
         $this->seedDefaultModel();
         $this->ensureUserProfilesTable();
         $this->ensureMemoryTables();
+        $this->ensureUserMemorySettingsTable();
         $this->ensurePhase14Columns();
         $this->ensurePhase15Columns();
 
@@ -411,6 +412,23 @@ class DatabaseRepairService
         // Memory module setting
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('memory_module_enabled', '1')");
         $this->log('✅ تنظیم memory_module_enabled اضافه شد.');
+    }
+
+    private function ensureUserMemorySettingsTable(): void
+    {
+        if (!$this->tableExists('user_memory_settings')) {
+            $this->exec("
+                CREATE TABLE user_memory_settings (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL UNIQUE,
+                    memory_disabled TINYINT(1) DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول user_memory_settings ایجاد شد.');
+        }
     }
 
     private function ensureUserProfilesTable(): void
