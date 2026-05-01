@@ -12,11 +12,21 @@ ALTER TABLE ai_text_models
 
 -- 3. Change users.credits from INT to DECIMAL for sub-credit precision
 ALTER TABLE users
-  MODIFY COLUMN credits DECIMAL(12,4) NOT NULL DEFAULT 0;
+  MODIFY COLUMN credits DECIMAL(12,6) NOT NULL DEFAULT 0;
 
 -- 4. Change credit_ledger.amount from INT to DECIMAL
 ALTER TABLE credit_ledger
-  MODIFY COLUMN amount DECIMAL(12,4) NOT NULL DEFAULT 0;
+  MODIFY COLUMN amount DECIMAL(12,6) NOT NULL DEFAULT 0;
+
+-- 4b. Change chat_conversations.total_cost_credits from INT to DECIMAL
+ALTER TABLE chat_conversations
+  MODIFY COLUMN total_cost_credits DECIMAL(12,6) NOT NULL DEFAULT 0;
+
+-- 4c. Change chat_messages cost columns from INT to DECIMAL
+ALTER TABLE chat_messages
+  MODIFY COLUMN cost_input_credits DECIMAL(12,6) NOT NULL DEFAULT 0;
+ALTER TABLE chat_messages
+  MODIFY COLUMN cost_output_credits DECIMAL(12,6) NOT NULL DEFAULT 0;
 
 -- 5. Add default_text_model setting
 INSERT IGNORE INTO settings (key_name, value) VALUES ('default_text_model', '');

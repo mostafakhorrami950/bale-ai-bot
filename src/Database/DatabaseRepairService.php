@@ -636,8 +636,8 @@ class DatabaseRepairService
                 $col = $stmt->fetch();
                 $typeDef = $col['Type'] ?? '';
                 if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE users MODIFY COLUMN credits DECIMAL(12,4) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون credits در users به DECIMAL(12,4) تغییر یافت.');
+                    $this->exec("ALTER TABLE users MODIFY COLUMN credits DECIMAL(12,6) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون credits در users به DECIMAL(12,6) تغییر یافت.');
                 }
             } catch (\Throwable $e) {}
         }
@@ -648,8 +648,43 @@ class DatabaseRepairService
                 $col = $stmt->fetch();
                 $typeDef = $col['Type'] ?? '';
                 if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE credit_ledger MODIFY COLUMN amount DECIMAL(12,4) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون amount در credit_ledger به DECIMAL(12,4) تغییر یافت.');
+                    $this->exec("ALTER TABLE credit_ledger MODIFY COLUMN amount DECIMAL(12,6) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون amount در credit_ledger به DECIMAL(12,6) تغییر یافت.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        // Decimal total_cost_credits on chat_conversations
+        if ($this->tableExists('chat_conversations') && $this->columnExists('chat_conversations', 'total_cost_credits')) {
+            try {
+                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_conversations WHERE Field = 'total_cost_credits'");
+                $col = $stmt->fetch();
+                $typeDef = $col['Type'] ?? '';
+                if (str_starts_with($typeDef, 'int')) {
+                    $this->exec("ALTER TABLE chat_conversations MODIFY COLUMN total_cost_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون total_cost_credits در chat_conversations به DECIMAL(12,6) تغییر یافت.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        // Decimal cost columns on chat_messages
+        if ($this->tableExists('chat_messages') && $this->columnExists('chat_messages', 'cost_input_credits')) {
+            try {
+                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_messages WHERE Field = 'cost_input_credits'");
+                $col = $stmt->fetch();
+                $typeDef = $col['Type'] ?? '';
+                if (str_starts_with($typeDef, 'int')) {
+                    $this->exec("ALTER TABLE chat_messages MODIFY COLUMN cost_input_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون cost_input_credits در chat_messages به DECIMAL(12,6) تغییر یافت.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        if ($this->tableExists('chat_messages') && $this->columnExists('chat_messages', 'cost_output_credits')) {
+            try {
+                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_messages WHERE Field = 'cost_output_credits'");
+                $col = $stmt->fetch();
+                $typeDef = $col['Type'] ?? '';
+                if (str_starts_with($typeDef, 'int')) {
+                    $this->exec("ALTER TABLE chat_messages MODIFY COLUMN cost_output_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون cost_output_credits در chat_messages به DECIMAL(12,6) تغییر یافت.');
                 }
             } catch (\Throwable $e) {}
         }
