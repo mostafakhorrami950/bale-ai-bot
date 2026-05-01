@@ -166,6 +166,39 @@ ob_start();
                            placeholder="URL کامل">
                 </div>
 
+                <hr>
+
+                <h6>💰 روش‌های پرداخت</h6>
+
+                <div class="mb-3">
+                    <label class="form-label">فعال بودن پرداخت زیبال:</label>
+                    <select name="settings[payment_method_zibal]" class="form-select">
+                        <option value="on" <?php echo ($currentSettings['payment_method_zibal'] ?? 'on') === 'on' ? 'selected' : ''; ?>>فعال</option>
+                        <option value="off" <?php echo ($currentSettings['payment_method_zibal'] ?? 'on') === 'off' ? 'selected' : ''; ?>>غیرفعال</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">فعال بودن پرداخت از طریق کیف پول بله:</label>
+                    <select name="settings[payment_method_bale]" class="form-select">
+                        <option value="on" <?php echo ($currentSettings['payment_method_bale'] ?? 'off') === 'on' ? 'selected' : ''; ?>>فعال</option>
+                        <option value="off" <?php echo ($currentSettings['payment_method_bale'] ?? 'off') === 'off' ? 'selected' : ''; ?>>غیرفعال</option>
+                    </select>
+                    <div class="form-text">برای فعال‌سازی باید توکن کیف پول را از @botfather دریافت کنید.</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">توکن کیف پول بله (Bale provider_token):</label>
+                    <input type="text" name="settings[bale_provider_token]" class="form-control"
+                           value="<?php echo htmlspecialchars($currentSettings['bale_provider_token'] ?? ''); ?>"
+                           placeholder="از BotFather دریافت کنید"
+                           style="direction:ltr; font-family:monospace;">
+                    <div class="form-text">
+                        از @botfather ربات را ایجاد کنید و توکن کیف پول را دریافت کنید.<br>
+                        اگر هر دو روش فعال باشد، کاربر می‌تواند روش پرداخت را انتخاب کند.
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary btn-lg w-100">
                     <i class="bi bi-save"></i> ذخیره کلیه تنظیمات
                 </button>

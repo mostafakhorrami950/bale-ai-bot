@@ -43,16 +43,13 @@ class User
                     $data['phone_number'],
                     $baleUserId
                 ]);
-                // Update profile info in user_profiles
-                if (isset($data['first_name']) || isset($data['last_name'])) {
-                    $this->db->query(
-                        "INSERT INTO user_profiles (user_id, first_name, last_name)
-                         VALUES (?, ?, ?)
-                         ON DUPLICATE KEY UPDATE first_name = ?, last_name = ?",
-                        [$user['id'], $data['first_name'] ?? '', $data['last_name'] ?? '',
-                         $data['first_name'] ?? '', $data['last_name'] ?? '']
-                    );
-                }
+                // Update profile info in user_profiles (always, even if empty)
+                $this->db->query(
+                    "INSERT INTO user_profiles (user_id, first_name, last_name, username)
+                     VALUES (?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE first_name = VALUES(first_name), last_name = VALUES(last_name), username = VALUES(username)",
+                    [$user['id'], $data['first_name'] ?? '', $data['last_name'] ?? '', $data['username'] ?? '']
+                );
             } else {
                 // New user — INSERT
                 $initialCredits = (float)(Config::get('FREE_CREDITS_ON_START', 15));
@@ -66,10 +63,10 @@ class User
                 // Get the new user ID and insert profile
                 $stmt = $this->db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId]);
                 $newUser = $stmt->fetch();
-                if ($newUser && (isset($data['first_name']) || isset($data['last_name']))) {
+                if ($newUser) {
                     $this->db->query(
-                        "INSERT INTO user_profiles (user_id, first_name, last_name) VALUES (?, ?, ?)",
-                        [$newUser['id'], $data['first_name'] ?? '', $data['last_name'] ?? '']
+                        "INSERT INTO user_profiles (user_id, first_name, last_name, username) VALUES (?, ?, ?, ?)",
+                        [$newUser['id'], $data['first_name'] ?? '', $data['last_name'] ?? '', $data['username'] ?? '']
                     );
                 }
             }

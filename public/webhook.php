@@ -60,19 +60,137 @@ if (!$update || !$update->getChatId()) {
     exit('Parse error');
 }
 
-// 4. Early Callback Answer
+// 4. Update last_active_at for any user action
+$baleUserId = $update->getUserId();
+if ($baleUserId) {
+    try {
+        $db = \Database\Database::getInstance();
+        $db->query("UPDATE users SET last_active_at = CURRENT_TIMESTAMP WHERE bale_user_id = ?", [$baleUserId]);
+    } catch (\Throwable $e) {
+        // Silent — non-critical
+    }
+}
+
+// 5. Early Callback Answer
 if ($update->isCallback() && $callbackId = $update->getCallbackId()) {
     $client = new \Modules\Bot\BaleClient();
     $client->answerCallbackQuery($callbackId);
 }
 
-// 5. Check for duplicate updates
+// 5. Handle pre_checkout_query (Bale wallet payment confirmation)
+if ($update->isPreCheckoutQuery()) {
+    $preCheckout = $update->getPreCheckoutQuery();
+    $preCheckoutId = $update->getPreCheckoutQueryId();
+    $payload = $preCheckout['invoice_payload'] ?? '';
+    $totalAmount = $preCheckout['total_amount'] ?? 0;
+    $fromUser = $preCheckout['from']['id'] ?? 0;
+
+    bot_log('INFO', 'PreCheckoutQuery received', [
+        'pre_checkout_query_id' => $preCheckoutId,
+        'payload' => $payload,
+        'amount' => $totalAmount,
+        'user_id' => $fromUser,
+    ]);
+
+    $client = new \Modules\Bot\BaleClient();
+
+    // Parse payload: plan_{plan_id}_user_{bale_user_id}
+    if (preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $matches)) {
+        $planId = (int)$matches[1];
+        $baleUserId = (int)$matches[2];
+
+        // Verify plan exists and is active
+        try {
+            $db = \Database\Database::getInstance();
+            $plan = $db->query("SELECT * FROM payment_plans WHERE id = ? AND is_active = 1", [$planId])->fetch();
+            if ($plan && (int)$plan['price_rial'] === $totalAmount) {
+                // Confirm payment
+                $client->answerPreCheckoutQuery($preCheckoutId, true);
+                bot_log('INFO', 'PreCheckoutQuery confirmed', ['payload' => $payload]);
+                exit('PreCheckoutQuery confirmed');
+            }
+        } catch (\Throwable $e) {
+            bot_log('ERROR', 'PreCheckoutQuery verification error', ['error' => $e->getMessage()]);
+        }
+    }
+
+    // Reject if anything is wrong
+    $client->answerPreCheckoutQuery($preCheckoutId, false, 'خطا در تأیید سفارش. لطفاً دوباره تلاش کنید.');
+    exit('PreCheckoutQuery rejected');
+}
+
+// 6. Handle successful_payment (Bale wallet payment completed)
+if ($update->isSuccessfulPayment()) {
+    $payment = $update->getSuccessfulPayment();
+    $payload = $payment['invoice_payload'] ?? '';
+    $totalAmount = $payment['total_amount'] ?? 0;
+    $chargeId = $payment['telegram_payment_charge_id'] ?? '';
+    $providerChargeId = $payment['provider_payment_charge_id'] ?? '';
+
+    bot_log('INFO', 'SuccessfulPayment received', [
+        'payload' => $payload,
+        'amount' => $totalAmount,
+        'charge_id' => $chargeId,
+        'provider_charge_id' => $providerChargeId,
+    ]);
+
+    // Parse payload: plan_{plan_id}_user_{bale_user_id}
+    if (preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $matches)) {
+        $planId = (int)$matches[1];
+        $baleUserId = (int)$matches[2];
+
+        try {
+            $db = \Database\Database::getInstance();
+            $plan = $db->query("SELECT * FROM payment_plans WHERE id = ? AND is_active = 1", [$planId])->fetch();
+            $user = $db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId])->fetch();
+
+            if ($plan && $user) {
+                $internalId = (int)$user['id'];
+                $credits = (int)$plan['credits'];
+                $amountRial = (int)$plan['price_rial'];
+                $trackId = 'bale_' . $chargeId . '_' . time();
+
+                // Check for duplicate (idempotency)
+                $existing = $db->query("SELECT id FROM payments WHERE track_id = ?", [$trackId])->fetch();
+                if (!$existing) {
+                    // Insert payment record
+                    $db->query(
+                        "INSERT INTO payments (user_id, track_id, order_id, amount_rial, credits, plan_id, status, ref_number, verified_at) VALUES (?, ?, ?, ?, ?, ?, 'verified', ?, NOW())",
+                        [$internalId, $trackId, 'BALE-' . $internalId . '-' . time(), $amountRial, $credits, $planId, $providerChargeId]
+                    );
+
+                    // Add credits
+                    $refId = 'bale_pay_' . $trackId;
+                    \Modules\Bot\CreditService::addCredits($internalId, $credits, $refId);
+
+                    // Notify user
+                    $chatId = $baleUserId;
+                    $client = new \Modules\Bot\BaleClient();
+                    $client->sendMessage($chatId, "✅ پرداخت با موفقیت انجام شد!\n💎 {$credits} اعتبار به حساب شما اضافه شد.");
+
+                    bot_log('INFO', 'Bale payment processed', [
+                        'user_id' => $internalId,
+                        'credits' => $credits,
+                        'track_id' => $trackId,
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            bot_log('ERROR', 'SuccessfulPayment processing error', ['error' => $e->getMessage()]);
+        }
+    }
+
+    $update->markAsProcessed();
+    exit('SuccessfulPayment processed');
+}
+
+// 7. Check for duplicate updates
 if ($update->isDuplicate()) {
     bot_log('INFO', 'Duplicate update ignored', ['update_id' => $update->getId()]);
     exit('Duplicate update');
 }
 
-// 6. Route & Dispatch
+// 8. Route & Dispatch
 $text = $update->getText() ?? 'NULL';
 file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " PARSED TEXT: " . $text . "\n", FILE_APPEND);
 try {

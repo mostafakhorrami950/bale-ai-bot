@@ -28,6 +28,11 @@ class CallbackHandler extends BaseHandler
                     break;
 
                 case 'check_membership':
+                    // Delete the previous membership message
+                    $prevMsgId = $this->getAndDeleteMembershipMessageId($chatId);
+                    if ($prevMsgId) {
+                        $this->baleClient->deleteMessage($chatId, $prevMsgId);
+                    }
                     $passed = $this->checkMembership($userId, $chatId);
                     if ($passed) {
                         $this->baleClient->sendMessage($chatId, "✅ عضویت شما تأیید شد. از منوی زیر استفاده کنید:", MessageHandler::getMainMenuKeyboard());

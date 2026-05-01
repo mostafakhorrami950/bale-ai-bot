@@ -17,11 +17,20 @@ $searchParam = "%{$search}%";
 $users = [];
 if (!empty($search)) {
     $users = $db->query(
-        "SELECT * FROM users WHERE bale_user_id LIKE ? OR username LIKE ? OR phone_number LIKE ? ORDER BY last_active_at DESC",
+        "SELECT u.*, up.first_name, up.last_name, up.username
+         FROM users u
+         LEFT JOIN user_profiles up ON up.user_id = u.id
+         WHERE u.bale_user_id LIKE ? OR up.username LIKE ? OR u.phone_number LIKE ?
+         ORDER BY u.last_active_at DESC",
         [$searchParam, $searchParam, $searchParam]
     )->fetchAll();
 } else {
-    $users = $db->query("SELECT * FROM users ORDER BY last_active_at DESC")->fetchAll();
+    $users = $db->query(
+        "SELECT u.*, up.first_name, up.last_name, up.username
+         FROM users u
+         LEFT JOIN user_profiles up ON up.user_id = u.id
+         ORDER BY u.last_active_at DESC"
+    )->fetchAll();
 }
 
 ob_start();
@@ -60,7 +69,7 @@ ob_start();
                 <?php foreach ($users as $u): ?>
                 <tr>
                     <td><?php echo $u['id']; ?></td>
-                    <td style="font-family:monospace;"><?php echo $u['bale_id']; ?></td>
+                    <td style="font-family:monospace;"><?php echo $u['bale_user_id']; ?></td>
                     <td><?php echo htmlspecialchars(($u['first_name'] ?? '') . ' ' . ($u['last_name'] ?? '')); ?></td>
                     <td><?php echo htmlspecialchars($u['username'] ?? '-'); ?></td>
                     <td dir="ltr"><?php echo htmlspecialchars($u['phone_number'] ?? '-'); ?></td>

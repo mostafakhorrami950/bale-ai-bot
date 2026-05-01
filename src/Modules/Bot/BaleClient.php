@@ -22,7 +22,11 @@ class BaleClient
         return $this->lastError;
     }
 
-    public function sendMessage(int $chatId, string $text, ?array $keyboard = null): bool
+    /**
+     * Send a message to a chat.
+     * Returns the message_id on success, false on failure.
+     */
+    public function sendMessage(int $chatId, string $text, ?array $keyboard = null): int|false
     {
         $params = [
             'chat_id' => $chatId,
@@ -30,13 +34,11 @@ class BaleClient
         ];
 
         if ($keyboard) {
-            // Keyboard is passed as array — it will be JSON-encoded in request()
             $params['reply_markup'] = $keyboard;
         }
 
         $response = $this->request('sendMessage', $params);
         
-        // M6: Check response and log errors
         if (!isset($response['ok']) || $response['ok'] !== true) {
             $this->lastError = $response['description'] ?? 'Unknown sendMessage error';
             Logger::error('BaleClient::sendMessage failed', [
@@ -46,7 +48,7 @@ class BaleClient
             ]);
             return false;
         }
-        return true;
+        return $response['result']['message_id'] ?? false;
     }
 
     public function getChatMember(string $chatId, int $userId)
@@ -126,6 +128,41 @@ class BaleClient
             'chat_id' => $chatId,
             'message_id' => $messageId
         ]);
+    }
+
+    /**
+     * Send an invoice for Bale wallet payment.
+     */
+    public function sendInvoice(int $chatId, string $title, string $description, string $payload, string $providerToken, array $prices, ?string $photoUrl = null): array
+    {
+        $params = [
+            'chat_id' => $chatId,
+            'title' => $title,
+            'description' => $description,
+            'payload' => $payload,
+            'provider_token' => $providerToken,
+            'prices' => $prices,
+        ];
+        if ($photoUrl) {
+            $params['photo_url'] = $photoUrl;
+        }
+        return $this->request('sendInvoice', $params);
+    }
+
+    /**
+     * Answer pre-checkout query (confirm or reject payment).
+     */
+    public function answerPreCheckoutQuery(string $preCheckoutQueryId, bool $ok, ?string $errorMessage = null): bool
+    {
+        $params = [
+            'pre_checkout_query_id' => $preCheckoutQueryId,
+            'ok' => $ok,
+        ];
+        if (!$ok && $errorMessage) {
+            $params['error_message'] = $errorMessage;
+        }
+        $response = $this->request('answerPreCheckoutQuery', $params);
+        return isset($response['ok']) && $response['ok'] === true;
     }
 
     /**

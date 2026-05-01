@@ -49,8 +49,9 @@ class MessageHandler extends BaseHandler
         $userModel = new \Modules\Bot\Models\User();
         $saved = $userModel->register($baleId, [
             'phone_number' => $phoneNumber,
-            'first_name' => $contact['first_name'] ?? '',
-            'last_name' => $contact['last_name'] ?? ''
+            'first_name' => $contact['first_name'] ?? $update->getFirstName() ?? '',
+            'last_name' => $contact['last_name'] ?? '',
+            'username' => $update->getUsername() ?? ''
         ]);
 
         if ($saved) {

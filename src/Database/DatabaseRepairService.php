@@ -41,6 +41,7 @@ class DatabaseRepairService
         $this->ensureNewModelTables();
         $this->ensureAiModelsCostColumns();
         $this->seedDefaultModel();
+        $this->ensureUserProfilesTable();
         $this->ensurePhase14Columns();
         $this->ensurePhase15Columns();
 
@@ -371,6 +372,30 @@ class DatabaseRepairService
         }
     }
 
+    private function ensureUserProfilesTable(): void
+    {
+        if (!$this->tableExists('user_profiles')) {
+            $this->exec("
+                CREATE TABLE user_profiles (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL UNIQUE,
+                    first_name VARCHAR(100) DEFAULT NULL,
+                    last_name VARCHAR(100) DEFAULT NULL,
+                    username VARCHAR(100) DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول user_profiles ایجاد شد.');
+        } else {
+            // Ensure username column exists
+            if (!$this->columnExists('user_profiles', 'username')) {
+                $this->exec("ALTER TABLE user_profiles ADD COLUMN username VARCHAR(100) DEFAULT NULL AFTER last_name");
+                $this->log('✅ ستون username به جدول user_profiles اضافه شد.');
+            }
+        }
+    }
+
     private function ensureUsersColumns(): void
     {
         if (!$this->tableExists('users')) return;
@@ -685,6 +710,13 @@ class DatabaseRepairService
         $this->log('✅ تنظیم help_image اضافه شد.');
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('chat_history_per_page', '10')");
         $this->log('✅ تنظیم chat_history_per_page اضافه شد.');
+        // Payment method settings
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('payment_method_zibal', 'on')");
+        $this->log('✅ تنظیم payment_method_zibal اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('payment_method_bale', 'off')");
+        $this->log('✅ تنظیم payment_method_bale اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('bale_provider_token', '')");
+        $this->log('✅ تنظیم bale_provider_token اضافه شد.');
         // Set default supported_formats
         if ($this->tableExists('ai_text_models') && $this->columnExists('ai_text_models', 'supported_formats')) {
             $this->exec("UPDATE ai_text_models SET supported_formats = 'txt,doc,pdf,jpg,jpeg,png,gif,webp' WHERE supported_formats IS NULL");

@@ -16,8 +16,13 @@ if (!$userId) {
     exit;
 }
 
-// Fetch user — no JOIN to user_profiles (which may not exist)
-$user = $db->query("SELECT * FROM users WHERE id = ?", [$userId])->fetch();
+// Fetch user with profile info
+$user = $db->query("
+    SELECT u.*, up.first_name, up.last_name, up.username
+    FROM users u
+    LEFT JOIN user_profiles up ON up.user_id = u.id
+    WHERE u.id = ?
+", [$userId])->fetch();
 if (!$user) {
     header('Location: users.php');
     exit;
@@ -88,13 +93,37 @@ try {
     $payments = [];
 }
 
-// Fetch AI request history
+// Fetch AI request history (from ai_requests + chat_conversations)
 $aiRequests = [];
 try {
-    $aiRequests = $db->query(
-        "SELECT ar.*, am.name as model_name FROM ai_requests ar LEFT JOIN ai_models am ON ar.model_id = am.id WHERE ar.user_id = ? ORDER BY ar.created_at DESC LIMIT 20",
-        [$userId]
-    )->fetchAll();
+    $aiRequests = $db->query("
+        (SELECT 
+            ar.created_at,
+            COALESCE(aim.name, aem.name, atm.name, 'نامشخص') as model_name,
+            ar.image_type as type,
+            ar.status,
+            ar.prompt as prompt
+        FROM ai_requests ar
+        LEFT JOIN ai_image_models aim ON ar.model_id = aim.id
+        LEFT JOIN ai_edit_models aem ON ar.model_id = aem.id
+        LEFT JOIN ai_text_models atm ON ar.model_id = atm.id
+        WHERE ar.user_id = ?
+        ORDER BY ar.created_at DESC
+        LIMIT 20)
+        UNION ALL
+        (SELECT 
+            cc.created_at,
+            cc.model as model_name,
+            'chat' as type,
+            'success' as status,
+            cc.title as prompt
+        FROM chat_conversations cc
+        WHERE cc.user_id = ?
+        ORDER BY cc.created_at DESC
+        LIMIT 20)
+        ORDER BY created_at DESC
+        LIMIT 20
+    ", [$userId, $userId])->fetchAll();
 } catch (\Throwable $e) {
     $aiRequests = [];
 }
@@ -247,7 +276,16 @@ ob_start();
                         <tr>
                             <td style="font-size:0.85rem;"><?php echo $r['created_at']; ?></td>
                             <td><?php echo htmlspecialchars($r['model_name'] ?? '-'); ?></td>
-                            <td><?php echo $r['image_type'] === 'text2img' ? 'متن به تصویر' : 'تصویر به تصویر'; ?></td>
+                            <td>
+                                <?php 
+                                $type = $r['type'] ?? $r['image_type'] ?? '';
+                                if ($type === 'text2img') echo '🎨 متن به تصویر';
+                                elseif ($type === 'img2img') echo '🖼 تصویر به تصویر';
+                                elseif ($type === 'chat') echo '💬 چت با AI';
+                                elseif ($type === 'video') echo '🎬 ساخت ویدئو';
+                                else echo htmlspecialchars($type);
+                                ?>
+                            </td>
                             <td>
                                 <?php if ($r['status'] === 'success'): ?>
                                     <span class="badge-active">✅ موفق</span>

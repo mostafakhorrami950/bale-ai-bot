@@ -22,6 +22,40 @@ abstract class BaseHandler
      * If not, send a message with clickable channel invite buttons and return false.
      * Returns true if the user can proceed.
      */
+    /**
+     * Store the membership message ID so it can be deleted on confirmation.
+     */
+    private function storeMembershipMessageId(int $chatId, int $messageId): void
+    {
+        try {
+            $db = Database::getInstance();
+            $db->query("INSERT INTO settings (key_name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
+                ['membership_msg_' . $chatId, (string)$messageId, (string)$messageId]
+            );
+        } catch (\Throwable $e) {}
+    }
+
+    /**
+     * Get and delete the stored membership message ID.
+     */
+    protected function getAndDeleteMembershipMessageId(int $chatId): ?int
+    {
+        try {
+            $db = Database::getInstance();
+            $row = $db->query("SELECT value FROM settings WHERE key_name = ?", ['membership_msg_' . $chatId])->fetch();
+            if ($row) {
+                $db->query("DELETE FROM settings WHERE key_name = ?", ['membership_msg_' . $chatId]);
+                return (int)$row['value'];
+            }
+        } catch (\Throwable $e) {}
+        return null;
+    }
+
+    /**
+     * Check if user is a member of all required channels.
+     * If not, send a message with clickable channel invite buttons and return false.
+     * Returns true if the user can proceed.
+     */
     protected function checkMembership(int $baleUserId, int $chatId): bool
     {
         try {
@@ -49,7 +83,7 @@ abstract class BaseHandler
                     if ($link) {
                         // Each channel as a clickable url button
                         $keyboard['inline_keyboard'][] = [
-                            ['text' => "� {$title}", 'url' => $link]
+                            ['text' => "📢 {$title}", 'url' => $link]
                         ];
                     } else {
                         $msg .= "📢 {$title}\n";
@@ -59,7 +93,11 @@ abstract class BaseHandler
                 $keyboard['inline_keyboard'][] = [
                     ['text' => '✅ عضو شدم، بررسی کن', 'callback_data' => 'check_membership']
                 ];
-                $this->baleClient->sendMessage($chatId, $msg, $keyboard);
+                // Store the message_id so we can delete it later on confirmation
+                $msgId = $this->baleClient->sendMessage($chatId, $msg, $keyboard);
+                if ($msgId !== false) {
+                    $this->storeMembershipMessageId($chatId, $msgId);
+                }
                 return false;
             }
 

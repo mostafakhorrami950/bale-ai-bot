@@ -446,7 +446,7 @@ class ChatHandler extends BaseHandler
             [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost]
         );
 
-        $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت پاسخ...");
+        $loadingMsgId = $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت پاسخ...");
 
         // Build messages for OpenRouter
         $history = $db->query(
@@ -500,6 +500,11 @@ class ChatHandler extends BaseHandler
         if ($msgCount <= 2) {
             $shortTitle = mb_substr($text, 0, 50) . (mb_strlen($text) > 50 ? '...' : '');
             $db->query("UPDATE chat_conversations SET title = ? WHERE id = ?", [$shortTitle, $convId]);
+        }
+
+        // Delete loading message
+        if ($loadingMsgId !== false) {
+            $this->baleClient->deleteMessage($chatId, $loadingMsgId);
         }
 
         // Send response

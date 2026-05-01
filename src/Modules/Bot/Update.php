@@ -46,6 +46,16 @@ class Update
         return $this->data['message']['from']['id'] ?? $this->data['callback_query']['from']['id'] ?? $this->data['callback_query']['message']['from']['id'] ?? null;
     }
 
+    public function getFirstName(): ?string
+    {
+        return $this->data['message']['from']['first_name'] ?? $this->data['callback_query']['from']['first_name'] ?? $this->data['callback_query']['message']['from']['first_name'] ?? null;
+    }
+
+    public function getUsername(): ?string
+    {
+        return $this->data['message']['from']['username'] ?? $this->data['callback_query']['from']['username'] ?? $this->data['callback_query']['message']['from']['username'] ?? null;
+    }
+
     public function getText(): string
     {
         $text = $this->data['message']['text'] ?? $this->data['callback_query']['data'] ?? '';
@@ -168,5 +178,47 @@ class Update
     public function getRaw(): array
     {
         return $this->data;
+    }
+
+    // ─── PAYMENT METHODS ───
+
+    /**
+     * Check if the update is a pre_checkout_query (Bale wallet payment confirmation).
+     */
+    public function isPreCheckoutQuery(): bool
+    {
+        return isset($this->data['pre_checkout_query']);
+    }
+
+    /**
+     * Get the pre_checkout_query data.
+     */
+    public function getPreCheckoutQuery(): ?array
+    {
+        return $this->data['pre_checkout_query'] ?? null;
+    }
+
+    /**
+     * Get the pre_checkout_query ID.
+     */
+    public function getPreCheckoutQueryId(): ?string
+    {
+        return $this->data['pre_checkout_query']['id'] ?? null;
+    }
+
+    /**
+     * Check if the update contains a successful_payment.
+     */
+    public function isSuccessfulPayment(): bool
+    {
+        return isset($this->data['message']['successful_payment']);
+    }
+
+    /**
+     * Get the successful_payment data.
+     */
+    public function getSuccessfulPayment(): ?array
+    {
+        return $this->data['message']['successful_payment'] ?? null;
     }
 }

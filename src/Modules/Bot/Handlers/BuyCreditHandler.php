@@ -32,6 +32,27 @@ class BuyCreditHandler extends BaseHandler
                 return;
             }
 
+            if ($callbackData && str_starts_with($callbackData, 'pay_zibal_')) {
+                $planId = (int) str_replace('pay_zibal_', '', $callbackData);
+                $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
+                $user = User::findByBaleId($userId);
+                if ($plan && $user) {
+                    $this->processZibalPayment($chatId, $userId, $plan, $user);
+                }
+                return;
+            }
+
+            if ($callbackData && str_starts_with($callbackData, 'pay_bale_')) {
+                $planId = (int) str_replace('pay_bale_', '', $callbackData);
+                $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
+                $user = User::findByBaleId($userId);
+                $token = Database::getInstance()->query("SELECT value FROM settings WHERE key_name = 'bale_provider_token'")->fetch()['value'] ?? '';
+                if ($plan && $user && $token) {
+                    $this->processBalePayment($chatId, $userId, $plan, $user, $token);
+                }
+                return;
+            }
+
             $this->showPlans($chatId, $userId);
         } catch (\Throwable $e) {
             Logger::error('BuyCreditHandler exception', [
@@ -101,7 +122,46 @@ class BuyCreditHandler extends BaseHandler
             $this->baleClient->answerCallbackQuery($callbackId);
         }
 
-        $this->baleClient->sendMessage($chatId, "⏳ در حال اتصال به درگاه پرداخت... لطفاً صبر کنید.");
+        // Get active payment methods from settings
+        $db = Database::getInstance();
+        $settings = $db->query("SELECT key_name, value FROM settings WHERE key_name IN ('payment_method_zibal', 'payment_method_bale', 'bale_provider_token')")->fetchAll();
+        $config = [];
+        foreach ($settings as $s) {
+            $config[$s['key_name']] = $s['value'];
+        }
+
+        $zibalActive = ($config['payment_method_zibal'] ?? 'on') === 'on';
+        $baleActive = ($config['payment_method_bale'] ?? 'off') === 'on';
+        $baleProviderToken = $config['bale_provider_token'] ?? '';
+
+        // If both are active, show payment method selection
+        if ($zibalActive && $baleActive && !empty($baleProviderToken)) {
+            $keyboard = [
+                'inline_keyboard' => [
+                    [['text' => '💳 پرداخت با زیبال', 'callback_data' => 'pay_zibal_' . $planId]],
+                    [['text' => '💰 پرداخت با کیف پول بله', 'callback_data' => 'pay_bale_' . $planId]],
+                ]
+            ];
+            $this->baleClient->sendMessage($chatId, "💳 لطفاً روش پرداخت را انتخاب کنید:", $keyboard);
+            return;
+        }
+
+        // Only one method active — proceed directly
+        if ($zibalActive) {
+            $this->processZibalPayment($chatId, $userId, $plan, $user);
+        } elseif ($baleActive && !empty($baleProviderToken)) {
+            $this->processBalePayment($chatId, $userId, $plan, $user, $baleProviderToken);
+        } else {
+            $this->baleClient->sendMessage($chatId, "⚠️ هیچ روش پرداختی فعال نیست. لطفاً با پشتیبانی تماس بگیرید.");
+        }
+    }
+
+    /**
+     * Process payment via Zibal gateway.
+     */
+    private function processZibalPayment(int $chatId, int $userId, array $plan, array $user): void
+    {
+        $this->baleClient->sendMessage($chatId, "⏳ در حال اتصال به درگاه زیبال...");
 
         try {
             $paymentService = new \Modules\Payment\ZibalService();
@@ -113,12 +173,12 @@ class BuyCreditHandler extends BaseHandler
             $result = $paymentService->requestPayment($amountRial, $orderId, $description);
 
             if (isset($result['error'])) {
-                Logger::error('BuyCreditHandler: payment request failed', [
+                Logger::error('BuyCreditHandler: Zibal payment request failed', [
                     'user_id' => $internalId,
                     'plan'    => $plan['name'],
                     'error'   => $result['error'],
                 ]);
-                $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی در اتصال به درگاه پرداخت پیش آمد.");
+                $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی در اتصال به درگاه زیبال پیش آمد.");
                 return;
             }
 
@@ -132,7 +192,7 @@ class BuyCreditHandler extends BaseHandler
                 );
 
                 $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
-                $message = "💳 **پرداخت برای پلن: {$plan['name']}**\n\n";
+                $message = "💳 **پرداخت با زیبال - پلن: {$plan['name']}**\n\n";
                 $message .= "💰 مبلغ: " . number_format($amountRial / 10) . " تومان\n";
                 $message .= "💎 اعتبار: {$plan['credits']} کردیت\n\n";
                 $message .= "🔗 لینک پرداخت:\n{$paymentUrl}\n\n";
@@ -141,13 +201,53 @@ class BuyCreditHandler extends BaseHandler
                 $this->baleClient->sendMessage($chatId, $message);
             }
         } catch (\Throwable $e) {
-            Logger::error('BuyCreditHandler: processPlan error', [
+            Logger::error('BuyCreditHandler: processZibalPayment error', [
                 'user_id' => $userId,
-                'plan_id' => $planId,
+                'plan_id' => $plan['id'],
                 'error'   => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
             ]);
             $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
         }
+    }
+
+    /**
+     * Process payment via Bale wallet (sendInvoice).
+     */
+    private function processBalePayment(int $chatId, int $userId, array $plan, array $user, string $providerToken): void
+    {
+        $internalId = (int) $user['id'];
+        $amountRial = (int) $plan['price_rial'];
+        $payload = 'plan_' . $plan['id'] . '_user_' . $userId;
+
+        // Prices array: label + amount in Rial
+        $prices = [
+            ['label' => $plan['name'], 'amount' => $amountRial]
+        ];
+
+        $result = $this->baleClient->sendInvoice(
+            $chatId,
+            $plan['name'],
+            "خرید {$plan['credits']} اعتبار - پلن {$plan['name']}",
+            $payload,
+            $providerToken,
+            $prices
+        );
+
+        if (!isset($result['ok']) || $result['ok'] !== true) {
+            $errMsg = $result['description'] ?? 'خطا در ارسال صورتحساب';
+            Logger::error('BuyCreditHandler: Bale sendInvoice failed', [
+                'user_id' => $internalId,
+                'plan'    => $plan['name'],
+                'error'   => $errMsg,
+            ]);
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال صورتحساب: {$errMsg}");
+            return;
+        }
+
+        Logger::info('BuyCreditHandler: Bale invoice sent', [
+            'user_id' => $internalId,
+            'plan'    => $plan['name'],
+            'payload' => $payload,
+        ]);
     }
 }
