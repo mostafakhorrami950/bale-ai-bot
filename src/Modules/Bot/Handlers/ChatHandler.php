@@ -87,6 +87,10 @@ class ChatHandler extends BaseHandler
                     $this->handlePhotoInChat($chatId, $userId, $update, $text);
                     return;
                 }
+                if ($update->hasDocument()) {
+                    $this->handleDocumentInChat($chatId, $userId, $update, $text);
+                    return;
+                }
                 if (!empty(trim($text ?? ''))) {
                     $this->processChatMessage($chatId, $userId, trim($text), null, null);
                     return;

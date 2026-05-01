@@ -104,6 +104,33 @@ class Update
         return $last['file_unique_id'] ?? null;
     }
 
+    /**
+     * Check if the update contains a document (file).
+     */
+    public function hasDocument(): bool
+    {
+        if (!$this->isMessage()) return false;
+        return isset($this->data['message']['document']) && !empty($this->data['message']['document']);
+    }
+
+    /**
+     * Get the document file_id.
+     */
+    public function getDocumentFileId(): ?string
+    {
+        if (!$this->hasDocument()) return null;
+        return $this->data['message']['document']['file_id'] ?? null;
+    }
+
+    /**
+     * Get the document file name.
+     */
+    public function getDocumentFileName(): ?string
+    {
+        if (!$this->hasDocument()) return null;
+        return $this->data['message']['document']['file_name'] ?? null;
+    }
+
     public function getMediaGroupId(): ?string
     {
         return $this->data['message']['media_group_id'] ?? null;

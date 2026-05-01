@@ -97,10 +97,24 @@ class Router
             }
         }
 
-        // 5. Photo messages
+        // 5. Photo messages — route to ChatHandler if in chat_active state
         if ($update->hasPhoto()) {
+            if ($state === 'chat_active') {
+                error_log("DEBUG ROUTER: photo in chat -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
             error_log("DEBUG ROUTER: photo -> Img2ImgHandler");
             return new Img2ImgHandler($this->baleClient);
+        }
+
+        // 5b. Document messages — route to ChatHandler if in chat_active state
+        if ($update->hasDocument()) {
+            if ($state === 'chat_active') {
+                error_log("DEBUG ROUTER: document in chat -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
+            error_log("DEBUG ROUTER: document -> MessageHandler");
+            return new MessageHandler($this->baleClient);
         }
 
         // 6. Callback queries (inline buttons)
