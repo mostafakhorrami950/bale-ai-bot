@@ -320,6 +320,9 @@ class MemoryManager
     {
         if (!$this->isEnabled()) return;
 
+        // If user has personally disabled memory, skip extraction
+        if ($this->isDisabledForUser($userId)) return;
+
         // Skip very short messages
         if (mb_strlen(trim($userMessage)) < 10) return;
 

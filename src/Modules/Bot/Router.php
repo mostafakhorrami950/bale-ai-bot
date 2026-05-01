@@ -10,6 +10,7 @@ use Modules\Bot\Handlers\ImageHandler;
 use Modules\Bot\Handlers\Img2ImgHandler;
 use Modules\Bot\Handlers\ChatHandler;
 use Modules\Bot\Handlers\MessageHandler;
+use Modules\Bot\Handlers\VideoHandler;
 use Modules\Bot\Handlers\StartHandler;
 use Modules\Bot\Handlers\BaseHandler;
 use Modules\Bot\Handlers\UnknownUpdateHandler;
@@ -141,6 +142,7 @@ class Router
                 'chat_use_default' => 'ChatHandler',
                 'chat_select_model' => 'ChatHandler',
                 'chat_history' => 'ChatHandler',
+                'generate_video' => 'VideoHandler',
                 'show_memory' => 'MemoryCommandHandler',
                 'clear_memory' => 'MemoryCommandHandler',
                 'toggle_memory' => 'MemoryCommandHandler',
@@ -173,6 +175,9 @@ class Router
             if (str_starts_with($data, 'edit_select_model_')) {
                 return new Img2ImgHandler($this->baleClient);
             }
+            if (str_starts_with($data, 'vid_select_model_') || str_starts_with($data, 'vid_res_') || str_starts_with($data, 'vid_ar_') || str_starts_with($data, 'vid_dur_') || str_starts_with($data, 'vid_confirm_') || $data === 'vid_back_model') {
+                return new VideoHandler($this->baleClient);
+            }
             if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {
                 return new ChatHandler($this->baleClient);
             }
@@ -185,10 +190,18 @@ class Router
 
         // 7. Regular message — route by text content
         if ($update->isMessage() && $text !== '') {
+            // Ensure $userId is defined for memory checks
+            $baleUserIdForMemory = $update->getUserId();
+            
             // Memory commands (if module enabled) — only Persian button texts, no slash commands
             $memoryManager = new MemoryManager();
             if ($memoryManager->isEnabled() && in_array($text, ['🧠 حافظه من', '🗑 پاک کردن حافظه'], true)) {
                 error_log("DEBUG ROUTER: memory command -> MemoryCommandHandler");
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            // If user is in add_memory flow (text state), route to MemoryCommandHandler
+            if ($memoryManager->isEnabled() && $baleUserIdForMemory && isset(\Modules\Memory\Handlers\MemoryCommandHandler::$addingMemory[$baleUserIdForMemory]) && \Modules\Memory\Handlers\MemoryCommandHandler::$addingMemory[$baleUserIdForMemory] === true) {
+                error_log("DEBUG ROUTER: memory add text -> MemoryCommandHandler");
                 return new MemoryCommandHandler($this->baleClient, $memoryManager);
             }
             
@@ -198,6 +211,7 @@ class Router
                 "\xF0\x9F\x96\xBC ویرایش عکس" => 'Img2ImgHandler',
                 "\xF0\x9F\x92\xAC چت با هوش مصنوعی" => 'ChatHandler',
                 "\xF0\x9F\x91\xA4 حساب کاربری" => 'AccountHandler',
+                "\xF0\x9F\x8E\xAC ساخت ویدئو با هوش مصنوعی" => 'VideoHandler',
                 "\xF0\x9F\x92\xB3 خرید اعتبار" => 'BuyCreditHandler',
                 "\xE2\x9D\x93 راهنما" => 'MessageHandler',
             ];

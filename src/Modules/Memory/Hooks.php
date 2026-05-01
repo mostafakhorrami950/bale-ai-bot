@@ -26,6 +26,12 @@ class Hooks
     {
         if (!$this->memoryManager->isEnabled()) return;
 
+        // Check if the user has personally disabled memory
+        if ($this->memoryManager->isDisabledForUser($userId)) {
+            Logger::info('Memory::onBeforeChatRequest skipped (user disabled)', ['user_id' => $userId]);
+            return;
+        }
+
         // Only inject once per conversation
         if (!empty($convKey) && in_array($convKey, $this->injectedConversations, true)) {
             Logger::info('Memory::onBeforeChatRequest skipped (already injected)', [
@@ -73,6 +79,12 @@ class Hooks
     public function onAfterChatResponse(int $userId, string $userMessage): void
     {
         if (!$this->memoryManager->isEnabled()) return;
+
+        // If user has disabled memory, do NOT save anything
+        if ($this->memoryManager->isDisabledForUser($userId)) {
+            Logger::info('Memory::onAfterChatResponse skipped (user disabled)', ['user_id' => $userId]);
+            return;
+        }
 
         try {
             // Check for explicit memory save commands

@@ -432,7 +432,12 @@ class ChatHandler extends BaseHandler
         // Check & deduct input credits
         if (!$freeModel && $inputCost > 0) {
             if (!CreditService::hasEnoughCredit($internalId, $inputCost)) {
-                $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$inputCost} اعتبار). لطفاً حساب خود را شارژ کنید.");
+                $buyCreditKeyboard = [
+                    'inline_keyboard' => [
+                        [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
+                    ]
+                ];
+                $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$inputCost} اعتبار). لطفاً حساب خود را شارژ کنید.", $buyCreditKeyboard);
                 return;
             }
             $refId = 'chat_in_' . $convId . '_' . time();

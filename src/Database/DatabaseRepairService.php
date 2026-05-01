@@ -46,6 +46,7 @@ class DatabaseRepairService
         $this->ensureUserMemorySettingsTable();
         $this->ensurePhase14Columns();
         $this->ensurePhase15Columns();
+        $this->ensurePhase16VideoCapabilities();
 
         return $this->messages;
     }
@@ -798,6 +799,42 @@ class DatabaseRepairService
                 $this->log("✅ ستون {$column} در {$table} به DECIMAL(12,6) تغییر یافت.");
             }
         } catch (\Throwable $e) {}
+    }
+
+    private function ensurePhase16VideoCapabilities(): void
+    {
+        if (!$this->tableExists('ai_video_models')) return;
+
+        $cols = [
+            'display_name' => "VARCHAR(200) DEFAULT NULL AFTER name",
+            'description' => "TEXT DEFAULT NULL AFTER display_name",
+            'supported_resolutions' => "TEXT DEFAULT NULL AFTER description",
+            'supported_sizes' => "TEXT DEFAULT NULL AFTER supported_resolutions",
+            'supported_aspect_ratios' => "TEXT DEFAULT NULL AFTER supported_sizes",
+            'supported_durations' => "TEXT DEFAULT NULL AFTER supported_aspect_ratios",
+            'allow_first_frame' => "TINYINT(1) DEFAULT 0 AFTER supported_durations",
+            'allow_last_frame' => "TINYINT(1) DEFAULT 0 AFTER allow_first_frame",
+            'allow_input_references' => "TINYINT(1) DEFAULT 0 AFTER allow_last_frame",
+            'allow_generate_audio' => "TINYINT(1) DEFAULT 1 AFTER allow_input_references",
+            'allow_img2video' => "TINYINT(1) DEFAULT 0 AFTER allow_generate_audio",
+            'pricing_json' => "JSON DEFAULT NULL AFTER cost_per_video",
+        ];
+
+        foreach ($cols as $col => $def) {
+            if ($this->columnExists('ai_video_models', $col)) continue;
+            $this->exec("ALTER TABLE ai_video_models ADD COLUMN `{$col}` {$def}");
+            $this->log("✅ ستون {$col} به جدول ai_video_models اضافه شد.");
+        }
+
+        // Default values for existing rows
+        $this->exec("UPDATE ai_video_models SET display_name = name WHERE display_name IS NULL");
+        $this->exec("UPDATE ai_video_models SET supported_resolutions = '480p,720p,1080p' WHERE supported_resolutions IS NULL OR supported_resolutions = ''");
+        $this->exec("UPDATE ai_video_models SET supported_sizes = '854x480,1280x720,1920x1080' WHERE supported_sizes IS NULL OR supported_sizes = ''");
+        $this->exec("UPDATE ai_video_models SET supported_aspect_ratios = '16:9,9:16,1:1' WHERE supported_aspect_ratios IS NULL OR supported_aspect_ratios = ''");
+        $this->exec("UPDATE ai_video_models SET supported_durations = '5,10,15' WHERE supported_durations IS NULL OR supported_durations = ''");
+        $this->exec("UPDATE ai_video_models SET pricing_json = '{}' WHERE pricing_json IS NULL");
+
+        $this->log('✅ قابلیت‌های مدل ویدئو (فاز ۱۶) بروزرسانی شد.');
     }
 
     private function log(string $msg): void

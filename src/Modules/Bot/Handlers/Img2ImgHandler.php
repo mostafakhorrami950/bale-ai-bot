@@ -297,7 +297,12 @@ class Img2ImgHandler extends BaseHandler
         // Credit check — single charge for one AI generation with all photos
         if (!CreditService::hasEnoughCredit($internalId, $cost)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$cost} اعتبار).");
+            $buyCreditKeyboard = [
+                'inline_keyboard' => [
+                    [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
+                ]
+            ];
+            $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$cost} اعتبار).", $buyCreditKeyboard);
             return;
         }
 
