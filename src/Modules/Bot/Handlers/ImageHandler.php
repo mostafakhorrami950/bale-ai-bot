@@ -159,6 +159,14 @@ class ImageHandler extends BaseHandler
 
         $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
 
+        \Core\AILogger::log('IMAGE_GENERATE_START', [
+            'user_id' => $internalId,
+            'model' => $model['name'],
+            'provider' => $model['provider'] ?? '',
+            'cost' => $cost,
+            'prompt_len' => mb_strlen($prompt),
+        ]);
+
         // Pass full model_data for MetisAI config support
         $result = $aiService->generate([
             'model'      => $model['name'],
@@ -168,6 +176,7 @@ class ImageHandler extends BaseHandler
         ]);
 
         if (isset($result['error'])) {
+            \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, false, $result['error']);
             $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $prompt, $referenceId]);
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
@@ -177,34 +186,36 @@ class ImageHandler extends BaseHandler
         $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)", [$internalId, $modelId, $prompt, $referenceId]);
 
         $images = $result['images'] ?? [];
+        \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);
+        \Core\AILogger::log('IMAGE_SEND', ['count' => count($images), 'types' => array_map(function($u) { return substr($u, 0, 30); }, $images)]);
         foreach ($images as $urlOrData) {
-            // Download remote images (OpenRouter URLs) or use data URIs directly
             $photoToSend = $urlOrData;
-            if (str_starts_with($urlOrData, 'http')) {
-                // Download remote URL and send as file data
-                $ch = curl_init($urlOrData);
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_TIMEOUT => 30,
-                    CURLOPT_FOLLOWLOCATION => true,
-                    CURLOPT_SSL_VERIFYPEER => true,
-                ]);
-                $imageData = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                if ($httpCode === 200 && strlen($imageData ?? '') > 500) {
-                    // Check if it's SVG or non-standard image
-                    $finfo = finfo_open(FINFO_MIME_TYPE);
-                    $mime = $finfo ? finfo_buffer($finfo, $imageData) : 'image/png';
-                    finfo_close($finfo);
-                    $b64 = base64_encode($imageData);
-                    $photoToSend = 'data:' . $mime . ';base64,' . $b64;
-                } else {
-                    // Fallback: try sending the URL directly
-                    error_log("ImageHandler: download failed for URL, http=$httpCode");
+            
+            // If it's a data URI, we need to download and re-upload as multipart
+            if (str_starts_with($urlOrData, 'data:')) {
+                // Extract base64 data
+                $parts = explode('base64,', $urlOrData, 2);
+                $b64Data = $parts[1] ?? $parts[0] ?? '';
+                $imageData = base64_decode($b64Data, true);
+                if ($imageData && strlen($imageData) > 500) {
+                    // Save to temp file and send as multipart upload
+                    $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.jpg';
+                    file_put_contents($tmpFile, $imageData);
+                    $photoToSend = $tmpFile; // Will be handled as file path
                 }
             }
-            $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            
+            // For HTTP URLs, send directly to Bale (Bale downloads them)
+            if (str_starts_with($photoToSend, 'http')) {
+                $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            } elseif (file_exists($photoToSend)) {
+                // Send as multipart upload
+                $this->baleClient->sendPhotoFile($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                @unlink($photoToSend);
+            } else {
+                // Fallback: try sending as URL anyway
+                $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            }
         }
 
         $this->clearUserState($internalId);

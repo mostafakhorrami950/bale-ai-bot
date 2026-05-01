@@ -313,7 +313,11 @@ class ChatHandler extends BaseHandler
     private function processChatMessage(int $chatId, int $userId, string $text, ?string $fileContent, ?string $fileType): void
     {
         $internalId = $this->resolveUserId($userId);
-        if (!$internalId) return;
+        if (!$internalId) {
+            \Core\AILogger::error('chat', 'resolveUserId failed', ['bale_user_id' => $userId]);
+            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            return;
+        }
 
         $db = Database::getInstance();
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
@@ -323,7 +327,17 @@ class ChatHandler extends BaseHandler
         $modelName = $extra['model_name'] ?? '';
         $provider = $extra['provider'] ?? 'openrouter';
 
+        \Core\AILogger::log('CHAT_PROCESS', [
+            'internal_id' => $internalId,
+            'conv_id' => $convId,
+            'model_id' => $modelId,
+            'model_name' => $modelName,
+            'provider' => $provider,
+            'text_len' => mb_strlen($text),
+        ]);
+
         if (!$convId || !$modelId) {
+            \Core\AILogger::error('chat', 'Missing conv_id or model_id', $extra);
             $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی مکالمه. دوباره شروع کنید.");
             return;
         }
@@ -331,8 +345,16 @@ class ChatHandler extends BaseHandler
         // Get model cost settings from text models table
         $model = $db->query("SELECT * FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
-            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
-            return;
+            \Core\AILogger::error('chat', 'Model not found in ai_text_models', ['model_id' => $modelId, 'model_name' => $modelName]);
+            // Fallback: use state data
+            $model = [
+                'id' => $modelId,
+                'name' => $modelName,
+                'provider' => $provider,
+                'cost_per_input_char' => 0.000001,
+                'cost_per_output_char' => 0.000002,
+                'free_model' => 0,
+            ];
         }
 
         $costPerInput = (float)($model['cost_per_input_char'] ?? 0);

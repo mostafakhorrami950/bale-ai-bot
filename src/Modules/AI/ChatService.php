@@ -98,9 +98,17 @@ class ChatService
         $provider = strtolower($modelData['provider'] ?? 'openrouter');
         $apiKey = $this->getApiKey($provider);
 
+        \Core\AILogger::log('CHATSERVICE_START', [
+            'provider' => $provider,
+            'model' => $model,
+            'msg_count' => count($messages),
+            'has_api_key' => !empty($apiKey),
+        ]);
+
         if (empty($apiKey)) {
             $msg = "API Key برای ارائه‌دهنده «{$provider}» تنظیم نشده است.";
             $this->aiLog('ERROR', $msg, ['provider' => $provider]);
+            \Core\AILogger::error('chat', $msg, ['provider' => $provider]);
             return ['error' => $msg];
         }
 
@@ -144,14 +152,29 @@ class ChatService
             'input_chars' => $inputChars,
         ]);
 
+        \Core\AILogger::request($provider, $endpoint, $payload);
+
+        $startTime = microtime(true);
         $result = $this->providerCall($endpoint, $payload, $apiKey, $extraHeaders);
+        $duration = microtime(true) - $startTime;
+
+        \Core\AILogger::response($provider, $result['http_code'] ?? 0, $result['raw_body'] ?? null, $duration);
 
         if (isset($result['error'])) {
+            \Core\AILogger::error($provider, $result['error'], ['model' => $model]);
             return $result;
         }
 
         $responseText = $result['response'] ?? '';
         $outputChars = mb_strlen($responseText);
+
+        \Core\AILogger::log('CHATSERVICE_DONE', [
+            'provider' => $provider,
+            'model' => $model,
+            'input_chars' => $inputChars,
+            'output_chars' => $outputChars,
+            'duration' => round($duration, 2) . 's',
+        ]);
 
         return [
             'response'     => $responseText,
@@ -289,15 +312,15 @@ class ChatService
             'body'     => mb_substr($body ?? '', 0, 2000),
         ]);
 
-        if ($errno) return ['error' => 'خطای اتصال: ' . $error];
-        if ($httpCode >= 400) return ['error' => "HTTP {$httpCode}: " . mb_substr($body, 0, 500)];
+        if ($errno) return ['error' => 'خطای اتصال: ' . $error, 'http_code' => $httpCode, 'raw_body' => $body];
+        if ($httpCode >= 400) return ['error' => "HTTP {$httpCode}: " . mb_substr($body, 0, 500), 'http_code' => $httpCode, 'raw_body' => $body];
 
         $r = json_decode($body, true);
-        if (!is_array($r)) return ['error' => 'پاسخ نامعتبر از API'];
+        if (!is_array($r)) return ['error' => 'پاسخ نامعتبر از API', 'http_code' => $httpCode, 'raw_body' => $body];
 
         if (isset($r['error'])) {
             $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
-            return ['error' => $msg];
+            return ['error' => $msg, 'http_code' => $httpCode, 'raw_body' => $body];
         }
 
         $text = '';
@@ -306,8 +329,8 @@ class ChatService
             $text .= $choice['message']['content'] ?? '';
         }
 
-        if (empty(trim($text))) return ['error' => 'پاسخ خالی از API دریافت شد'];
+        if (empty(trim($text))) return ['error' => 'پاسخ خالی از API دریافت شد', 'http_code' => $httpCode, 'raw_body' => $body];
 
-        return ['response' => $text];
+        return ['response' => $text, 'http_code' => $httpCode, 'raw_body' => $body];
     }
 }

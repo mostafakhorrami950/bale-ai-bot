@@ -67,21 +67,37 @@ class AIService
 
         $provider = strtolower(trim($provider));
 
+        \Core\AILogger::log('AISERVICE_GENERATE', [
+            'provider' => $provider,
+            'model' => $modelName,
+            'has_image' => !empty($image),
+            'prompt_len' => mb_strlen($prompt),
+        ]);
+
+        $startTime = microtime(true);
+
         if ($provider === 'metisai') {
             $parts = explode(' ', trim($modelName));
             $cleanModel = $parts[0];
-            return $this->metisaiGenerate($prompt, $cleanModel, $image, $modelData);
+            $result = $this->metisaiGenerate($prompt, $cleanModel, $image, $modelData);
+        } elseif ($provider === 'openrouter') {
+            $result = $this->openrouterGenerate($prompt, $modelName, $image, $modelData);
+        } elseif ($image) {
+            $result = $this->gapgptImageEdit($prompt, $image, $modelName);
+        } else {
+            $result = $this->gapgptImageGeneration($prompt, $modelName);
         }
 
-        if ($provider === 'openrouter') {
-            return $this->openrouterGenerate($prompt, $modelName, $image, $modelData);
-        }
+        $duration = microtime(true) - $startTime;
+        \Core\AILogger::log('AISERVICE_RESULT', [
+            'provider' => $provider,
+            'model' => $modelName,
+            'duration' => round($duration, 2) . 's',
+            'has_images' => isset($result['images']) ? count($result['images']) : 0,
+            'error' => $result['error'] ?? null,
+        ]);
 
-        // GapGPT (default)
-        if ($image) {
-            return $this->gapgptImageEdit($prompt, $image, $modelName);
-        }
-        return $this->gapgptImageGeneration($prompt, $modelName);
+        return $result;
     }
 
     // ═══════════════════════════════════════════════

@@ -3,6 +3,7 @@
 namespace Modules\Admin;
 
 use Database\Database;
+use Core\AILogger;
 
 class ModelManager
 {
@@ -75,7 +76,6 @@ class ModelManager
 
     private function normalizeRow(array $row, string $type): array
     {
-        // Map type-specific cost to cost_per_image for backward compat
         if (isset($row['cost_per_image'])) {
             // already set
         } elseif (isset($row['cost_per_edit'])) {
@@ -90,16 +90,31 @@ class ModelManager
     }
 
     /**
+     * Determine which table a model belongs to by its ID.
+     */
+    private function findModelTable(int $id): ?string
+    {
+        $tables = ['ai_image_models', 'ai_edit_models', 'ai_text_models', 'ai_video_models'];
+        foreach ($tables as $table) {
+            $stmt = $this->db->query("SELECT id FROM {$table} WHERE id = ?", [$id]);
+            if ($stmt->fetch()) return $table;
+        }
+        return null;
+    }
+
+    /**
      * Create a model in the appropriate table based on model_type.
      */
     public function createModel(array $data): void
     {
         $modelType = $data['model_type'] ?? 'image_generation';
+        $name = trim($data['name'] ?? '');
+        if (empty($name)) throw new \Exception("نام مدل الزامی است");
+
+        AILogger::log('MODEL_CREATE', ['name' => $name, 'type' => $modelType, 'data' => $data]);
 
         switch ($modelType) {
             case 'text':
-                $name = trim($data['name']);
-                if (empty($name)) throw new \Exception("نام مدل الزامی است");
                 $this->db->query(
                     "INSERT INTO ai_text_models (name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [
@@ -115,8 +130,6 @@ class ModelManager
                 break;
 
             case 'image_editing':
-                $name = trim($data['name']);
-                if (empty($name)) throw new \Exception("نام مدل الزامی است");
                 $cost = (int)($data['cost_per_image'] ?? 2);
                 if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
                 $this->db->query(
@@ -132,8 +145,6 @@ class ModelManager
                 break;
 
             case 'video':
-                $name = trim($data['name']);
-                if (empty($name)) throw new \Exception("نام مدل الزامی است");
                 $cost = (int)($data['cost_per_image'] ?? 5);
                 if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
                 $this->db->query(
@@ -150,8 +161,6 @@ class ModelManager
 
             case 'image_generation':
             default:
-                $name = trim($data['name']);
-                if (empty($name)) throw new \Exception("نام مدل الزامی است");
                 $cost = (int)($data['cost_per_image'] ?? 2);
                 if ($cost < 1) throw new \Exception("هزینه باید حداقل ۱ باشد");
                 $this->db->query(
@@ -166,21 +175,43 @@ class ModelManager
                 );
                 break;
         }
+
+        AILogger::log('MODEL_CREATED', ['name' => $name, 'type' => $modelType, 'id' => $this->db->lastInsertId()]);
     }
 
     /**
-     * Update a model by table + id.
+     * Update a model. If model_type changed, migrate to new table.
      */
     public function updateModel(int $id, array $data): void
     {
-        $modelType = $data['model_type'] ?? 'image_generation';
+        $newType = $data['model_type'] ?? 'image_generation';
+        $oldTable = $this->findModelTable($id);
+        $oldType = $this->tableToType($oldTable);
 
-        switch ($modelType) {
+        AILogger::log('MODEL_UPDATE', ['id' => $id, 'old_type' => $oldType, 'new_type' => $newType, 'old_table' => $oldTable, 'data' => $data]);
+
+        // If type changed, delete from old table and create in new table
+        if ($oldType !== $newType) {
+            // Delete from old table
+            if ($oldTable) {
+                $this->db->query("DELETE FROM {$oldTable} WHERE id = ?", [$id]);
+            }
+            // Create in new table (without ID, let auto-increment handle it)
+            $this->createModel($data);
+            AILogger::log('MODEL_MIGRATED', ['id' => $id, 'from' => $oldType, 'to' => $newType]);
+            return;
+        }
+
+        // Same type — update in place
+        $name = trim($data['name'] ?? '');
+        if (empty($name)) throw new \Exception("نام مدل الزامی است");
+
+        switch ($newType) {
             case 'text':
                 $this->db->query(
                     "UPDATE ai_text_models SET name = ?, provider = ?, cost_per_input_char = ?, cost_per_output_char = ?, free_model = ?, model_config = ?, is_active = ? WHERE id = ?",
                     [
-                        trim($data['name']),
+                        $name,
                         $data['provider'] ?? 'openrouter',
                         (float)($data['cost_per_input_char'] ?? 0.000001),
                         (float)($data['cost_per_output_char'] ?? 0.000002),
@@ -196,7 +227,7 @@ class ModelManager
                 $this->db->query(
                     "UPDATE ai_edit_models SET name = ?, provider = ?, cost_per_edit = ?, model_config = ?, is_active = ? WHERE id = ?",
                     [
-                        trim($data['name']),
+                        $name,
                         $data['provider'] ?? 'gapgpt',
                         (int)($data['cost_per_image'] ?? 2),
                         ($data['model_config'] ?? '{}'),
@@ -210,7 +241,7 @@ class ModelManager
                 $this->db->query(
                     "UPDATE ai_video_models SET name = ?, provider = ?, cost_per_video = ?, model_config = ?, is_active = ? WHERE id = ?",
                     [
-                        trim($data['name']),
+                        $name,
                         $data['provider'] ?? 'gapgpt',
                         (int)($data['cost_per_image'] ?? 5),
                         ($data['model_config'] ?? '{}'),
@@ -225,7 +256,7 @@ class ModelManager
                 $this->db->query(
                     "UPDATE ai_image_models SET name = ?, provider = ?, cost_per_image = ?, model_config = ?, is_active = ? WHERE id = ?",
                     [
-                        trim($data['name']),
+                        $name,
                         $data['provider'] ?? 'gapgpt',
                         (int)($data['cost_per_image'] ?? 2),
                         ($data['model_config'] ?? '{}'),
@@ -235,11 +266,23 @@ class ModelManager
                 );
                 break;
         }
+
+        AILogger::log('MODEL_UPDATED', ['id' => $id, 'type' => $newType]);
+    }
+
+    private function tableToType(?string $table): string
+    {
+        $map = [
+            'ai_image_models' => 'image_generation',
+            'ai_edit_models'  => 'image_editing',
+            'ai_text_models'  => 'text',
+            'ai_video_models' => 'video',
+        ];
+        return $map[$table] ?? 'image_generation';
     }
 
     public function toggleModel(int $id): void
     {
-        // Try each table
         $affected = $this->db->query("UPDATE ai_image_models SET is_active = 1 - is_active WHERE id = ?", [$id])->rowCount();
         if ($affected > 0) return;
         $affected = $this->db->query("UPDATE ai_edit_models SET is_active = 1 - is_active WHERE id = ?", [$id])->rowCount();

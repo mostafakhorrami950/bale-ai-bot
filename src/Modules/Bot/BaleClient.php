@@ -129,6 +129,63 @@ class BaleClient
     }
 
     /**
+     * Send a photo as multipart upload (for local files).
+     * Uses CURLFile for proper file upload.
+     */
+    public function sendPhotoFile(int $chatId, string $filePath, ?string $caption = null): bool
+    {
+        if (!file_exists($filePath)) {
+            $this->lastError = "File not found: $filePath";
+            Logger::error('BaleClient::sendPhotoFile failed', ['error' => $this->lastError]);
+            return false;
+        }
+
+        $url = $this->apiUrl . 'sendPhoto';
+        $ch = curl_init();
+        
+        $postFields = [
+            'chat_id' => $chatId,
+            'photo'   => new \CURLFile($filePath),
+        ];
+        if ($caption) {
+            $postFields['caption'] = $caption;
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $postFields,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_TIMEOUT        => 60,
+        ]);
+
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($error) {
+            $this->lastError = "cURL Error: " . $error;
+            Logger::error('BaleClient::sendPhotoFile cURL Error', ['error' => $error]);
+            return false;
+        }
+
+        $result = json_decode($response, true);
+        if (!isset($result['ok']) || $result['ok'] !== true) {
+            $this->lastError = $result['description'] ?? 'Unknown sendPhotoFile error';
+            Logger::error('BaleClient::sendPhotoFile failed', [
+                'chat_id' => $chatId,
+                'error'   => $this->lastError,
+                'http'    => $httpCode,
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Set Webhook URL.
      */
     public function setWebhook(string $url)
