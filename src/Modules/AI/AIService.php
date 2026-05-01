@@ -29,7 +29,8 @@ class AIService
         $this->openrouterBaseUrl = 'https://openrouter.ai/api/v1';
 
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
-        $this->logFile = Config::get('AI_LOG_FILE', BASE_PATH . '/logs_ai.txt');
+        // Use __DIR__ relative path to avoid BASE_PATH issues
+        $this->logFile = Config::get('AI_LOG_FILE', __DIR__ . '/../../logs_ai.txt');
         $logDir = dirname($this->logFile);
         if (!is_dir($logDir)) {
             @mkdir($logDir, 0755, true);
@@ -254,28 +255,65 @@ class AIService
         }
 
         // Extract images from response
-        $images = [];
+        $imageUrls = [];
         $choices = $r['choices'] ?? [];
         foreach ($choices as $choice) {
             $message = $choice['message'] ?? [];
             // OpenRouter returns images in an "images" field
             foreach (($message['images'] ?? []) as $img) {
                 $url = $img['image_url']['url'] ?? '';
-                if (!empty($url)) $images[] = $url;
+                if (!empty($url)) $imageUrls[] = $url;
             }
             // Also check content for data URIs (fallback)
             $content = $message['content'] ?? '';
-            if (empty($images) && str_starts_with($content, 'data:image')) {
-                $images[] = $content;
+            if (empty($imageUrls) && str_starts_with($content, 'data:image')) {
+                $imageUrls[] = $content;
             }
         }
 
-        if (empty($images)) {
+        if (empty($imageUrls)) {
             $this->aiLog('WARN', 'OpenRouter: no images in response', ['full' => mb_substr(json_encode($r, JSON_UNESCAPED_UNICODE), 0, 2000)]);
             return ['error' => 'OpenRouter: تصویری در پاسخ یافت نشد'];
         }
 
-        return ['images' => $images];
+        // Download all images and convert to base64 data URIs
+        // Bale Bot API cannot download from OpenRouter URLs directly
+        $downloadedImages = [];
+        foreach ($imageUrls as $url) {
+            if (str_starts_with($url, 'data:')) {
+                $downloadedImages[] = $url;
+                continue;
+            }
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 30,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+            $imgData = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
+                // Detect mime type
+                $mime = 'image/png';
+                $first = substr($imgData, 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+                elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+                elseif (str_starts_with($first, "GIF8")) $mime = 'image/gif';
+                elseif (str_starts_with($first, "\x00\x00\x00\x0c")) $mime = 'image/webp';
+                $b64 = base64_encode($imgData);
+                $downloadedImages[] = 'data:' . $mime . ';base64,' . $b64;
+                $this->aiLog('INFO', 'OpenRouter image downloaded', ['url_len' => strlen($url), 'size' => strlen($imgData), 'mime' => $mime]);
+            } else {
+                $this->aiLog('WARN', 'OpenRouter image download failed', ['http' => $httpCode, 'url' => substr($url, 0, 100)]);
+                // Fallback: return URL anyway
+                $downloadedImages[] = $url;
+            }
+        }
+
+        return ['images' => $downloadedImages];
     }
 
     // ═══════════════════════════════════════════════

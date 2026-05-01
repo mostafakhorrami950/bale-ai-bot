@@ -68,6 +68,14 @@ class Database
         return $this->connection->prepare($sql);
     }
 
+    /**
+     * Get the last inserted row ID.
+     */
+    public function lastInsertId(): string
+    {
+        return $this->connection->lastInsertId();
+    }
+
     // Method to get the raw PDO object if needed for advanced operations
     public function pdo()
     {

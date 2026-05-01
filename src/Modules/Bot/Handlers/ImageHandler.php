@@ -187,34 +187,61 @@ class ImageHandler extends BaseHandler
 
         $images = $result['images'] ?? [];
         \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);
-        \Core\AILogger::log('IMAGE_SEND', ['count' => count($images), 'types' => array_map(function($u) { return substr($u, 0, 30); }, $images)]);
+        \Core\AILogger::log('IMAGE_SEND', ['count' => count($images)]);
         foreach ($images as $urlOrData) {
-            $photoToSend = $urlOrData;
+            $sent = false;
             
-            // If it's a data URI, we need to download and re-upload as multipart
+            // If it's a data URI, convert to temp file and send as multipart
             if (str_starts_with($urlOrData, 'data:')) {
-                // Extract base64 data
                 $parts = explode('base64,', $urlOrData, 2);
                 $b64Data = $parts[1] ?? $parts[0] ?? '';
                 $imageData = base64_decode($b64Data, true);
                 if ($imageData && strlen($imageData) > 500) {
-                    // Save to temp file and send as multipart upload
-                    $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.jpg';
+                    // Detect mime from data URI
+                    $mime = 'image/png';
+                    if (str_contains($urlOrData, 'image/jpeg')) $mime = 'image/jpeg';
+                    elseif (str_contains($urlOrData, 'image/gif')) $mime = 'image/gif';
+                    elseif (str_contains($urlOrData, 'image/webp')) $mime = 'image/webp';
+                    $ext = str_replace('image/', '', $mime);
+                    $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
                     file_put_contents($tmpFile, $imageData);
-                    $photoToSend = $tmpFile; // Will be handled as file path
+                    $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                    @unlink($tmpFile);
+                }
+            } elseif (str_starts_with($urlOrData, 'http')) {
+                // For HTTP URLs, try sending directly first
+                $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                if (isset($resp['ok']) && $resp['ok'] === true) {
+                    $sent = true;
+                } else {
+                    // Bale can't download it — download ourselves and send as multipart
+                    \Core\AILogger::log('IMAGE_DOWNLOAD_RETRY', ['url' => substr($urlOrData, 0, 100)]);
+                    $ch = curl_init($urlOrData);
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_TIMEOUT => 30,
+                        CURLOPT_FOLLOWLOCATION => true,
+                        CURLOPT_SSL_VERIFYPEER => true,
+                    ]);
+                    $imgData = curl_exec($ch);
+                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    curl_close($ch);
+                    if ($httpCode === 200 && strlen($imgData ?? '') > 500) {
+                        $mime = 'image/png';
+                        $first = substr($imgData, 0, 4);
+                        if (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+                        elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
+                        $ext = str_replace('image/', '', $mime);
+                        $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
+                        file_put_contents($tmpFile, $imgData);
+                        $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                        @unlink($tmpFile);
+                    }
                 }
             }
             
-            // For HTTP URLs, send directly to Bale (Bale downloads them)
-            if (str_starts_with($photoToSend, 'http')) {
-                $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
-            } elseif (file_exists($photoToSend)) {
-                // Send as multipart upload
-                $this->baleClient->sendPhotoFile($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
-                @unlink($photoToSend);
-            } else {
-                // Fallback: try sending as URL anyway
-                $this->baleClient->sendPhoto($chatId, $photoToSend, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            if (!$sent) {
+                \Core\AILogger::error('image_send', 'Failed to send image to user', ['chat_id' => $chatId]);
             }
         }
 
