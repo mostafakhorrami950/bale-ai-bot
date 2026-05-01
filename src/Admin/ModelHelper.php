@@ -82,30 +82,41 @@ class ModelHelper
             throw new \InvalidArgumentException('ارائه‌دهنده نامعتبر است');
         }
 
-        // Cost validation: must be positive integer
-        $rawCost = $post['cost_per_image'] ?? '';
-        if ($rawCost === '' || !ctype_digit(ltrim((string)$rawCost, '-')) || (int)$rawCost < 1) {
-            throw new \InvalidArgumentException('هزینه باید یک عدد صحیح مثبت باشد');
-        }
-        $costPerImage = (int)$rawCost;
-
         // Active
         $isActive = isset($post['is_active']) ? 1 : 0;
 
-        // Text-specific
-        $costPerInputChar = (float)($post['cost_per_input_char'] ?? 0.000001);
-        $costPerOutputChar = (float)($post['cost_per_output_char'] ?? 0.000002);
-        $freeModel = isset($post['free_model']) ? 1 : 0;
+        // Text-specific: per-character costs, no cost_per_image
+        $costPerInputChar = 0.000001;
+        $costPerOutputChar = 0.000002;
+        $freeModel = 0;
+        $costPerImage = 0;
 
-        // Image-specific (text2img and img2img)
-        $size = trim($post['size'] ?? 'auto');
-        if (!in_array($size, self::allowedSizes(), true)) {
-            throw new \InvalidArgumentException('سایز تصویر نامعتبر است');
-        }
+        if ($modelType === 'text') {
+            $costPerInputChar = (float)($post['cost_per_input_char'] ?? 0.000001);
+            $costPerOutputChar = (float)($post['cost_per_output_char'] ?? 0.000002);
+            $freeModel = isset($post['free_model']) ? 1 : 0;
+        } else {
+            // Image & video: cost_per_image is required, must be positive integer
+            $rawCost = $post['cost_per_image'] ?? '';
+            if ($rawCost === '' || !ctype_digit(ltrim((string)$rawCost, '-')) || (int)$rawCost < 1) {
+                throw new \InvalidArgumentException('هزینه باید یک عدد صحیح مثبت باشد');
+            }
+            $costPerImage = (int)$rawCost;
 
-        $aspectRatio = trim($post['aspect_ratio'] ?? 'auto');
-        if (!in_array($aspectRatio, self::allowedAspectRatios(), true)) {
-            throw new \InvalidArgumentException('نسبت تصویر نامعتبر است');
+            // Image-specific size / aspect_ratio (text2img & img2img)
+            if (in_array($modelType, ['image_generation', 'image_editing'], true)) {
+                $postSize = trim($post['size'] ?? 'auto');
+                if (!in_array($postSize, self::allowedSizes(), true)) {
+                    throw new \InvalidArgumentException('سایز تصویر نامعتبر است');
+                }
+                $post['size'] = $postSize;
+
+                $postAr = trim($post['aspect_ratio'] ?? 'auto');
+                if (!in_array($postAr, self::allowedAspectRatios(), true)) {
+                    throw new \InvalidArgumentException('نسبت تصویر نامعتبر است');
+                }
+                $post['aspect_ratio'] = $postAr;
+            }
         }
 
         $result = [
@@ -119,8 +130,8 @@ class ModelHelper
             'cost_per_input_char'  => $costPerInputChar,
             'cost_per_output_char' => $costPerOutputChar,
             'free_model'           => $freeModel,
-            'size'                 => $size,
-            'aspect_ratio'         => $aspectRatio,
+            'size'                 => $post['size'] ?? 'auto',
+            'aspect_ratio'         => $post['aspect_ratio'] ?? 'auto',
             'model_config'         => '{}',
         ];
 

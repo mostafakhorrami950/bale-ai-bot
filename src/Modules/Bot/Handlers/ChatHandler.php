@@ -154,7 +154,7 @@ class ChatHandler extends BaseHandler
         $internalId = $this->resolveUserId($userId);
         try {
             $db = Database::getInstance();
-            $models = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY free_model DESC, id ASC")->fetchAll();
+            $models = $db->query("SELECT id, name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY free_model DESC, id ASC")->fetchAll();
 
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ هیچ مدل فعالی یافت نشد.");
@@ -165,12 +165,22 @@ class ChatHandler extends BaseHandler
             $keyboard = ['inline_keyboard' => []];
 
             foreach ($models as $m) {
-                $free = $m['free_model'] ? ' (🆓 رایگان)' : '';
+                $displayName = $m['display_name'] ?? $m['name'];
+                $desc = $m['description'] ?? '';
+                $free = $m['free_model'] ? '🆓 رایگان' : '';
                 $inCost = $m['cost_per_input_char'] ?? 0;
                 $outCost = $m['cost_per_output_char'] ?? 0;
-                $costStr = $free ? '' : " (ورودی: {$inCost}/char | خروجی: {$outCost}/char)";
+                
+                // Show description + cost in message body
+                $msg .= "• {$displayName}";
+                if ($free) $msg .= " ({$free})";
+                $msg .= "\n  💰 ورودی: {$inCost}/char | خروجی: {$outCost}/char";
+                if ($desc) $msg .= "\n  📌 {$desc}";
+                $msg .= "\n\n";
+                
+                // Button: only display_name
                 $keyboard['inline_keyboard'][] = [[
-                    'text' => "🤖 {$m['name']}{$free}{$costStr}",
+                    'text' => $displayName,
                     'callback_data' => "chat_pick_model_{$m['id']}"
                 ]];
             }
@@ -259,19 +269,38 @@ class ChatHandler extends BaseHandler
         ]);
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'chat_active', ?)", [$internalId, $extra]);
 
-        // Get last few messages as summary
-        $msgs = $db->query(
-            "SELECT role, content, created_at FROM chat_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 3",
+        // Get ALL messages, build a 4096-char summary from the end
+        $allMsgs = $db->query(
+            "SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC",
             [$convId]
         )->fetchAll();
 
-        $summary = "📋 ادامه مکالمه قبلی:\n";
-        foreach (array_reverse($msgs) as $m) {
-            $short = mb_substr($m['content'], 0, 100);
-            $icon = $m['role'] === 'user' ? '👤' : '🤖';
-            $summary .= "{$icon} {$short}\n";
+        $summary = "📋 ادامه مکالمه قبلی:\n━━━━━━━━━━━━━━\n";
+        $maxLen = 4096 - 200; // reserve space for header/footer
+        $lines = [];
+        $totalLen = 0;
+
+        // Process from newest to oldest
+        foreach (array_reverse($allMsgs) as $m) {
+            $label = $m['role'] === 'user' ? '(شما)' : '(AI)';
+            $content = trim($m['content'] ?? '');
+            // Truncate very long individual messages
+            if (mb_strlen($content) > 500) {
+                $content = mb_substr($content, 0, 500) . '...';
+            }
+            $line = "{$label}: {$content}\n";
+            $lineLen = mb_strlen($line);
+
+            if ($totalLen + $lineLen > $maxLen) {
+                break; // stop adding older messages
+            }
+
+            array_unshift($lines, $line); // prepend so oldest-first order
+            $totalLen += $lineLen;
         }
-        $summary .= "\n✏️ پیام خود را بنویسید.";
+
+        $summary .= implode('', $lines);
+        $summary .= "━━━━━━━━━━━━━━\n✏️ پیام خود را بنویسید.";
 
         $this->baleClient->sendMessage($chatId, $summary, $this->getChatActiveKeyboard());
     }
@@ -549,9 +578,11 @@ class ChatHandler extends BaseHandler
             $cost = $c['total_cost_credits'];
             $created = substr($c['created_at'], 0, 16);
 
-            if ($i < 10) { // Only show first 10 as buttons
+            $msg .= "{$icon} **{$title}**\n  مدل: {$model} | {$msgCount} پیام | {$cost} اعتبار\n  {$created}\n\n";
+
+            if ($i < 10) {
                 $keyboard['inline_keyboard'][] = [
-                    ['text' => "{$icon} {$title} ({$model} - {$msgCount} پیام)", 'callback_data' => "chat_resume_{$c['id']}"]
+                    ['text' => "▶️ {$title}", 'callback_data' => "chat_resume_{$c['id']}"]
                 ];
             }
         }
