@@ -5,17 +5,49 @@ $pageTitle = 'مدیریت مدل‌های AI';
 $activeMenu = 'models';
 
 use Modules\Admin\ModelManager;
+use Core\AILogger;
 
 $modelManager = new ModelManager();
 $message = '';
+$messageType = 'success';
 $editMode = false;
 $editModel = null;
 
-// Handle POST actions
+// ────────────────────────────────────────────────────────────
+// Handle POST actions with full validation and atomic logging
+// ────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        $action = trim($_POST['action'] ?? '');
+
+        // Validate common fields
+        $name = trim($_POST['name'] ?? '');
+        if (empty($name)) {
+            throw new \InvalidArgumentException('نام مدل الزامی است');
+        }
+        if (mb_strlen($name) > 200) {
+            throw new \InvalidArgumentException('نام مدل حداکثر ۲۰۰ کاراکتر مجاز است');
+        }
+
         $provider = trim($_POST['provider'] ?? 'gapgpt');
+        $allowedProviders = ['gapgpt', 'openrouter', 'metisai', 'custom'];
+        if (!in_array($provider, $allowedProviders, true)) {
+            throw new \InvalidArgumentException('ارائه‌دهنده نامعتبر است');
+        }
+
         $modelType = trim($_POST['model_type'] ?? 'image_generation');
+        $allowedTypes = ['text', 'image_generation', 'image_editing', 'video'];
+        if (!in_array($modelType, $allowedTypes, true)) {
+            throw new \InvalidArgumentException('نوع مدل نامعتبر است');
+        }
+
+        // Cost validation — atomic: must be positive integer
+        $rawCost = $_POST['cost_per_image'] ?? '';
+        if ($rawCost === '' || !ctype_digit(ltrim((string)$rawCost, '-')) || (int)$rawCost < 1) {
+            throw new \InvalidArgumentException('هزینه باید یک عدد صحیح مثبت باشد');
+        }
+        $costPerImage = (int)$rawCost;
+
         $modelConfig = [];
 
         if ($provider === 'metisai') {
@@ -36,35 +68,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
         }
 
-        $action = $_POST['action'] ?? '';
-
         $baseData = [
-            'name'                => trim($_POST['name']),
-            'provider'            => $provider,
-            'model_type'          => $modelType,
-            'cost_per_image'      => (int) ($_POST['cost_per_image'] ?? 1),
-            'is_active'           => isset($_POST['is_active']) ? 1 : 0,
-            'cost_per_input_char' => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
-            'cost_per_output_char'=> (float) ($_POST['cost_per_output_char'] ?? 0.000002),
-            'free_model'          => isset($_POST['free_model']) ? 1 : 0,
-            'model_config'        => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
+            'name'                 => $name,
+            'provider'             => $provider,
+            'model_type'           => $modelType,
+            'cost_per_image'       => $costPerImage,
+            'is_active'            => isset($_POST['is_active']) ? 1 : 0,
+            'cost_per_input_char'  => (float) ($_POST['cost_per_input_char'] ?? 0.000001),
+            'cost_per_output_char' => (float) ($_POST['cost_per_output_char'] ?? 0.000002),
+            'free_model'           => isset($_POST['free_model']) ? 1 : 0,
+            'model_config'         => json_encode($modelConfig, JSON_UNESCAPED_UNICODE),
         ];
+
+        AILogger::log('MODEL_FORM_SUBMIT', [
+            'action'    => $action,
+            'name'      => $name,
+            'type'      => $modelType,
+            'cost'      => $costPerImage,
+            'provider'  => $provider,
+        ]);
 
         if ($action === 'create') {
             $modelManager->createModel($baseData);
-            $message = '✅ مدل جدید با موفقیت اضافه شد.';
+            $message = '✅ مدل جدید با موفقیت اضافه شد (هزینه: ' . number_format($costPerImage) . ' اعتبار).';
+            AILogger::log('MODEL_CREATED_OK', ['name' => $name, 'cost' => $costPerImage]);
         } elseif ($action === 'update' && isset($_POST['id'])) {
-            $modelManager->updateModel((int) $_POST['id'], $baseData);
-            $message = '✅ مدل با موفقیت بروزرسانی شد.';
+            $modelId = (int) $_POST['id'];
+            $modelManager->updateModel($modelId, $baseData);
+            $message = '✅ مدل با موفقیت بروزرسانی شد (هزینه: ' . number_format($costPerImage) . ' اعتبار).';
+            AILogger::log('MODEL_UPDATED_OK', ['id' => $modelId, 'name' => $name, 'cost' => $costPerImage]);
         } elseif ($action === 'toggle' && isset($_POST['id'])) {
             $modelManager->toggleModel((int) $_POST['id']);
             $message = '✅ وضعیت مدل تغییر کرد.';
+            AILogger::log('MODEL_TOGGLED', ['id' => (int)$_POST['id']]);
         } elseif ($action === 'delete' && isset($_POST['id'])) {
             $modelManager->deleteModel((int) $_POST['id']);
             $message = '✅ مدل حذف شد.';
+            AILogger::log('MODEL_DELETED', ['id' => (int)$_POST['id']]);
+        } else {
+            throw new \InvalidArgumentException('عملیات نامعتبر');
         }
+    } catch (\InvalidArgumentException $e) {
+        $message = '❌ ' . $e->getMessage();
+        $messageType = 'danger';
+        AILogger::log('MODEL_VALIDATION_ERROR', ['error' => $e->getMessage(), 'post' => $_POST]);
     } catch (\Throwable $e) {
         $message = '❌ خطا: ' . $e->getMessage();
+        $messageType = 'danger';
+        AILogger::log('MODEL_SYSTEM_ERROR', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
     }
 }
 
@@ -93,7 +144,7 @@ $models = $modelManager->getAllModels();
 ob_start();
 ?>
 <?php if ($message): ?>
-    <div class="alert <?php echo strpos($message, '❌') !== false ? 'alert-danger' : 'alert-success'; ?> alert-dismissible fade show">
+    <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show">
         <?php echo $message; ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
@@ -108,7 +159,7 @@ ob_start();
     <div class="col-md-5">
         <div class="table-container">
             <h5><?php echo $editMode ? '✏️ ویرایش مدل' : '➕ افزودن مدل جدید'; ?></h5>
-            <form method="POST">
+            <form method="POST" id="modelForm">
                 <input type="hidden" name="action" value="<?php echo $editMode ? 'update' : 'create'; ?>">
                 <?php if ($editMode): ?>
                     <input type="hidden" name="id" value="<?php echo $editModel['id']; ?>">
@@ -116,7 +167,7 @@ ob_start();
 
                 <div class="mb-3">
                     <label class="form-label">نام مدل:</label>
-                    <input type="text" name="name" class="form-control" required
+                    <input type="text" name="name" class="form-control" required maxlength="200"
                            value="<?php echo $editMode ? htmlspecialchars($editModel['name']) : ''; ?>"
                            placeholder="مثلاً: google/gemini-2.5-flash-image">
                 </div>
@@ -178,8 +229,11 @@ ob_start();
                     <h6>🎨 تنظیمات ساخت تصویر</h6>
                     <div class="mb-3">
                         <label class="form-label">هزینه هر تصویر (اعتبار):</label>
-                        <input type="number" name="cost_per_image" class="form-control" min="1"
-                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
+                        <input type="number" name="cost_per_image" class="form-control" min="1" required
+                               value="<?php echo $editMode ? ($editModel['cost_per_image'] ?? 2) : '2'; ?>"
+                               oninvalid="this.setCustomValidity('هزینه باید یک عدد صحیح مثبت باشد')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="form-text text-muted">عدد صحیح مثبت وارد کنید (مثلاً: ۱۵)</div>
                     </div>
                 </div>
 
@@ -189,8 +243,11 @@ ob_start();
                     <h6>🖼 تنظیمات ویرایش تصویر</h6>
                     <div class="mb-3">
                         <label class="form-label">هزینه هر ویرایش (اعتبار):</label>
-                        <input type="number" name="cost_per_image" class="form-control" min="1"
-                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '2'; ?>">
+                        <input type="number" name="cost_per_image" class="form-control" min="1" required
+                               value="<?php echo $editMode ? ($editModel['cost_per_image'] ?? 2) : '2'; ?>"
+                               oninvalid="this.setCustomValidity('هزینه باید یک عدد صحیح مثبت باشد')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="form-text text-muted">عدد صحیح مثبت وارد کنید (مثلاً: ۱۵)</div>
                     </div>
                 </div>
 
@@ -200,8 +257,11 @@ ob_start();
                     <h6>🎬 تنظیمات ویدئو</h6>
                     <div class="mb-3">
                         <label class="form-label">هزینه هر ویدئو (اعتبار):</label>
-                        <input type="number" name="cost_per_image" class="form-control" min="1"
-                               value="<?php echo $editMode ? $editModel['cost_per_image'] : '5'; ?>">
+                        <input type="number" name="cost_per_image" class="form-control" min="1" required
+                               value="<?php echo $editMode ? ($editModel['cost_per_image'] ?? 5) : '5'; ?>"
+                               oninvalid="this.setCustomValidity('هزینه باید یک عدد صحیح مثبت باشد')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="form-text text-muted">عدد صحیح مثبت وارد کنید (مثلاً: ۱۵)</div>
                     </div>
                 </div>
 
@@ -301,7 +361,7 @@ ob_start();
                         <th>نام</th>
                         <th>ارائه‌دهنده</th>
                         <th>نوع</th>
-                        <th>هزینه</th>
+                        <th>هزینه (اعتبار)</th>
                         <th>وضعیت</th>
                         <th>عملیات</th>
                     </tr>
@@ -319,13 +379,15 @@ ob_start();
                                 'video' => '🎬 ویدئو',
                             ];
                             $tl = $typeLabels[$m['model_type'] ?? 'image_generation'] ?? '🎨 تصویرساز';
+                            // ModelManager returns 'cost' as alias, normalize to cost_per_image
+                            $displayCost = $m['cost'] ?? $m['cost_per_image'] ?? 0;
                         ?>
                         <tr>
                             <td><?php echo $m['id']; ?></td>
                             <td><?php echo htmlspecialchars($m['name']); ?></td>
                             <td><code><?php echo htmlspecialchars($m['provider'] ?? 'gapgpt'); ?></code></td>
                             <td><span class="badge bg-secondary"><?php echo $tl; ?></span></td>
-                            <td><?php echo number_format($m['cost'] ?? $m['cost_per_image'] ?? 0); ?></td>
+                            <td><?php echo number_format((int)$displayCost); ?></td>
                             <td>
                                 <?php if ($m['is_active']): ?>
                                     <span class="badge-active">✅ فعال</span>
