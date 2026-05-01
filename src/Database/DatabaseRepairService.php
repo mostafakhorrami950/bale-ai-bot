@@ -21,6 +21,7 @@ class DatabaseRepairService
     {
         $this->messages = [];
 
+        $this->ensureRequiredChannelsTable();
         $this->ensurePaymentPlansTable();
         $this->ensurePaymentsTable();
         $this->ensurePaymentLogsTable();
@@ -49,6 +50,37 @@ class DatabaseRepairService
     // ———————————————————————————————————————————————————————
     // Table creation
     // ———————————————————————————————————————————————————————
+
+    private function ensureRequiredChannelsTable(): void
+    {
+        if (!$this->tableExists('required_channels')) {
+            $this->exec("
+                CREATE TABLE required_channels (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    channel_id VARCHAR(100) NOT NULL,
+                    title VARCHAR(255),
+                    invite_link VARCHAR(255),
+                    is_active TINYINT(1) DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول required_channels ایجاد شد.');
+        } else {
+            // Ensure channel_id column exists (use VARCHAR for both @channel and numeric IDs)
+            if (!$this->columnExists('required_channels', 'channel_id')) {
+                $this->exec("ALTER TABLE required_channels ADD COLUMN channel_id VARCHAR(100) NOT NULL AFTER id");
+                $this->log('✅ ستون channel_id به جدول required_channels اضافه شد.');
+            }
+            if (!$this->columnExists('required_channels', 'invite_link')) {
+                $this->exec("ALTER TABLE required_channels ADD COLUMN invite_link VARCHAR(255) NULL AFTER title");
+                $this->log('✅ ستون invite_link به جدول required_channels اضافه شد.');
+            }
+            if (!$this->columnExists('required_channels', 'is_active')) {
+                $this->exec("ALTER TABLE required_channels ADD COLUMN is_active TINYINT(1) DEFAULT 1");
+                $this->log('✅ ستون is_active به جدول required_channels اضافه شد.');
+            }
+        }
+    }
 
     private function ensurePaymentPlansTable(): void
     {
