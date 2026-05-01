@@ -41,6 +41,7 @@ class DatabaseRepairService
         $this->ensureAiModelsCostColumns();
         $this->seedDefaultModel();
         $this->ensurePhase14Columns();
+        $this->ensurePhase15Columns();
 
         return $this->messages;
     }
@@ -609,6 +610,59 @@ class DatabaseRepairService
                     $this->exec("UPDATE {$table} SET display_name = name WHERE display_name IS NULL");
                 }
             }
+        }
+    }
+
+    /**
+     * Phase 15 columns: supported_formats, sort_order + decimal credits + help/default_text_model settings.
+     */
+    private function ensurePhase15Columns(): void
+    {
+        // supported_formats on ai_text_models
+        if ($this->tableExists('ai_text_models') && !$this->columnExists('ai_text_models', 'supported_formats')) {
+            $this->exec("ALTER TABLE ai_text_models ADD COLUMN supported_formats TEXT DEFAULT NULL AFTER free_model");
+            $this->log('✅ ستون supported_formats به جدول ai_text_models اضافه شد.');
+        }
+        // sort_order on ai_text_models
+        if ($this->tableExists('ai_text_models') && !$this->columnExists('ai_text_models', 'sort_order')) {
+            $this->exec("ALTER TABLE ai_text_models ADD COLUMN sort_order INT DEFAULT 0 AFTER supported_formats");
+            $this->log('✅ ستون sort_order به جدول ai_text_models اضافه شد.');
+        }
+        // Decimal credits on users
+        if ($this->tableExists('users') && $this->columnExists('users', 'credits')) {
+            // Check if it's already DECIMAL
+            try {
+                $stmt = $this->conn->query("SHOW COLUMNS FROM users WHERE Field = 'credits'");
+                $col = $stmt->fetch();
+                $typeDef = $col['Type'] ?? '';
+                if (str_starts_with($typeDef, 'int')) {
+                    $this->exec("ALTER TABLE users MODIFY COLUMN credits DECIMAL(12,4) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون credits در users به DECIMAL(12,4) تغییر یافت.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        // Decimal amount on credit_ledger
+        if ($this->tableExists('credit_ledger') && $this->columnExists('credit_ledger', 'amount')) {
+            try {
+                $stmt = $this->conn->query("SHOW COLUMNS FROM credit_ledger WHERE Field = 'amount'");
+                $col = $stmt->fetch();
+                $typeDef = $col['Type'] ?? '';
+                if (str_starts_with($typeDef, 'int')) {
+                    $this->exec("ALTER TABLE credit_ledger MODIFY COLUMN amount DECIMAL(12,4) NOT NULL DEFAULT 0");
+                    $this->log('✅ ستون amount در credit_ledger به DECIMAL(12,4) تغییر یافت.');
+                }
+            } catch (\Throwable $e) {}
+        }
+        // default_text_model, help_text, help_image settings
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('default_text_model', '')");
+        $this->log('✅ تنظیم default_text_model اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('help_text', '')");
+        $this->log('✅ تنظیم help_text اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('help_image', '')");
+        $this->log('✅ تنظیم help_image اضافه شد.');
+        // Set default supported_formats
+        if ($this->tableExists('ai_text_models') && $this->columnExists('ai_text_models', 'supported_formats')) {
+            $this->exec("UPDATE ai_text_models SET supported_formats = 'txt,doc,pdf,jpg,jpeg,png,gif,webp' WHERE supported_formats IS NULL");
         }
     }
 

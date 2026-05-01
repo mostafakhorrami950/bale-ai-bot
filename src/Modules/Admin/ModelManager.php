@@ -124,14 +124,18 @@ class ModelManager
 
         switch ($modelType) {
             case 'text':
+                $supportedFormats = $data['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp';
+                $sortOrder = (int)($data['sort_order'] ?? 0);
                 $this->db->query(
-                    "INSERT INTO ai_text_models (name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO ai_text_models (name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model, supported_formats, sort_order, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         $name, $displayName, $description,
                         $data['provider'] ?? 'openrouter',
                         (float)($data['cost_per_input_char'] ?? 0.000001),
                         (float)($data['cost_per_output_char'] ?? 0.000002),
                         $data['free_model'] ?? 0,
+                        $supportedFormats,
+                        $sortOrder,
                         $config, $active,
                     ]
                 );
@@ -194,14 +198,18 @@ class ModelManager
 
         switch ($newType) {
             case 'text':
+                $supportedFormats = $data['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp';
+                $sortOrder = (int)($data['sort_order'] ?? 0);
                 $this->db->query(
-                    "UPDATE ai_text_models SET name=?, display_name=?, description=?, provider=?, cost_per_input_char=?, cost_per_output_char=?, free_model=?, model_config=?, is_active=? WHERE id=?",
+                    "UPDATE ai_text_models SET name=?, display_name=?, description=?, provider=?, cost_per_input_char=?, cost_per_output_char=?, free_model=?, supported_formats=?, sort_order=?, model_config=?, is_active=? WHERE id=?",
                     [
                         $name, $displayName, $description,
                         $data['provider'] ?? 'openrouter',
                         (float)($data['cost_per_input_char'] ?? 0.000001),
                         (float)($data['cost_per_output_char'] ?? 0.000002),
                         $data['free_model'] ?? 0,
+                        $supportedFormats,
+                        $sortOrder,
                         $config, $active, $id,
                     ]
                 );

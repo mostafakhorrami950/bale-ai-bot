@@ -56,8 +56,6 @@ class ChatService
         $cfg = self::PROVIDERS[$provider] ?? self::PROVIDERS['openrouter'];
 
         if ($provider === 'metisai') {
-            // MetisAI uses wrapper: /wrapper/{provider_name}/chat/completions
-            // provider_name comes from model_config.metisai.model_name or defaults to 'openai'
             $mc = json_decode($modelData['model_config'] ?? '{}', true);
             $wrapperName = $mc['metisai']['model_name'] ?? 'openai';
             return $cfg['base_url'] . '/wrapper/' . trim($wrapperName) . '/chat/completions';
@@ -73,25 +71,15 @@ class ChatService
     {
         $provider = strtolower($provider);
         $envKey = self::PROVIDERS[$provider]['key_env'] ?? 'OPENROUTER_API_KEY';
-
-        // Also check provider-specific env vars like METISAI_API_KEY, GAPGPT_API_KEY
         $key = Config::get($envKey, '');
-
         if (empty($key)) {
-            // Fallback to OPENROUTER_API_KEY for backward compatibility
             $key = Config::get('OPENROUTER_API_KEY', '');
         }
-
         return $key;
     }
 
     /**
      * Send a chat prompt and get the AI response.
-     *
-     * @param array  $messages   Full message history (OpenRouter-compatible format)
-     * @param string $model      Model name (e.g. "google/gemini-2.5-flash-image", "deepseek-chat")
-     * @param array  $modelData  Full model row from ai_models (provider, model_config, etc.)
-     * @return array ['response' => string, 'input_chars' => int, 'output_chars' => int, 'error' => string|null]
      */
     public function chat(array $messages, string $model, array $modelData): array
     {
@@ -112,7 +100,6 @@ class ChatService
             return ['error' => $msg];
         }
 
-        // Count input chars
         $inputChars = $this->countMessageChars($messages);
 
         $payload = [
@@ -121,20 +108,18 @@ class ChatService
             'stream'     => false,
         ];
 
-        // OpenRouter-specific: pass referrer
         $extraHeaders = [];
         if ($provider === 'openrouter') {
             $extraHeaders[] = 'HTTP-Referer: https://mobixai.ir';
             $extraHeaders[] = 'X-OpenRouter-Title: MobixAI Bot';
         }
 
-        // GapGPT / MetisAI: optional size/quality from model_config
         if (in_array($provider, ['gapgpt', 'metisai'])) {
             $mc = json_decode($modelData['model_config'] ?? '{}', true);
             if ($provider === 'metisai') {
                 $mcfg = $mc['metisai'] ?? [];
                 if (!empty($mcfg['model_model'])) {
-                    $payload['model'] = $mcfg['model_model']; // override model name for MetisAI
+                    $payload['model'] = $mcfg['model_model'];
                 }
                 if (!empty($mcfg['size'])) {
                     $payload['size'] = $mcfg['size'];
@@ -186,12 +171,12 @@ class ChatService
 
     /**
      * Calculate credit cost for input/output chars based on model settings.
+     * Returns float for sub-credit precision (per-character billing).
      */
-    public static function calcCreditCost(int $chars, float $costPerChar): int
+    public static function calcCreditCost(int $chars, float $costPerChar): float
     {
-        if ($costPerChar <= 0 || $chars <= 0) return 0;
-        $cost = (int) ceil($chars * $costPerChar);
-        return max(0, $cost);
+        if ($costPerChar <= 0 || $chars <= 0) return 0.0;
+        return round($chars * $costPerChar, 6);
     }
 
     /**
@@ -225,7 +210,6 @@ class ChatService
     {
         $messages = [];
 
-        // System message
         $messages[] = [
             'role' => 'system',
             'content' => 'شما یک دستیار هوش مصنوعی مفید هستید. به زبان فارسی پاسخ دهید.'

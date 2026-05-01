@@ -528,7 +528,16 @@ class AIService
     {
         try {
             $db = \Database\Database::getInstance();
-            $stmt = $db->query("SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config, is_active FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+            // Check if 'default_text_model' setting exists and is valid
+            $settingStmt = $db->query("SELECT value FROM settings WHERE key_name = 'default_text_model'");
+            $settingRow = $settingStmt->fetch();
+            $defaultId = $settingRow ? (int)$settingRow['value'] : 0;
+            if ($defaultId > 0) {
+                $stmt = $db->query("SELECT * FROM ai_text_models WHERE id = ? AND is_active = 1", [$defaultId]);
+                $row = $stmt->fetch();
+                if ($row) return $row;
+            }
+            $stmt = $db->query("SELECT * FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, id ASC LIMIT 1");
             return $stmt->fetch() ?: null;
         } catch (\Throwable $e) { Logger::error('getFirstActiveTextModel', ['error' => $e->getMessage()]); return null; }
     }

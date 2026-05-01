@@ -154,7 +154,7 @@ class ChatHandler extends BaseHandler
         $internalId = $this->resolveUserId($userId);
         try {
             $db = Database::getInstance();
-            $models = $db->query("SELECT id, name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY free_model DESC, id ASC")->fetchAll();
+            $models = $db->query("SELECT id, name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, free_model DESC, id ASC")->fetchAll();
 
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, "❌ هیچ مدل فعالی یافت نشد.");
@@ -237,10 +237,21 @@ class ChatHandler extends BaseHandler
         ]);
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'chat_active', ?)", [$internalId, $extra]);
 
-        $free = $model['free_model'] ? ' (🆓 رایگان)' : '';
-        $msg = "✅ گفتگو با مدل «{$modelName}»{$free} آغاز شد.\n\n"
-             . "📝 پیام خود را بنویسید.\n"
-             . "📸 می‌توانید عکس یا فایل نیز ارسال کنید.\n"
+        $free = $model['free_model'] ? '🆓 رایگان' : '';
+        $inCost = $model['cost_per_input_char'] ?? 0;
+        $outCost = $model['cost_per_output_char'] ?? 0;
+        $formats = $model['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp';
+        $displayName = $model['display_name'] ?? $modelName;
+
+        $msg = "✅ گفتگو با مدل «{$displayName}» آغاز شد.\n\n"
+             . "📊 هزینه:\n"
+             . "  💰 ورودی: {$inCost} اعتبار/کاراکتر\n"
+             . "  💰 خروجی: {$outCost} اعتبار/کاراکتر\n"
+             . ($free ? "  🆓 این مدل رایگان است\n" : "")
+             . "\n📁 فرمت‌های پشتیبانی شده:\n"
+             . "  {$formats}\n"
+             . "\n📝 پیام خود را بنویسید.\n"
+             . "📸 می‌توانید عکس یا فایل با فرمت‌های مجاز ارسال کنید.\n"
              . "🚪 /exit برای خروج از مکالمه.";
 
         $this->baleClient->sendMessage($chatId, $msg, $this->getChatActiveKeyboard());
@@ -494,6 +505,34 @@ class ChatHandler extends BaseHandler
 
     private function handlePhotoInChat(int $chatId, int $userId, $update, ?string $caption): void
     {
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) {
+            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            return;
+        }
+
+        $db = Database::getInstance();
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $modelId = (int)($extra['model_id'] ?? 0);
+
+        // Validate file format against model's supported_formats
+        if ($modelId > 0) {
+            $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
+            if ($model && !empty($model['supported_formats'])) {
+                $formats = explode(',', strtolower($model['supported_formats']));
+                // Check for image formats
+                $supportedImage = array_intersect($formats, ['jpg', 'jpeg', 'png', 'gif', 'webp']);
+                if (empty($supportedImage)) {
+                    $msg = "❌ این مدل از تصاویر پشتیبانی نمی‌کند.\n"
+                         . "📁 فرمت‌های مجاز: {$model['supported_formats']}\n"
+                         . "لطفاً فایل با فرمت مجاز ارسال کنید.";
+                    $this->baleClient->sendMessage($chatId, $msg);
+                    return;
+                }
+            }
+        }
+
         $fileId = $update->getPhotoFileId();
         $caption = trim($caption ?? '');
 
@@ -517,6 +556,56 @@ class ChatHandler extends BaseHandler
         $dataUri = 'data:' . $mime . ';base64,' . base64_encode($fileContent);
 
         $this->processChatMessage($chatId, $userId, $caption, $dataUri, 'image');
+    }
+
+    /**
+     * Handle document/file upload in chat — validates extension against model's supported_formats.
+     */
+    private function handleDocumentInChat(int $chatId, int $userId, $update, ?string $caption): void
+    {
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) {
+            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            return;
+        }
+
+        $db = Database::getInstance();
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $modelId = (int)($extra['model_id'] ?? 0);
+
+        $fileName = $update->getDocumentFileName() ?? '';
+        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+        // Validate file extension against model's supported_formats
+        if ($modelId > 0 && !empty($fileExtension)) {
+            $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
+            if ($model && !empty($model['supported_formats'])) {
+                $formats = explode(',', strtolower($model['supported_formats']));
+                if (!in_array($fileExtension, $formats)) {
+                    $msg = "❌ فرمت «{$fileExtension}» توسط این مدل پشتیبانی نمی‌شود.\n"
+                         . "📁 فرمت‌های مجاز: {$model['supported_formats']}\n"
+                         . "لطفاً فایل با فرمت مجاز ارسال کنید.";
+                    $this->baleClient->sendMessage($chatId, $msg);
+                    return;
+                }
+            }
+        }
+
+        $caption = trim($caption ?? '');
+        if (empty($caption)) {
+            $caption = "لطفاً این فایل را پردازش کن: {$fileName}";
+        }
+
+        // Download file
+        $fileId = $update->getDocumentFileId();
+        $fileContent = $this->downloadPhoto($fileId); // downloadPhoto works for any file download
+        if ($fileContent === null) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت فایل.");
+            return;
+        }
+
+        $this->processChatMessage($chatId, $userId, $caption, $fileContent, $fileExtension);
     }
 
     private function downloadPhoto(string $fileId): ?string
@@ -611,7 +700,7 @@ class ChatHandler extends BaseHandler
     private function getChatActiveKeyboard(): array
     {
         return [
-            'keyboard' => [[['text' => '🚪 خروج از گفتگو'], ['text' => '/cancel']], [['text' => 'منو اصلی']]],
+            'keyboard' => [[['text' => '/exit'], ['text' => '/cancel']], [['text' => 'منو اصلی']]],
             'resize_keyboard' => true,
         ];
     }

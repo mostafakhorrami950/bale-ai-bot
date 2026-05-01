@@ -18,7 +18,13 @@ class MessageHandler extends BaseHandler
                 return;
             }
 
-            // Fallback for unrecognized text or simple interaction
+            // Handle help text
+            if ($text === '❓ راهنما') {
+                $this->showHelp($update->getChatId());
+                return;
+            }
+
+            // Fallback — show main menu
             $this->baleClient->sendMessage($update->getChatId(), "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
 
         } catch (Exception $e) {
@@ -40,19 +46,59 @@ class MessageHandler extends BaseHandler
         ]);
 
         if ($saved) {
-            $this->baleClient->sendMessage($baleId, "✅ ثبت‌نام شما با موفقیت انجام شد!", $this->getMainMenuKeyboard());
+            // Send registration success, then show MAIN MENU (not reply keyboard)
+            $this->baleClient->sendMessage($baleId, "✅ ثبت‌نام شما با موفقیت انجام شد!");
+            $this->baleClient->sendMessage($baleId, "🤖 به ربات خوش آمدید. لطفاً از منوی زیر استفاده کنید:", $this->getMainMenuKeyboard());
         } else {
             $this->baleClient->sendMessage($baleId, "❌ متأسفانه در ثبت اطلاعات مشکلی پیش آمد.");
         }
     }
 
-    private function getMainMenuKeyboard(): array
+    /**
+     * Show help text + image from settings table.
+     */
+    private function showHelp(int $chatId): void
+    {
+        try {
+            $db = Database::getInstance();
+            $rows = $db->query("SELECT key_name, value FROM settings WHERE key_name IN ('help_text', 'help_image')")->fetchAll();
+            $settings = [];
+            foreach ($rows as $r) {
+                $settings[$r['key_name']] = $r['value'];
+            }
+
+            $helpText = $settings['help_text'] ?? "🤖 **راهنمای ربات**\n\n"
+                . "🎨 **ساخت تصویر**: با استفاده از هوش مصنوعی تصویر بسازید.\n"
+                . "🖼 **ویرایش عکس**: عکس خود را آپلود کرده و با توضیحات ویرایش کنید.\n"
+                . "💬 **چت با هوش مصنوعی**: با مدل‌های مختلف گفتگو کنید.\n"
+                . "👤 **حساب کاربری**: موجودی و تاریخچه خود را مشاهده کنید.\n"
+                . "💳 **خرید اعتبار**: اعتبار خود را افزایش دهید.\n\n"
+                . "📞 پشتیبانی: @mobix_tube";
+
+            $helpImage = $settings['help_image'] ?? null;
+
+            if (!empty($helpImage) && filter_var($helpImage, FILTER_VALIDATE_URL)) {
+                // Send photo with caption
+                $caption = strip_tags($helpText);
+                $this->baleClient->sendPhoto($chatId, $helpImage, $caption);
+            } else {
+                $this->baleClient->sendMessage($chatId, $helpText);
+            }
+        } catch (\Throwable $e) {
+            $this->baleClient->sendMessage($chatId, "❌ خطا در بارگذاری راهنما.");
+        }
+    }
+
+    /**
+     * Unified 6-button main menu (keyboard, not inline).
+     */
+    public static function getMainMenuKeyboard(): array
     {
         return [
             'keyboard' => [
-                [['text' => "🎨 ساخت تصویر"], ['text' => "🖼️ ویرایش عکس"]],
-                [['text' => "👤 حساب من"], ['text' => "💳 شارژ اعتبار"]],
-                [['text' => "❓ راهنما"]]
+                [['text' => "\xF0\x9F\x8E\xA8 ساخت تصویر"], ['text' => "\xF0\x9F\x96\xBC ویرایش عکس"]],
+                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی"], ['text' => "\xF0\x9F\x91\xA4 حساب کاربری"]],
+                [['text' => "\xF0\x9F\x92\xB3 خرید اعتبار"], ['text' => "\xE2\x9D\x93 راهنما"]],
             ],
             'resize_keyboard' => true
         ];

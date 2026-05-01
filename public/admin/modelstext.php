@@ -110,6 +110,20 @@ echo ModelHelper::alertHtml($message, $messageType);
                            <?php echo $editMode ? (($editModel['free_model'] ?? 0) ? 'checked' : '') : ''; ?>>
                     <label class="form-check-label" for="fm">🆓 رایگان</label>
                 </div>
+                <div class="mb-2">
+                    <label style="font-size:0.9rem;">فرمت‌های پشتیبانی شده (با کاما جدا):</label>
+                    <input type="text" name="supported_formats" class="form-control form-control-sm"
+                           value="<?php echo $editMode ? htmlspecialchars($editModel['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp') : 'txt,doc,pdf,jpg,jpeg,png,gif,webp'; ?>"
+                           placeholder="مثلاً: txt,doc,pdf,jpg,png">
+                    <div class="form-text">فرمت‌هایی که این مدل پشتیبانی می‌کند. با کاما جدا کنید.</div>
+                </div>
+                <div class="mb-2">
+                    <label style="font-size:0.9rem;">ترتیب نمایش:</label>
+                    <input type="number" name="sort_order" class="form-control form-control-sm" min="0" step="1"
+                           value="<?php echo $editMode ? (int)($editModel['sort_order'] ?? 0) : '0'; ?>"
+                           placeholder="عدد کوچکتر = نمایش زودتر">
+                    <div class="form-text">مدل‌ها بر اساس این عدد مرتب می‌شوند (صعودی).</div>
+                </div>
                 <button type="submit" class="btn btn-primary mt-3"><?php echo $editMode ? 'بروزرسانی' : 'ذخیره'; ?></button>
                 <?php if ($editMode): ?><a href="modelstext.php" class="btn btn-secondary mt-3">انصراف</a><?php endif; ?>
             </form>

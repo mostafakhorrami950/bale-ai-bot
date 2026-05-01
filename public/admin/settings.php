@@ -99,6 +99,43 @@ ob_start();
 
                 <hr>
 
+                <h6>🤖 تنظیمات هوش مصنوعی</h6>
+                <div class="mb-3">
+                    <label class="form-label">مدل پیش‌فرض متنی (default_text_model):</label>
+                    <select name="settings[default_text_model]" class="form-select">
+                        <option value="">— خودکار (اولین مدل فعال) —</option>
+                        <?php
+                        $db = \Database\Database::getInstance();
+                        $textModels = $db->query("SELECT id, display_name, name FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, id ASC")->fetchAll();
+                        $currentDefault = $currentSettings['default_text_model'] ?? '';
+                        foreach ($textModels as $tm):
+                            $selected = ((string)$tm['id'] === $currentDefault) ? 'selected' : '';
+                        ?>
+                            <option value="<?php echo $tm['id']; ?>" <?php echo $selected; ?>>
+                                <?php echo htmlspecialchars($tm['display_name'] ?? $tm['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">مدل پیش‌فرض برای شروع گفتگو. اگر خالی بماند، اولین مدل فعال استفاده می‌شود.</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">متن راهنما (help_text):</label>
+                    <textarea name="settings[help_text]" class="form-control" rows="5"
+                              placeholder="متن راهنمای ربات"><?php echo htmlspecialchars($currentSettings['help_text'] ?? ''); ?></textarea>
+                    <div class="form-text">این متن هنگام کلیک روی «راهنما» به کاربر نمایش داده می‌شود.</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">تصویر راهنما (help_image):</label>
+                    <input type="text" name="settings[help_image]" class="form-control"
+                           value="<?php echo htmlspecialchars($currentSettings['help_image'] ?? ''); ?>"
+                           placeholder="URL تصویر (اختیاری)">
+                    <div class="form-text">آدرس اینترنتی تصویری که همراه متن راهنما نمایش داده می‌شود.</div>
+                </div>
+
+                <hr>
+
                 <h6>🔗 تنظیمات API و درگاه</h6>
                 <div class="mb-3">
                     <label class="form-label">توکن ربات بله:</label>

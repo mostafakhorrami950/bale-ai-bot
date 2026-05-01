@@ -8,50 +8,43 @@ use Database\Logger;
 class CreditService
 {
     /**
-     * Get current credit balance for a user.
+     * Get current credit balance for a user (returns float for decimal precision).
      */
-    public static function getBalance(int $userId): int
+    public static function getBalance(int $userId): float
     {
         try {
             $db = Database::getInstance();
             $stmt = $db->query("SELECT credits FROM users WHERE id = ?", [$userId]);
             $row = $stmt->fetch();
-            return $row ? (int) $row['credits'] : 0;
+            return $row ? (float) $row['credits'] : 0.0;
         } catch (\Throwable $e) {
             Logger::error('CreditService::getBalance failed', [
                 'user_id' => $userId,
                 'error'   => $e->getMessage()
             ]);
-            return 0;
+            return 0.0;
         }
     }
 
     /**
-     * Check if user has enough credit.
+     * Check if user has enough credit (float comparison).
      */
-    public static function hasEnoughCredit(int $userId, int $cost): bool
+    public static function hasEnoughCredit(int $userId, float $cost): bool
     {
-        return self::getBalance($userId) >= $cost;
-    }
-
-    /**
-     * Check balance with a single query (legacy compatibility).
-     */
-    public static function checkBalance(int $userId, int $requiredCredits): bool
-    {
-        return self::hasEnoughCredit($userId, $requiredCredits);
+        return self::getBalance($userId) >= $cost - 0.00001; // tolerance for floating point
     }
 
     /**
      * Deduct credits from user. Idempotent — checks reference_id before inserting.
+     * Supports decimal amounts for per-character billing.
      *
      * @param int    $userId      User ID from users table
-     * @param int    $amount      Credits to deduct
-     * @param string $referenceId Unique reference for idempotency (e.g. "ai_req_123")
+     * @param float  $amount      Credits to deduct (decimal supported)
+     * @param string $referenceId Unique reference for idempotency
      *
      * @return bool  true on success, false on failure
      */
-    public static function deduct(int $userId, int $amount, string $referenceId): bool
+    public static function deduct(int $userId, float $amount, string $referenceId): bool
     {
         $db = Database::getInstance();
         $conn = $db->getConnection();
@@ -59,17 +52,16 @@ class CreditService
         try {
             $conn->beginTransaction();
 
-            // 1. Check idempotency — if reference already exists, skip
+            // 1. Check idempotency
             $stmt = $conn->prepare("SELECT id FROM credit_ledger WHERE reference_id = ?");
             $stmt->execute([$referenceId]);
             if ($stmt->fetch()) {
-                // Already processed — return success silently (idempotent)
                 $conn->commit();
-                return true;
+                return true; // idempotent
             }
 
-            // 2. Deduct credits (atomic: only if sufficient)
-            $stmt = $conn->prepare("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?");
+            // 2. Deduct credits with decimal support (atomic: only if sufficient)
+            $stmt = $conn->prepare("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ? - 0.00001");
             $stmt->execute([$amount, $userId, $amount]);
 
             if ($stmt->rowCount() === 0) {
@@ -102,15 +94,9 @@ class CreditService
     }
 
     /**
-     * Add credits to user. Idempotent — checks reference_id before inserting.
-     *
-     * @param int    $userId      User ID from users table
-     * @param int    $amount      Credits to add (positive integer)
-     * @param string $referenceId Unique reference for idempotency (e.g. "purchase_trackId")
-     *
-     * @return bool  true on success, false on failure
+     * Add credits to user. Idempotent.
      */
-    public static function addCredits(int $userId, int $amount, string $referenceId): bool
+    public static function addCredits(int $userId, float $amount, string $referenceId): bool
     {
         $db = Database::getInstance();
         $conn = $db->getConnection();
@@ -118,16 +104,13 @@ class CreditService
         try {
             $conn->beginTransaction();
 
-            // 1. Check idempotency — if reference already exists, skip
             $stmt = $conn->prepare("SELECT id FROM credit_ledger WHERE reference_id = ?");
             $stmt->execute([$referenceId]);
             if ($stmt->fetch()) {
-                // Already processed — return success silently (idempotent)
                 $conn->commit();
                 return true;
             }
 
-            // 2. Add credits
             $stmt = $conn->prepare("UPDATE users SET credits = credits + ? WHERE id = ?");
             $stmt->execute([$amount, $userId]);
 
@@ -135,26 +118,17 @@ class CreditService
                 throw new \Exception("User not found");
             }
 
-            // 3. Log to credit_ledger
             $stmt = $conn->prepare(
                 "INSERT INTO credit_ledger (user_id, amount, type, reference_id) VALUES (?, ?, 'charge', ?)"
             );
             $stmt->execute([$userId, $amount, $referenceId]);
 
             $conn->commit();
-            Logger::info('CreditService::addCredits success', [
-                'user_id'      => $userId,
-                'amount'       => $amount,
-                'reference_id' => $referenceId,
-            ]);
             return true;
         } catch (\Throwable $e) {
             $conn->rollBack();
             Logger::error('CreditService::addCredits failed', [
-                'user_id'      => $userId,
-                'amount'       => $amount,
-                'reference_id' => $referenceId,
-                'error'        => $e->getMessage(),
+                'user_id' => $userId, 'amount' => $amount, 'reference_id' => $referenceId, 'error' => $e->getMessage()
             ]);
             return false;
         }

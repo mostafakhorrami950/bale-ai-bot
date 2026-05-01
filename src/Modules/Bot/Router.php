@@ -145,8 +145,22 @@ class Router
             return new UnknownUpdateHandler($this->baleClient);
         }
 
-        // 7. Regular message
+        // 7. Regular message — route by text content
         if ($update->isMessage() && $text !== '') {
+            // Map Persian menu texts to handlers
+            $menuMap = [
+                "\xF0\x9F\x8E\xA8 ساخت تصویر" => 'ImageHandler',
+                "\xF0\x9F\x96\xBC ویرایش عکس" => 'Img2ImgHandler',
+                "\xF0\x9F\x92\xAC چت با هوش مصنوعی" => 'ChatHandler',
+                "\xF0\x9F\x91\xA4 حساب کاربری" => 'AccountHandler',
+                "\xF0\x9F\x92\xB3 خرید اعتبار" => 'BuyCreditHandler',
+                "\xE2\x9D\x93 راهنما" => 'MessageHandler',
+            ];
+            if (isset($menuMap[$text])) {
+                $class = 'Modules\\Bot\\Handlers\\' . $menuMap[$text];
+                error_log("DEBUG ROUTER: menu text -> " . $menuMap[$text]);
+                return new $class($this->baleClient);
+            }
             error_log("DEBUG ROUTER: -> MessageHandler");
             return new MessageHandler($this->baleClient);
         }

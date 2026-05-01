@@ -90,11 +90,25 @@ class ModelHelper
         $costPerOutputChar = 0.000002;
         $freeModel = 0;
         $costPerImage = 0;
+        $supportedFormats = '';
 
         if ($modelType === 'text') {
             $costPerInputChar = (float)($post['cost_per_input_char'] ?? 0.000001);
             $costPerOutputChar = (float)($post['cost_per_output_char'] ?? 0.000002);
             $freeModel = isset($post['free_model']) ? 1 : 0;
+            $supportedFormats = trim($post['supported_formats'] ?? '');
+            // Format validation: comma-separated, lowercase, alphanumeric extensions
+            if ($supportedFormats !== '') {
+                $parts = explode(',', $supportedFormats);
+                $clean = [];
+                foreach ($parts as $p) {
+                    $ext = strtolower(trim($p));
+                    if (preg_match('/^[a-z0-9]{1,10}$/', $ext)) {
+                        $clean[] = $ext;
+                    }
+                }
+                $supportedFormats = implode(',', $clean);
+            }
         } else {
             // Image & video: cost_per_image is required, must be positive integer
             $rawCost = $post['cost_per_image'] ?? '';
@@ -130,6 +144,7 @@ class ModelHelper
             'cost_per_input_char'  => $costPerInputChar,
             'cost_per_output_char' => $costPerOutputChar,
             'free_model'           => $freeModel,
+            'supported_formats'    => $supportedFormats,
             'size'                 => $post['size'] ?? 'auto',
             'aspect_ratio'         => $post['aspect_ratio'] ?? 'auto',
             'model_config'         => '{}',
