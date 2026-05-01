@@ -141,9 +141,21 @@ class Router
                 'chat_use_default' => 'ChatHandler',
                 'chat_select_model' => 'ChatHandler',
                 'chat_history' => 'ChatHandler',
+                'show_memory' => 'MemoryCommandHandler',
+                'clear_memory' => 'MemoryCommandHandler',
             ];
 
             
+            // Memory callbacks — special handler with different namespace and constructor
+            if ($data === 'show_memory') {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            if ($data === 'clear_memory') {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+
             // Unique prefixes — each handler owns its own namespace
             if (str_starts_with($data, 'img_select_model_')) {
                 return new ImageHandler($this->baleClient);
@@ -163,9 +175,9 @@ class Router
 
         // 7. Regular message — route by text content
         if ($update->isMessage() && $text !== '') {
-            // Memory commands (if module enabled)
+            // Memory commands (if module enabled) — only Persian button texts, no slash commands
             $memoryManager = new MemoryManager();
-            if ($memoryManager->isEnabled() && in_array($text, ['/حافظه', '🧠 حافظه من', '/حذف_حافظه', '🗑 پاک کردن حافظه'], true)) {
+            if ($memoryManager->isEnabled() && in_array($text, ['🧠 حافظه من', '🗑 پاک کردن حافظه'], true)) {
                 error_log("DEBUG ROUTER: memory command -> MemoryCommandHandler");
                 return new MemoryCommandHandler($this->baleClient, $memoryManager);
             }

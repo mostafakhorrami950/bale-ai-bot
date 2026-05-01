@@ -4,6 +4,7 @@ namespace Modules\Memory;
 
 use Database\Database;
 use Database\Logger;
+use Modules\AI\ChatService;
 
 class MemoryManager
 {
@@ -145,62 +146,176 @@ class MemoryManager
     }
 
     /**
-     * Auto-extract important information from a user message.
-     * Uses keyword detection (no AI call needed — pure PHP).
+     * Auto-extract important personal information using AI.
+     * Sends the user message to an AI model with a system prompt asking it
+     * to extract important personal info. Only saves if AI determines it's important.
      */
     public function extractMemoryFromMessage(int $userId, string $userMessage): void
     {
         if (!$this->isEnabled()) return;
 
-        $keywords = [
-            'اسم من' => 'name',
-            'نام من' => 'name',
-            'من را' => 'personal',
-            'دوست دارم' => 'preference',
-            'علاقه' => 'preference',
-            'شغل من' => 'job',
-            'کار من' => 'job',
-            'سن من' => 'age',
-            'زادروز' => 'birthday',
-            'تولد' => 'birthday',
-            'آدرس' => 'address',
-            'شهر من' => 'city',
-            'کشور' => 'country',
-            'شماره تماس' => 'phone',
-            'ایمیل' => 'email',
-            'حرفه' => 'profession',
-            'تحصیلات' => 'education',
-            'رشته' => 'field_of_study',
-            'زبان' => 'language',
-            'ورزش' => 'sport',
-            'سرگرمی' => 'hobby',
-            'غذای مورد علاقه' => 'food',
-            'رنگ مورد علاقه' => 'color',
-            'فیلم مورد علاقه' => 'movie',
-            'کتاب مورد علاقه' => 'book',
-            'موسیقی' => 'music',
-        ];
+        // Skip very short messages
+        if (mb_strlen(trim($userMessage)) < 10) return;
 
-        foreach ($keywords as $keyword => $type) {
-            if (mb_strpos($userMessage, $keyword) !== false) {
-                // Extract the sentence containing the keyword
-                $sentences = preg_split('/([.?!\n])+/u', $userMessage, -1, PREG_SPLIT_NO_EMPTY);
-                foreach ($sentences as $sentence) {
-                    $sentence = trim($sentence);
-                    if (mb_strpos($sentence, $keyword) !== false && mb_strlen($sentence) > 10) {
-                        // Importance based on type
-                        $importanceMap = [
-                            'name' => 10, 'age' => 8, 'birthday' => 8, 'phone' => 9, 'email' => 9,
-                            'preference' => 5, 'hobby' => 4, 'sport' => 4, 'food' => 3, 'color' => 2,
-                        ];
-                        $importance = $importanceMap[$type] ?? 3;
-
-                        $this->addMemory($userId, $sentence, 'extracted', $userMessage, $importance);
-                        break;
+        try {
+            // Get the extraction model from config (default to first active text model)
+            $modelName = $this->getConfig('extraction_model', '');
+            if (empty($modelName)) {
+                // Try to get default text model from settings
+                $row = $this->db->query(
+                    "SELECT value FROM settings WHERE key_name = 'default_text_model'"
+                )->fetch();
+                if ($row && !empty($row['value'])) {
+                    $modelRow = $this->db->query(
+                        "SELECT name FROM ai_text_models WHERE id = ? AND is_active = 1",
+                        [(int)$row['value']]
+                    )->fetch();
+                    if ($modelRow) {
+                        $modelName = $modelRow['name'];
                     }
                 }
             }
+            if (empty($modelName)) {
+                // Fallback: get first active text model
+                $modelRow = $this->db->query(
+                    "SELECT name FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1"
+                )->fetch();
+                if ($modelRow) {
+                    $modelName = $modelRow['name'];
+                }
+            }
+            if (empty($modelName)) return; // No model available
+
+            // Build the AI extraction prompt
+            $systemPrompt = "تو یک دستیار هوشمند هستی که وظیفه‌ات استخراج اطلاعات شخصی مهم از پیام‌های کاربران است.\n\n"
+                . "قوانین:\n"
+                . "1. فقط اطلاعات شخصی مهم را استخراج کن (نام، سن، شغل، علایق، آدرس، شماره تماس، وضعیت سلامتی، اهداف، تاریخ‌های مهم و ...)\n"
+                . "2. اگر اطلاعات مهمی در پیام وجود ندارد، خالی برگردان\n"
+                . "3. خروجی را به صورت JSON برگردان با این ساختار:\n"
+                . "{\n"
+                . "  \"has_important_info\": true/false,\n"
+                . "  \"memories\": [\n"
+                . "    {\"text\": \"متن حافظه به فارسی\", \"importance\": 1-10}\n"
+                . "  ]\n"
+                . "}\n"
+                . "4. importance از 1 (کم اهمیت) تا 10 (بسیار مهم) باشد\n"
+                . "5. نام = 10, سن = 8, شغل = 8, شماره تماس = 9, آدرس = 8, وضعیت سلامتی = 7, اهداف = 6, علایق = 5\n"
+                . "6. حتماً خروجی JSON معتبر برگردان";
+
+            $messages = [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => "پیام کاربر:\n" . $userMessage],
+            ];
+
+            // Use ChatService to call AI
+            $chatService = new ChatService();
+            $modelData = $this->getModelData($modelName);
+            $result = $chatService->chat($messages, $modelName, $modelData);
+
+            if (isset($result['error'])) {
+                Logger::error('MemoryManager::extractMemoryFromMessage AI error', [
+                    'user_id' => $userId,
+                    'error' => $result['error'],
+                ]);
+                return;
+            }
+
+            $responseText = $result['response'] ?? '';
+            if (empty($responseText)) return;
+
+            // Parse JSON from response
+            $json = $this->extractJsonFromResponse($responseText);
+            if ($json === null) {
+                Logger::error('MemoryManager::extractMemoryFromMessage parse error', [
+                    'user_id' => $userId,
+                    'response' => mb_substr($responseText, 0, 500),
+                ]);
+                return;
+            }
+
+            if (!isset($json['has_important_info']) || $json['has_important_info'] !== true) {
+                // AI determined no important info — skip
+                Logger::info('MemoryManager::extractMemoryFromMessage skipped', [
+                    'user_id' => $userId,
+                    'reason' => 'AI determined no important info',
+                ]);
+                return;
+            }
+
+            $memories = $json['memories'] ?? [];
+            if (empty($memories)) return;
+
+            foreach ($memories as $mem) {
+                $text = trim($mem['text'] ?? '');
+                $importance = (int)($mem['importance'] ?? 5);
+                if (!empty($text) && mb_strlen($text) > 3) {
+                    $this->addMemory($userId, $text, 'extracted', $userMessage, $importance);
+                }
+            }
+
+            Logger::info('MemoryManager::extractMemoryFromMessage saved', [
+                'user_id' => $userId,
+                'count' => count($memories),
+            ]);
+
+        } catch (\Throwable $e) {
+            Logger::error('MemoryManager::extractMemoryFromMessage error', [
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+            ]);
         }
+    }
+
+    /**
+     * Extract JSON from AI response text (handles markdown code blocks).
+     */
+    private function extractJsonFromResponse(string $text): ?array
+    {
+        // Try to find JSON in code blocks first
+        if (preg_match('/```(?:json)?\s*(\{.*?\})\s*```/s', $text, $m)) {
+            $decoded = json_decode($m[1], true);
+            if ($decoded !== null) return $decoded;
+        }
+
+        // Try to find JSON directly
+        if (preg_match('/\{.*\}/s', $text, $m)) {
+            $decoded = json_decode($m[0], true);
+            if ($decoded !== null) return $decoded;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get model data array for ChatService.
+     */
+    private function getModelData(string $modelName): array
+    {
+        try {
+            $row = $this->db->query(
+                "SELECT * FROM ai_text_models WHERE name = ? AND is_active = 1",
+                [$modelName]
+            )->fetch();
+            if ($row) {
+                return [
+                    'id' => (int)$row['id'],
+                    'name' => $row['name'],
+                    'provider' => $row['provider'] ?? 'openrouter',
+                    'cost_per_input_char' => (float)($row['cost_per_input_char'] ?? 0.000001),
+                    'cost_per_output_char' => (float)($row['cost_per_output_char'] ?? 0.000002),
+                    'free_model' => (int)($row['free_model'] ?? 0),
+                ];
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+        return [
+            'name' => $modelName,
+            'provider' => 'openrouter',
+            'cost_per_input_char' => 0.000001,
+            'cost_per_output_char' => 0.000002,
+            'free_model' => 0,
+        ];
     }
 
     /**

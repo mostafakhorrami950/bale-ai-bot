@@ -55,11 +55,9 @@ class AccountHandler extends BaseHandler
                         $message .= "(نام، سن، شغل، علایق و ...) را از\n";
                         $message .= "گفتگوهای شما استخراج و ذخیره می‌کند.\n\n";
                         $message .= "**👁️ مشاهده حافظه:**\n";
-                        $message .= "دکمه «🧠 حافظه من» را بزنید\n";
-                        $message .= "یا دستور `/حافظه` را ارسال کنید.\n\n";
+                        $message .= "دکمه «🧠 حافظه من» را بزنید\n\n";
                         $message .= "**🗑️ پاک کردن حافظه:**\n";
-                        $message .= "دکمه «🗑️ پاک کردن حافظه» را بزنید\n";
-                        $message .= "یا دستور `/حذف_حافظه` را ارسال کنید.\n\n";
+                        $message .= "دکمه «🗑️ پاک کردن حافظه» را بزنید\n\n";
                         $message .= "**💡 نکته:** حافظه در چت‌های بعدی به\n";
                         $message .= "هوش مصنوعی گفته می‌شود تا پاسخ‌های\n";
                         $message .= "شخصی‌سازی‌شده دریافت کنید.\n";
@@ -72,7 +70,19 @@ class AccountHandler extends BaseHandler
                 $message = "⚠️ حساب کاربری یافت نشد. لطفاً /start را بزنید.";
             }
             
-            $this->baleClient->sendMessage($chatId, $message);
+            // Add memory inline buttons if module enabled
+            $memoryManager = new MemoryManager();
+            $keyboard = null;
+            if ($memoryManager->isEnabled()) {
+                $keyboard = [
+                    'inline_keyboard' => [
+                        [['text' => '🧠 حافظه من', 'callback_data' => 'show_memory']],
+                        [['text' => '🗑️ پاک کردن حافظه', 'callback_data' => 'clear_memory']],
+                    ]
+                ];
+            }
+            
+            $this->baleClient->sendMessage($chatId, $message, $keyboard);
         } catch (\Exception $e) {
             error_log("AccountHandler ERROR: " . $e->getMessage());
             $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی پیش آمد.");

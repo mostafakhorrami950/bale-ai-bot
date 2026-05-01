@@ -5,6 +5,7 @@ namespace Modules\Memory\Handlers;
 use Modules\Bot\BaleClient;
 use Modules\Memory\MemoryManager;
 use Database\Logger;
+use Database\Database;
 
 class MemoryCommandHandler
 {
@@ -18,30 +19,51 @@ class MemoryCommandHandler
     }
 
     /**
-     * Handle a memory-related request.
+     * Handle a memory-related request (called by Dispatcher with $update).
      */
-    public function handle(int $chatId, int $userId, string $text): void
+    public function handle($update): void
     {
+        $chatId = $update->getChatId();
+        $userId = $update->getUserId();
+        $text = $update->getText() ?? '';
+        $callbackData = $update->getCallbackData() ?? '';
+
+        if (!$chatId || !$userId) return;
+
         if (!$this->memoryManager->isEnabled()) {
             $this->baleClient->sendMessage($chatId, "🧠 ماژول حافظه در حال حاضر غیرفعال است.");
             return;
         }
 
+        // Resolve internal user ID
+        $internalId = $this->resolveInternalId($userId);
+        if (!$internalId) {
+            $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد.");
+            return;
+        }
+
+        // Handle callback data
+        if ($callbackData === 'show_memory') {
+            $this->showMemories($chatId, $internalId);
+            return;
+        }
+        if ($callbackData === 'clear_memory') {
+            $this->deleteAllMemories($chatId, $internalId);
+            return;
+        }
+
+        // Handle text commands
         $text = trim($text);
-
-        // Show memories: /حافظه or "🧠 حافظه من"
-        if ($text === '/حافظه' || $text === '🧠 حافظه من') {
-            $this->showMemories($chatId, $userId);
+        if ($text === '🧠 حافظه من') {
+            $this->showMemories($chatId, $internalId);
+            return;
+        }
+        if ($text === '🗑 پاک کردن حافظه') {
+            $this->deleteAllMemories($chatId, $internalId);
             return;
         }
 
-        // Delete all memories: /حذف_حافظه or "🗑 پاک کردن حافظه"
-        if ($text === '/حذف_حافظه' || $text === '🗑 پاک کردن حافظه') {
-            $this->deleteAllMemories($chatId, $userId);
-            return;
-        }
-
-        // Unknown command
+        // Unknown
         $this->showHelp($chatId);
     }
 
@@ -68,7 +90,7 @@ class MemoryCommandHandler
         }
 
         $msg = "🧠 **حافظه شما** ({$this->memoryManager->getMemoryCount($userId)} مورد)\n\n";
-        $msg .= "برای حذف همه، /حذف_حافظه را بزنید.\n\n";
+        $msg .= "برای حذف همه، دکمه «🗑️ پاک کردن حافظه» را بزنید.\n\n";
 
         foreach ($memories as $i => $mem) {
             $icon = $mem['memory_type'] === 'explicit' ? '📝' : '🔍';
@@ -109,19 +131,25 @@ class MemoryCommandHandler
         $this->baleClient->sendMessage(
             $chatId,
             "🧠 **راهنمای حافظه**\n\n"
-            . "دستورات موجود:\n"
-            . "• `🧠 حافظه من` - مشاهده اطلاعات ذخیره شده\n"
-            . "• `🗑 پاک کردن حافظه` - حذف تمام اطلاعات ذخیره شده\n\n"
-            . "**نحوه ذخیره اطلاعات:**\n"
-            . "به ربات بگویید:\n"
-            . "• «یادت باشه [متن]»\n"
-            . "• «به خاطر بسپار [متن]»\n"
-            . "• «ذخیره کن [متن]»\n\n"
-            . "**مثال‌ها:**\n"
-            . "`یادت باشه اسم من سارا است`\n"
-            . "`به خاطر بسپار من برنامه‌نویس هستم`\n"
-            . "`ذخیره کن رنگ مورد علاقه‌ام آبی است`\n\n"
-            . "💡 ربات همچنین به طور خودکار اطلاعات مهم را از گفتگوها استخراج می‌کند."
+            . "• «یادت باشه [متن]» → ذخیره اطلاعات\n"
+            . "• «🧠 حافظه من» → مشاهده حافظه\n"
+            . "• «🗑️ پاک کردن حافظه» → حذف همه\n\n"
+            . "💡 ربات به طور خودکار اطلاعات مهم را ذخیره می‌کند."
         );
+    }
+
+    /**
+     * Resolve internal user ID from Bale user ID.
+     */
+    private function resolveInternalId(int $baleUserId): ?int
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserId]);
+            $row = $stmt->fetch();
+            return $row ? (int) $row['id'] : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 }
