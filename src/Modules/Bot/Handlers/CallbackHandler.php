@@ -30,7 +30,7 @@ class CallbackHandler extends BaseHandler
                 case 'check_membership':
                     $passed = $this->checkMembership($userId, $chatId);
                     if ($passed) {
-                        $this->baleClient->sendMessage($chatId, "✅ عضویت شما تأیید شد. از منوی زیر استفاده کنید:");
+                        $this->baleClient->sendMessage($chatId, "✅ عضویت شما تأیید شد. از منوی زیر استفاده کنید:", MessageHandler::getMainMenuKeyboard());
                     }
                     break;
             }

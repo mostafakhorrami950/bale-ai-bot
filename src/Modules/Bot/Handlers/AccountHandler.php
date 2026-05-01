@@ -9,6 +9,9 @@ class AccountHandler extends BaseHandler
         $userId = $update->getUserId();
         
         if (!$chatId || !$userId) return;
+
+        // Membership check
+        if (!$this->checkMembership($userId, $chatId)) return;
         
         try {
             $userData = \Modules\Bot\Models\User::findByBaleId($userId);

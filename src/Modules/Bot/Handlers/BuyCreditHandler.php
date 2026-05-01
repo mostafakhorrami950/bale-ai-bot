@@ -18,6 +18,9 @@ class BuyCreditHandler extends BaseHandler
             $text = $update->getText();
             $callbackData = $update->getCallbackData();
 
+            // Membership check
+            if (!$this->checkMembership($userId, $chatId)) return;
+
             if ($text === '💳 شارژ اعتبار') {
                 $this->showPlans($chatId, $userId);
                 return;

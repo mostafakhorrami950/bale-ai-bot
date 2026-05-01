@@ -24,10 +24,14 @@ class Img2ImgHandler extends BaseHandler
     public function handle($update): void
     {
         try {
-            $chatId = $update->getChatId();
-            $userId = $update->getUserId();
-            $text = $update->getText();
+            $chatId  = $update->getChatId();
+            $userId  = $update->getUserId();
+            $text    = $update->getText();
             $callbackData = $update->getCallbackData();
+            $isCallback = $update->isCallback();
+
+            // Membership check: block if not member of required channels
+            if (!$this->checkMembership($userId, $chatId)) return;
 
             $state = $this->getUserState($userId);
 

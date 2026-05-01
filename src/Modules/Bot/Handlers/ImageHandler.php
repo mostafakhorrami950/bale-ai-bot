@@ -19,6 +19,9 @@ class ImageHandler extends BaseHandler
             $callbackData = $update->getCallbackData();
             $isCallback = $update->isCallback();
 
+            // Membership check: block if not member of required channels
+            if (!$this->checkMembership($userId, $chatId)) return;
+
             $state = $this->getUserState($userId);
 
             // Block user if AI is processing

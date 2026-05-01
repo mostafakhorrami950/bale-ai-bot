@@ -13,20 +13,27 @@ class MessageHandler extends BaseHandler
             $text = $update->getText();
             $callbackData = $update->getCallbackData();
             $contact = $update->getContact();
+            $chatId = $update->getChatId();
+            $userId = $update->getUserId();
 
             if ($contact) {
                 $this->handleContact($update, $contact);
                 return;
             }
 
+            // Membership check for all non-registration actions
+            if ($userId && $chatId) {
+                if (!$this->checkMembership($userId, $chatId)) return;
+            }
+
             // Handle help callback or text
             if ($callbackData === 'help' || $text === "\xE2\x9D\x93 راهنما") {
-                $this->showHelp($update->getChatId());
+                $this->showHelp($chatId);
                 return;
             }
 
             // Fallback — show main menu
-            $this->baleClient->sendMessage($update->getChatId(), "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
 
         } catch (Exception $e) {
             error_log("MessageHandler Exception: " . $e->getMessage());

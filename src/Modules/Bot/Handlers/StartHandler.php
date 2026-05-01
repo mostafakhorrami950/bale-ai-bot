@@ -34,6 +34,8 @@ class StartHandler extends BaseHandler
                     $keyboard
                 );
             } else {
+                // Check membership before showing main menu
+                if (!$this->checkMembership($userId, $chatId)) return;
                 $this->showMainMenu($chatId);
             }
         } catch (\Exception $e) {
@@ -53,5 +55,13 @@ class StartHandler extends BaseHandler
             "\xF0\x9F\xA4\x96 \xD8\xAE\xD9\x88\xD8\xB4 \xD8\xA2\xD9\x85\xD8\xAF\xDB\x8C\xD8\xAF! \xD9\x84\xD8\xB7\xD9\x81\xD8\xA7\xD9\x8B \xD8\xA7\xD8\xB2 \xD9\x85\xD9\x86\xD9\x88\xDB\x8C \xD8\xB2\xDB\x8C\xD8\xB1 \xDA\xAF\xD8\xB2\xDB\x8C\xD9\x86\xD9\x87 \xD9\x85\xD9\x88\xD8\xB1\xD8\xAF \xD9\x86\xD8\xB8\xD8\xB1 \xD8\xB1\xD8\xA7 \xD8\xA7\xD9\x86\xD8\xAA\xD8\xAE\xD8\xA7\xD8\xA8 \xDA\xA9\xD9\x86\xDB\x8C\xD8\xAF:",
             MessageHandler::getMainMenuKeyboard()
         );
+    }
+
+    /**
+     * Get the Bale user ID from the update for membership checking.
+     */
+    public function getUserId(): ?int
+    {
+        return null; // placeholder, actual user ID is passed to handle()
     }
 }
