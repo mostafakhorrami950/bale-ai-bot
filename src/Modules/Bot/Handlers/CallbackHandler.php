@@ -2,6 +2,7 @@
 
 namespace Modules\Bot\Handlers;
 
+use Modules\Bot\Models\Channel;
 use Exception;
 
 class CallbackHandler extends BaseHandler
@@ -14,15 +15,23 @@ class CallbackHandler extends BaseHandler
         try {
             $callbackData = $update->getCallbackData();
             $callbackId = $update->getCallbackId();
+            $chatId = $update->getChatId();
+            $userId = $update->getUserId();
 
             if (!$callbackId) {
                 return;
             }
 
-            // Logic for specific callbacks would go here
             switch ($callbackData) {
                 case 'help':
-                    $this->baleClient->sendMessage($update->getChatId(), "❓ راهنما:\nاین ربات به شما کمک می‌کند با هوش مصنوعی تصویر بسازید.");
+                    $this->baleClient->sendMessage($chatId, "❓ راهنما:\nاین ربات به شما کمک می‌کند با هوش مصنوعی تصویر بسازید.");
+                    break;
+
+                case 'check_membership':
+                    $passed = $this->checkMembership($userId, $chatId);
+                    if ($passed) {
+                        $this->baleClient->sendMessage($chatId, "✅ عضویت شما تأیید شد. از منوی زیر استفاده کنید:");
+                    }
                     break;
             }
 

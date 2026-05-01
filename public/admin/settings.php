@@ -120,6 +120,13 @@ ob_start();
                 </div>
 
                 <div class="mb-3">
+                    <label class="form-label">تعداد تاریخچه در هر صفحه (chat_history_per_page):</label>
+                    <input type="number" name="settings[chat_history_per_page]" class="form-control" min="1" max="100"
+                           value="<?php echo htmlspecialchars($currentSettings['chat_history_per_page'] ?? '10'); ?>">
+                    <div class="form-text">تعداد گفتگوهایی که در هر صفحه از تاریخچه نمایش داده می‌شود.</div>
+                </div>
+
+                <div class="mb-3">
                     <label class="form-label">متن راهنما (help_text):</label>
                     <textarea name="settings[help_text]" class="form-control" rows="5"
                               placeholder="متن راهنمای ربات"><?php echo htmlspecialchars($currentSettings['help_text'] ?? ''); ?></textarea>

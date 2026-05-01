@@ -221,6 +221,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'users' ? 'active' : ''; ?>" href="users.php">
             <i class="bi bi-people"></i> 👥 کاربران
         </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'channels' ? 'active' : ''; ?>" href="channels.php">
+            <i class="bi bi-megaphone"></i> 📢 کانال‌ها
+        </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'payment_logs' ? 'active' : ''; ?>" href="payment_logs.php">
             <i class="bi bi-journal-text"></i> 📋 لاگ پرداخت‌ها
         </a>

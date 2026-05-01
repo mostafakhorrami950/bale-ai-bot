@@ -628,66 +628,15 @@ class DatabaseRepairService
             $this->exec("ALTER TABLE ai_text_models ADD COLUMN sort_order INT DEFAULT 0 AFTER supported_formats");
             $this->log('✅ ستون sort_order به جدول ai_text_models اضافه شد.');
         }
-        // Decimal credits on users
-        if ($this->tableExists('users') && $this->columnExists('users', 'credits')) {
-            // Check if it's already DECIMAL
-            try {
-                $stmt = $this->conn->query("SHOW COLUMNS FROM users WHERE Field = 'credits'");
-                $col = $stmt->fetch();
-                $typeDef = $col['Type'] ?? '';
-                if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE users MODIFY COLUMN credits DECIMAL(12,6) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون credits در users به DECIMAL(12,6) تغییر یافت.');
-                }
-            } catch (\Throwable $e) {}
-        }
+        // Decimal credits on users (convert both int and decimal(12,4) to decimal(12,6))
+        $this->ensureDecimalColumn('users', 'credits');
         // Decimal amount on credit_ledger
-        if ($this->tableExists('credit_ledger') && $this->columnExists('credit_ledger', 'amount')) {
-            try {
-                $stmt = $this->conn->query("SHOW COLUMNS FROM credit_ledger WHERE Field = 'amount'");
-                $col = $stmt->fetch();
-                $typeDef = $col['Type'] ?? '';
-                if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE credit_ledger MODIFY COLUMN amount DECIMAL(12,6) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون amount در credit_ledger به DECIMAL(12,6) تغییر یافت.');
-                }
-            } catch (\Throwable $e) {}
-        }
+        $this->ensureDecimalColumn('credit_ledger', 'amount');
         // Decimal total_cost_credits on chat_conversations
-        if ($this->tableExists('chat_conversations') && $this->columnExists('chat_conversations', 'total_cost_credits')) {
-            try {
-                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_conversations WHERE Field = 'total_cost_credits'");
-                $col = $stmt->fetch();
-                $typeDef = $col['Type'] ?? '';
-                if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE chat_conversations MODIFY COLUMN total_cost_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون total_cost_credits در chat_conversations به DECIMAL(12,6) تغییر یافت.');
-                }
-            } catch (\Throwable $e) {}
-        }
+        $this->ensureDecimalColumn('chat_conversations', 'total_cost_credits');
         // Decimal cost columns on chat_messages
-        if ($this->tableExists('chat_messages') && $this->columnExists('chat_messages', 'cost_input_credits')) {
-            try {
-                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_messages WHERE Field = 'cost_input_credits'");
-                $col = $stmt->fetch();
-                $typeDef = $col['Type'] ?? '';
-                if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE chat_messages MODIFY COLUMN cost_input_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون cost_input_credits در chat_messages به DECIMAL(12,6) تغییر یافت.');
-                }
-            } catch (\Throwable $e) {}
-        }
-        if ($this->tableExists('chat_messages') && $this->columnExists('chat_messages', 'cost_output_credits')) {
-            try {
-                $stmt = $this->conn->query("SHOW COLUMNS FROM chat_messages WHERE Field = 'cost_output_credits'");
-                $col = $stmt->fetch();
-                $typeDef = $col['Type'] ?? '';
-                if (str_starts_with($typeDef, 'int')) {
-                    $this->exec("ALTER TABLE chat_messages MODIFY COLUMN cost_output_credits DECIMAL(12,6) NOT NULL DEFAULT 0");
-                    $this->log('✅ ستون cost_output_credits در chat_messages به DECIMAL(12,6) تغییر یافت.');
-                }
-            } catch (\Throwable $e) {}
-        }
+        $this->ensureDecimalColumn('chat_messages', 'cost_input_credits');
+        $this->ensureDecimalColumn('chat_messages', 'cost_output_credits');
         // default_text_model, help_text, help_image settings
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('default_text_model', '')");
         $this->log('✅ تنظیم default_text_model اضافه شد.');
@@ -699,6 +648,24 @@ class DatabaseRepairService
         if ($this->tableExists('ai_text_models') && $this->columnExists('ai_text_models', 'supported_formats')) {
             $this->exec("UPDATE ai_text_models SET supported_formats = 'txt,doc,pdf,jpg,jpeg,png,gif,webp' WHERE supported_formats IS NULL");
         }
+    }
+
+    /**
+     * Ensure a column is DECIMAL(12,6). Handles both INT and DECIMAL(12,4) columns.
+     */
+    private function ensureDecimalColumn(string $table, string $column): void
+    {
+        if (!$this->tableExists($table) || !$this->columnExists($table, $column)) return;
+        try {
+            $stmt = $this->conn->query("SHOW COLUMNS FROM {$table} WHERE Field = '{$column}'");
+            $col = $stmt->fetch();
+            $typeDef = $col['Type'] ?? '';
+            // If it's INT, DECIMAL(12,4), or any type that can't hold 6 decimal places, convert it
+            if (str_starts_with($typeDef, 'int') || str_starts_with($typeDef, 'decimal') && strpos($typeDef, '6') === false) {
+                $this->exec("ALTER TABLE {$table} MODIFY COLUMN {$column} DECIMAL(12,6) NOT NULL DEFAULT 0");
+                $this->log("✅ ستون {$column} در {$table} به DECIMAL(12,6) تغییر یافت.");
+            }
+        } catch (\Throwable $e) {}
     }
 
     private function log(string $msg): void

@@ -149,7 +149,7 @@ class Router
             if (str_starts_with($data, 'edit_select_model_')) {
                 return new Img2ImgHandler($this->baleClient);
             }
-            if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_')) {
+            if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {
                 return new ChatHandler($this->baleClient);
             }
             if (isset($map[$data])) {

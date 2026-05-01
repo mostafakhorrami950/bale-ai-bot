@@ -46,23 +46,28 @@ class ChatHandler extends BaseHandler
             // ─── CALLBACK HANDLING ───
             if ($update->isCallback() && is_string($callbackData)) {
                 if ($callbackData === 'chat_use_default') {
+                    if (!$this->checkMembership($userId, $chatId)) return;
                     $this->startWithDefaultModel($chatId, $userId);
                     return;
                 }
                 if ($callbackData === 'chat_select_model') {
+                    if (!$this->checkMembership($userId, $chatId)) return;
                     $this->showChatModelList($chatId, $userId);
                     return;
                 }
                 if ($callbackData === 'chat_history') {
+                    if (!$this->checkMembership($userId, $chatId)) return;
                     $this->showConversationHistory($chatId, $userId);
                     return;
                 }
                 if (str_starts_with($callbackData, 'chat_pick_model_')) {
+                    if (!$this->checkMembership($userId, $chatId)) return;
                     $modelId = (int) str_replace('chat_pick_model_', '', $callbackData);
                     $this->startChatWithModel($chatId, $userId, $modelId);
                     return;
                 }
                 if (str_starts_with($callbackData, 'chat_resume_')) {
+                    if (!$this->checkMembership($userId, $chatId)) return;
                     $convId = (int) str_replace('chat_resume_', '', $callbackData);
                     $this->resumeConversation($chatId, $userId, $convId);
                     return;
@@ -72,9 +77,14 @@ class ChatHandler extends BaseHandler
                     $this->deleteConversation($chatId, $userId, $convId);
                     return;
                 }
+                if (str_starts_with($callbackData, 'chat_history_page_')) {
+                    $page = (int) str_replace('chat_history_page_', '', $callbackData);
+                    $this->showConversationHistory($chatId, $userId, $page);
+                    return;
+                }
             }
 
-            // ─── STATE: viewing history → pick a conversation ───
+            // ─── STATE: viewing history → re-show (safety) ───
             if ($state === 'chat_viewing_history') {
                 $this->showConversationHistory($chatId, $userId);
                 return;
@@ -82,6 +92,7 @@ class ChatHandler extends BaseHandler
 
             // ─── STATE: in active conversation ───
             if ($state === 'chat_active') {
+                if (!$this->checkMembership($userId, $chatId)) return;
                 // File upload (photo or document)
                 if ($update->hasPhoto()) {
                     $this->handlePhotoInChat($chatId, $userId, $update, $text);
@@ -635,12 +646,30 @@ class ChatHandler extends BaseHandler
     //   HISTORY
     // ─────────────────────────────────────────────
 
-    private function showConversationHistory(int $chatId, int $userId): void
+    private function showConversationHistory(int $chatId, int $userId, int $page = 0): void
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
 
         $db = Database::getInstance();
+
+        // Get per-page limit from settings (default 10)
+        $limitRow = $db->query("SELECT value FROM settings WHERE key_name = 'chat_history_per_page'")->fetch();
+        $perPage = (int)($limitRow['value'] ?? 10);
+        if ($perPage < 1) $perPage = 10;
+
+        $offset = $page * $perPage;
+
+        // Count total
+        $countRow = $db->query("SELECT COUNT(*) as c FROM chat_conversations WHERE user_id = ?", [$internalId])->fetch();
+        $total = (int)($countRow['c'] ?? 0);
+        $totalPages = max(1, (int)ceil($total / $perPage));
+
+        if ($page >= $totalPages) {
+            $page = $totalPages - 1;
+            $offset = $page * $perPage;
+        }
+
         $convs = $db->query(
             "SELECT id, model, title, total_input_chars, total_output_chars, total_cost_credits, status, 
                     (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = chat_conversations.id) as msg_count,
@@ -648,8 +677,8 @@ class ChatHandler extends BaseHandler
              FROM chat_conversations 
              WHERE user_id = ? 
              ORDER BY updated_at DESC 
-             LIMIT 20",
-            [$internalId]
+             LIMIT ? OFFSET ?",
+            [$internalId, $perPage, $offset]
         )->fetchAll();
 
         if (empty($convs)) {
@@ -660,10 +689,10 @@ class ChatHandler extends BaseHandler
             return;
         }
 
-        $msg = "📋 تاریخچه گفتگوهای شما:\n\n";
+        $msg = "📋 تاریخچه گفتگوهای شما (صفحه " . ($page + 1) . " از {$totalPages}):\n\n";
         $keyboard = ['inline_keyboard' => []];
 
-        foreach ($convs as $i => $c) {
+        foreach ($convs as $c) {
             $icon = $c['status'] === 'active' ? '💬' : '📁';
             $title = $c['title'] ? htmlspecialchars(mb_substr($c['title'], 0, 40)) : 'بدون عنوان';
             $model = htmlspecialchars($c['model']);
@@ -673,11 +702,22 @@ class ChatHandler extends BaseHandler
 
             $msg .= "{$icon} **{$title}**\n  مدل: {$model} | {$msgCount} پیام | {$cost} اعتبار\n  {$created}\n\n";
 
-            if ($i < 10) {
-                $keyboard['inline_keyboard'][] = [
-                    ['text' => "▶️ {$title}", 'callback_data' => "chat_resume_{$c['id']}"]
-                ];
-            }
+            $keyboard['inline_keyboard'][] = [
+                ['text' => "▶️ {$title}", 'callback_data' => "chat_resume_{$c['id']}"]
+            ];
+        }
+
+        // Pagination row
+        $navRow = [];
+        if ($page > 0) {
+            $navRow[] = ['text' => '◀️ قبلی', 'callback_data' => 'chat_history_page_' . ($page - 1)];
+        }
+        $navRow[] = ['text' => "📄 {$page}/{$totalPages}", 'callback_data' => 'chat_history'];
+        if ($page + 1 < $totalPages) {
+            $navRow[] = ['text' => 'بعدی ▶️', 'callback_data' => 'chat_history_page_' . ($page + 1)];
+        }
+        if (!empty($navRow)) {
+            $keyboard['inline_keyboard'][] = $navRow;
         }
 
         $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'start_chat']];
