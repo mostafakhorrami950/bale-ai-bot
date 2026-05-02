@@ -1,8 +1,7 @@
 <?php
 /**
- * Manage video models (ai_video_models) with full capability support:
- * resolution, size, aspect_ratio, duration (3-30s), first_frame, last_frame,
- * input_references, generate_audio, img2video, per-resolution pricing.
+ * Manage video models (ai_video_models) with full capability support.
+ * Pricing: cost_per_second only (no base cost_per_video).
  */
 require_once __DIR__ . '/../../init.php';
 
@@ -19,15 +18,10 @@ $messageType = 'success';
 $editMode = false;
 $editModel = null;
 
-// Parse CSV helper
 function parseCsvToArray(?string $csv): array {
     if (empty($csv)) return [];
     $items = explode(',', $csv);
     return array_filter(array_map('trim', $items));
-}
-
-function arrayToCsv(array $arr): string {
-    return implode(',', $arr);
 }
 
 // Handle POST
@@ -40,20 +34,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'display_name' => trim($_POST['display_name'] ?? ''),
             'description' => trim($_POST['description'] ?? ''),
             'provider' => trim($_POST['provider'] ?? 'openrouter'),
-            'cost_per_video' => (int) ($_POST['cost_per_video'] ?? 5),
+            'cost_per_second' => (int) ($_POST['cost_per_second'] ?? 1),
             'is_active' => isset($_POST['is_active']) ? 1 : 0,
         ];
 
-        // Validation
         if (empty($data['name'])) throw new \InvalidArgumentException('نام مدل الزامی است.');
-        if ($data['cost_per_video'] < 1) throw new \InvalidArgumentException('هزینه باید حداقل 1 باشد.');
+        if ($data['cost_per_second'] < 1) throw new \InvalidArgumentException('هزینه هر ثانیه باید حداقل 1 باشد.');
 
-        // Capabilities
         $data['supported_resolutions'] = trim($_POST['supported_resolutions'] ?? '480p,720p,1080p');
         $data['supported_sizes'] = trim($_POST['supported_sizes'] ?? '854x480,1280x720,1920x1080');
         $data['supported_aspect_ratios'] = trim($_POST['supported_aspect_ratios'] ?? '16:9,9:16,1:1');
 
-        // Durations: collect checked durations and join
         $durationsArr = [];
         for ($i = 3; $i <= 30; $i++) {
             if (isset($_POST['dur_' . $i])) {
@@ -62,14 +53,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $data['supported_durations'] = !empty($durationsArr) ? implode(',', $durationsArr) : '5,10,15';
 
-        // Boolean toggles
         $data['allow_first_frame'] = isset($_POST['allow_first_frame']) ? 1 : 0;
         $data['allow_last_frame'] = isset($_POST['allow_last_frame']) ? 1 : 0;
         $data['allow_input_references'] = isset($_POST['allow_input_references']) ? 1 : 0;
         $data['allow_generate_audio'] = isset($_POST['allow_generate_audio']) ? 1 : 0;
         $data['allow_img2video'] = isset($_POST['allow_img2video']) ? 1 : 0;
 
-        // Per-resolution pricing JSON
         $pricingJson = [];
         $resolutions = parseCsvToArray($data['supported_resolutions']);
         foreach ($resolutions as $res) {
@@ -81,36 +70,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $data['pricing_json'] = !empty($pricingJson) ? json_encode($pricingJson, JSON_UNESCAPED_UNICODE) : '{}';
 
-        // DB save
         $db = \Database\Database::getInstance();
 
         if ($action === 'create') {
-            $db->query("INSERT INTO ai_video_models (name, display_name, description, provider, cost_per_video, is_active,
+            $db->query("INSERT INTO ai_video_models (name, display_name, description, provider, cost_per_second, is_active,
                 supported_resolutions, supported_sizes, supported_aspect_ratios, supported_durations,
                 allow_first_frame, allow_last_frame, allow_input_references, allow_generate_audio, allow_img2video, pricing_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
                 $data['name'], $data['display_name'], $data['description'], $data['provider'],
-                $data['cost_per_video'], $data['is_active'],
+                $data['cost_per_second'], $data['is_active'],
                 $data['supported_resolutions'], $data['supported_sizes'], $data['supported_aspect_ratios'],
                 $data['supported_durations'],
                 $data['allow_first_frame'], $data['allow_last_frame'], $data['allow_input_references'],
                 $data['allow_generate_audio'], $data['allow_img2video'], $data['pricing_json']
             ]);
-            $message = '✅ مدل ویدئو اضافه شد (هزینه: ' . number_format($data['cost_per_video']) . ' اعتبار).';
+            $message = '✅ مدل ویدئو اضافه شد (هزینه: ' . number_format($data['cost_per_second']) . ' اعتبار/ثانیه).';
         } elseif ($action === 'update' && isset($_POST['id'])) {
             $id = (int) $_POST['id'];
-            $db->query("UPDATE ai_video_models SET name=?, display_name=?, description=?, provider=?, cost_per_video=?, is_active=?,
+            $db->query("UPDATE ai_video_models SET name=?, display_name=?, description=?, provider=?, cost_per_second=?, is_active=?,
                 supported_resolutions=?, supported_sizes=?, supported_aspect_ratios=?, supported_durations=?,
                 allow_first_frame=?, allow_last_frame=?, allow_input_references=?, allow_generate_audio=?, allow_img2video=?, pricing_json=?
                 WHERE id=?", [
                 $data['name'], $data['display_name'], $data['description'], $data['provider'],
-                $data['cost_per_video'], $data['is_active'],
+                $data['cost_per_second'], $data['is_active'],
                 $data['supported_resolutions'], $data['supported_sizes'], $data['supported_aspect_ratios'],
                 $data['supported_durations'],
                 $data['allow_first_frame'], $data['allow_last_frame'], $data['allow_input_references'],
                 $data['allow_generate_audio'], $data['allow_img2video'], $data['pricing_json'], $id
             ]);
-            $message = '✅ مدل ویدئو بروزرسانی شد (هزینه: ' . number_format($data['cost_per_video']) . ' اعتبار).';
+            $message = '✅ مدل ویدئو بروزرسانی شد (هزینه: ' . number_format($data['cost_per_second']) . ' اعتبار/ثانیه).';
         } elseif ($action === 'toggle' && isset($_POST['id'])) {
             $id = (int) $_POST['id'];
             $row = $db->query("SELECT is_active FROM ai_video_models WHERE id=?", [$id])->fetch();
@@ -170,7 +158,6 @@ ob_start();
                 <input type="hidden" name="id" value="<?php echo $editModel['id']; ?>">
                 <?php endif; ?>
 
-                <!-- Basic info -->
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label">نام مدل (شناسه API):</label>
@@ -200,9 +187,10 @@ ob_start();
                         </select>
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">هزینه پایه (اعتبار):</label>
-                        <input type="number" name="cost_per_video" class="form-control" min="1" required
-                               value="<?php echo $editMode ? ($editModel['cost_per_video'] ?? 5) : '5'; ?>">
+                        <label class="form-label">💰 هزینه هر ثانیه (اعتبار):</label>
+                        <input type="number" name="cost_per_second" class="form-control" min="1" required
+                               value="<?php echo $editMode ? ($editModel['cost_per_second'] ?? 1) : '1'; ?>">
+                        <small class="text-muted">قیمت نهایی = مدت (ثانیه) × هزینه هر ثانیه</small>
                     </div>
                     <div class="col-md-4 d-flex align-items-end">
                         <div class="form-check">
@@ -223,7 +211,6 @@ ob_start();
                 </div>
 
                 <?php
-                // Per-resolution pricing
                 $editPricing = [];
                 if ($editMode && !empty($editModel['pricing_json'])) {
                     $editPricing = json_decode($editModel['pricing_json'], true) ?: [];
@@ -231,7 +218,7 @@ ob_start();
                 $editResolutions = parseCsvToArray($editMode ? $editModel['supported_resolutions'] ?? '' : '');
                 ?>
                 <div class="mb-3" id="pricingSection">
-                    <label class="form-label">قیمت جداگانه هر رزولوشن (صفر = استفاده از هزینه پایه):</label>
+                    <label class="form-label">قیمت جداگانه هر رزولوشن (صفر = استفاده از هزینه هر ثانیه):</label>
                     <div class="row">
                     <?php if (!empty($editResolutions)): ?>
                         <?php foreach ($editResolutions as $res): ?>
@@ -324,7 +311,7 @@ ob_start();
                         <tr>
                             <th>ID</th>
                             <th>نام</th>
-                            <th>هزینه</th>
+                            <th>💰/ثانیه</th>
                             <th>رزولوشن</th>
                             <th>مدت‌ها</th>
                             <th>قابلیت‌ها</th>
@@ -342,7 +329,7 @@ ob_start();
                                     <strong><?php echo htmlspecialchars($m['display_name'] ?? $m['name'] ?? '—'); ?></strong>
                                     <?php if ($m['description']): ?><br><small class="text-muted"><?php echo htmlspecialchars(mb_substr($m['description'], 0, 60)); ?></small><?php endif; ?>
                                 </td>
-                                <td><?php echo $m['cost_per_video']; ?> اعتبار</td>
+                                <td><?php echo (int)($m['cost_per_second'] ?? 1); ?> /s</td>
                                 <td><small><?php echo htmlspecialchars($m['supported_resolutions'] ?? '—'); ?></small></td>
                                 <td><small><?php echo htmlspecialchars($m['supported_durations'] ?? '—'); ?>s</small></td>
                                 <td>

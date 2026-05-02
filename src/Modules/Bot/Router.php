@@ -98,6 +98,12 @@ class Router
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> ChatHandler");
                 return new ChatHandler($this->baleClient);
             }
+            // Memory add text state
+            if ($state === 'awaiting_memory_text') {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> MemoryCommandHandler");
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
         }
 
         // 5. Photo messages — route to ChatHandler if in chat_active state
@@ -175,7 +181,7 @@ class Router
             if (str_starts_with($data, 'edit_select_model_')) {
                 return new Img2ImgHandler($this->baleClient);
             }
-            if (str_starts_with($data, 'vid_select_model_') || str_starts_with($data, 'vid_res_') || str_starts_with($data, 'vid_ar_') || str_starts_with($data, 'vid_dur_') || str_starts_with($data, 'vid_confirm_') || $data === 'vid_back_model') {
+            if (str_starts_with($data, 'vid_select_model_') || str_starts_with($data, 'vid_res_') || str_starts_with($data, 'vid_ar_') || str_starts_with($data, 'vid_dur_') || str_starts_with($data, 'vid_confirm_') || str_starts_with($data, 'vid_skip_') || $data === 'vid_back_model') {
                 return new VideoHandler($this->baleClient);
             }
             if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {

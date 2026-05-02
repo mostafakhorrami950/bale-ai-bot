@@ -30,6 +30,7 @@ class VideoHandler extends BaseHandler
             $text = $update->getText();
             $callbackData = $update->getCallbackData();
             $isCallback = $update->isCallback();
+            $hasPhoto = $update->hasPhoto();
 
             if (!$this->checkMembership($userId, $chatId)) return;
 
@@ -44,7 +45,7 @@ class VideoHandler extends BaseHandler
             // Model selection callback: vid_select_model_{id}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_select_model_')) {
                 $modelId = (int) str_replace('vid_select_model_', '', $callbackData);
-                $this->saveModelAndShowPrompt($chatId, $userId, $modelId);
+                $this->saveModelAndAskPrompt($chatId, $userId, $modelId);
                 return;
             }
 
@@ -58,9 +59,39 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // Resolution selection: vid_res_{modelId}_{resolution}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_res_')) {
-                $this->handleResolutionCallback($chatId, $userId, $callbackData);
+            // First frame photo input
+            if ($state === 'awaiting_video_first_frame') {
+                if ($hasPhoto) {
+                    $this->processFirstFrame($chatId, $userId, $update);
+                } else {
+                    $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک تصویر ارسال کنید.");
+                }
+                return;
+            }
+
+            // Last frame photo input
+            if ($state === 'awaiting_video_last_frame') {
+                if ($hasPhoto) {
+                    $this->processLastFrame($chatId, $userId, $update);
+                } else {
+                    $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک تصویر ارسال کنید.");
+                }
+                return;
+            }
+
+            // Reference photo input
+            if ($state === 'awaiting_video_reference') {
+                if ($hasPhoto) {
+                    $this->processReference($chatId, $userId, $update);
+                } else {
+                    $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک تصویر ارسال کنید.");
+                }
+                return;
+            }
+
+            // Duration selection: vid_dur_{modelId}_{duration}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_dur_')) {
+                $this->handleDurationCallback($chatId, $userId, $callbackData);
                 return;
             }
 
@@ -70,19 +101,25 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // Duration selection: vid_dur_{modelId}_{duration}_{resolution}_{aspectRatio}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_dur_')) {
-                $this->handleDurationCallback($chatId, $userId, $callbackData);
+            // Resolution selection: vid_res_{modelId}_{resolution}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_res_')) {
+                $this->handleResolutionCallback($chatId, $userId, $callbackData);
                 return;
             }
 
-            // Confirm and send: vid_confirm_{modelId}_{duration}_{resolution}_{aspectRatio}
+            // Confirm and send: vid_confirm_{modelId}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_confirm_')) {
                 $this->handleConfirmCallback($chatId, $userId, $callbackData);
                 return;
             }
 
-            // Back to selection
+            // Skip optional step: vid_skip_{step}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_skip_')) {
+                $this->handleSkipCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Back to model selection
             if ($callbackData === 'vid_back_model') {
                 $this->showModelSelection($chatId, $userId);
                 return;
@@ -106,7 +143,7 @@ class VideoHandler extends BaseHandler
         try {
             $db = Database::getInstance();
             $models = $db->query(
-                "SELECT id, name, display_name, description, cost_per_video, is_active FROM ai_video_models WHERE is_active = 1 ORDER BY id ASC"
+                "SELECT id, name, display_name, description, cost_per_second, is_active FROM ai_video_models WHERE is_active = 1 ORDER BY id ASC"
             )->fetchAll();
 
             if (empty($models)) {
@@ -120,8 +157,8 @@ class VideoHandler extends BaseHandler
             foreach ($models as $m) {
                 $display = $m['display_name'] ?? $m['name'];
                 $desc = $m['description'] ? "\n  📌 {$m['description']}" : '';
-                $cost = $m['cost_per_video'];
-                $msg .= "• **{$display}**\n  💰 هزینه: {$cost} اعتبار{$desc}\n\n";
+                $costPerSec = (int) ($m['cost_per_second'] ?? 1);
+                $msg .= "• **{$display}**\n  💰 هزینه: {$costPerSec} اعتبار/ثانیه{$desc}\n\n";
                 $keyboard['inline_keyboard'][] = [
                     ['text' => $display, 'callback_data' => 'vid_select_model_' . $m['id']]
                 ];
@@ -139,7 +176,7 @@ class VideoHandler extends BaseHandler
     /**
      * Save selected model and ask for prompt text.
      */
-    private function saveModelAndShowPrompt(int $chatId, int $userId, int $modelId): void
+    private function saveModelAndAskPrompt(int $chatId, int $userId, int $modelId): void
     {
         try {
             $db = Database::getInstance();
@@ -153,7 +190,6 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // Save in bot_state
             $internalId = $this->resolveUserId($userId);
             if (!$internalId) {
                 $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد. لطفاً /start را بزنید.");
@@ -163,7 +199,13 @@ class VideoHandler extends BaseHandler
             $extra = json_encode([
                 'video_model_id' => $modelId,
                 'video_model_name' => $model['name'],
-                'video_cost' => (int) ($model['cost_per_video'] ?? 5),
+                'cost_per_second' => (int) ($model['cost_per_second'] ?? 1),
+                'allow_first_frame' => (int) ($model['allow_first_frame'] ?? 0),
+                'allow_last_frame' => (int) ($model['allow_last_frame'] ?? 0),
+                'allow_input_references' => (int) ($model['allow_input_references'] ?? 0),
+                'supported_aspect_ratios' => $model['supported_aspect_ratios'] ?? '',
+                'supported_resolutions' => $model['supported_resolutions'] ?? '',
+                'supported_durations' => $model['supported_durations'] ?? '',
                 'step' => 'prompt',
             ]);
             $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, $extra]);
@@ -179,13 +221,13 @@ class VideoHandler extends BaseHandler
 
             $this->baleClient->sendMessage($chatId, $msg);
         } catch (\Throwable $e) {
-            error_log("VideoHandler::saveModelAndShowPrompt ERROR: " . $e->getMessage());
+            error_log("VideoHandler::saveModelAndAskPrompt ERROR: " . $e->getMessage());
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در ذخیره مدل.");
         }
     }
 
     /**
-     * Process the prompt text, then show optional settings (resolution, aspect_ratio, duration).
+     * Process the prompt text, then move to next step (first_frame, last_frame, reference, duration, etc.)
      */
     private function processPrompt(int $chatId, int $userId, string $prompt): void
     {
@@ -200,229 +242,425 @@ class VideoHandler extends BaseHandler
         }
 
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $modelId = (int) ($extra['video_model_id'] ?? 0);
-
-        // Save prompt in state
         $extra['prompt'] = $prompt;
-        $extra['step'] = 'settings';
-        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
 
-        // Show settings based on model capabilities
-        $this->showVideoSettings($chatId, $userId, $modelId, $prompt);
+        // Move to next step based on model capabilities
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
     }
 
     /**
-     * Show optional settings for the video (only what model supports).
+     * Advance to the next step in the video creation flow.
+     * Order: first_frame → last_frame → reference → duration → aspect_ratio → resolution → confirm
      */
-    private function showVideoSettings(int $chatId, int $userId, int $modelId, string $prompt): void
-    {
-        try {
-            $db = Database::getInstance();
-            $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
-            if (!$model) return;
-
-            $msg = "🎬 **تنظیمات ویدئو**\n\n"
-                 . "📝 پرامپت شما: " . mb_substr($prompt, 0, 100) . (mb_strlen($prompt) > 100 ? '...' : '') . "\n\n";
-
-            $keyboard = ['inline_keyboard' => []];
-
-            // Resolutions
-            $resolutions = $this->parseCsv($model['supported_resolutions'] ?? '');
-            if (!empty($resolutions)) {
-                $msg .= "📐 **resolution را انتخاب کنید:**\n" . implode(' | ', $resolutions) . "\n\n";
-                $row = [];
-                foreach ($resolutions as $r) {
-                    $row[] = ['text' => $r, 'callback_data' => 'vid_res_' . $modelId . '_' . $r];
-                }
-                // Split into rows of 3
-                $keyboard['inline_keyboard'] = array_merge($keyboard['inline_keyboard'], array_chunk($row, 3));
-            }
-
-            // If no resolutions, go to aspect ratios
-            if (empty($resolutions)) {
-                $this->showAspectRatios($chatId, $userId, $modelId, $prompt);
-                return;
-            }
-
-            // Save step=waiting_resolution
-            $msg .= "لطفاً resolution مورد نظر را انتخاب کنید:";
-            $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'vid_back_model']];
-
-            $this->baleClient->sendMessage($chatId, $msg, $keyboard);
-        } catch (\Throwable $e) {
-            error_log("VideoHandler::showVideoSettings ERROR: " . $e->getMessage());
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در بارگذاری تنظیمات.");
-        }
-    }
-
-    private function handleResolutionCallback(int $chatId, int $userId, string $callbackData): void
-    {
-        // format: vid_res_{modelId}_{resolution}_{aspectRatio}_{duration} (some parts optional)
-        $rest = substr($callbackData, 8); // remove "vid_res_"
-        $parts = explode('_', $rest);
-        $modelId = (int) ($parts[0] ?? 0);
-        $resolution = $parts[1] ?? '';
-
-        if (empty($resolution)) return;
-
-        $db = Database::getInstance();
-        $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
-        if (!$model) return;
-
-        // Save selected resolution in state
-        $internalId = $this->resolveUserId($userId);
-        if (!$internalId) return;
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $extra['resolution'] = $resolution;
-        $extra['step'] = 'waiting_aspect_ratio';
-        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
-
-        $this->showAspectRatios($chatId, $userId, $modelId, $extra['prompt'] ?? '');
-    }
-
-    private function showAspectRatios(int $chatId, int $userId, int $modelId, string $prompt): void
+    private function advanceToNextStep(int $chatId, int $userId, int $internalId, array $extra): void
     {
         $db = Database::getInstance();
-        $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
-        if (!$model) return;
+        $currentStep = $extra['step'] ?? 'prompt';
 
-        $aspectRatios = $this->parseCsv($model['supported_aspect_ratios'] ?? '');
+        // Determine next step
+        $nextStep = $this->getNextStep($extra, $currentStep);
 
-        if (empty($aspectRatios)) {
-            // Skip to durations
-            $this->showDurations($chatId, $userId, $modelId, $prompt, '');
+        if ($nextStep === 'confirm') {
+            // All steps done, show confirm
+            $extra['step'] = 'confirm';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+            $this->showConfirm($chatId, $userId, $internalId, $extra);
             return;
         }
 
-        $msg = "🎬 **انتخاب aspect ratio**\n\n"
-             . "📝 پرامپت: " . mb_substr($prompt, 0, 100) . (mb_strlen($prompt) > 100 ? '...' : '') . "\n\n"
-             . "📐 نسبت تصویر را انتخاب کنید:\n";
-        $keyboard = ['inline_keyboard' => []];
-        $row = [];
-        foreach ($aspectRatios as $ar) {
-            $row[] = ['text' => $ar, 'callback_data' => 'vid_ar_' . $modelId . '_' . $ar];
+        if ($nextStep === 'first_frame') {
+            $extra['step'] = 'first_frame';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_first_frame', ?)", [$internalId, json_encode($extra)]);
+            $keyboard = [
+                'inline_keyboard' => [
+                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_first_frame']],
+                ]
+            ];
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم اول را ارسال کنید**\n\nیک تصویر برای فریم اول ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            return;
         }
-        $keyboard['inline_keyboard'] = array_chunk($row, 3);
-        $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'vid_back_model']];
 
-        $this->baleClient->sendMessage($chatId, $msg, $keyboard);
+        if ($nextStep === 'last_frame') {
+            $extra['step'] = 'last_frame';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_last_frame', ?)", [$internalId, json_encode($extra)]);
+            $keyboard = [
+                'inline_keyboard' => [
+                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_last_frame']],
+                ]
+            ];
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم آخر را ارسال کنید**\n\nیک تصویر برای فریم آخر ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            return;
+        }
+
+        if ($nextStep === 'reference') {
+            $extra['step'] = 'reference';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_reference', ?)", [$internalId, json_encode($extra)]);
+            $keyboard = [
+                'inline_keyboard' => [
+                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_reference']],
+                ]
+            ];
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر مرجع ارسال کنید**\n\nیک تصویر مرجع برای ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            return;
+        }
+
+        if ($nextStep === 'duration') {
+            $extra['step'] = 'duration';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+            $this->showDurationSelection($chatId, $userId, $internalId, $extra);
+            return;
+        }
+
+        if ($nextStep === 'aspect_ratio') {
+            $extra['step'] = 'aspect_ratio';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+            $this->showAspectRatioSelection($chatId, $userId, $internalId, $extra);
+            return;
+        }
+
+        if ($nextStep === 'resolution') {
+            $extra['step'] = 'resolution';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+            $this->showResolutionSelection($chatId, $userId, $internalId, $extra);
+            return;
+        }
+
+        // Fallback: show confirm
+        $extra['step'] = 'confirm';
+        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+        $this->showConfirm($chatId, $userId, $internalId, $extra);
     }
 
-    private function handleAspectRatioCallback(int $chatId, int $userId, string $callbackData): void
+    /**
+     * Determine the next step based on model capabilities and current step.
+     */
+    private function getNextStep(array $extra, string $currentStep): string
     {
-        $rest = substr($callbackData, 7); // remove "vid_ar_"
-        $parts = explode('_', $rest);
-        $modelId = (int) ($parts[0] ?? 0);
-        $aspectRatio = $parts[1] ?? '';
+        $allowFirstFrame = (int) ($extra['allow_first_frame'] ?? 0);
+        $allowLastFrame = (int) ($extra['allow_last_frame'] ?? 0);
+        $allowReference = (int) ($extra['allow_input_references'] ?? 0);
+        $aspectRatios = trim($extra['supported_aspect_ratios'] ?? '');
+        $resolutions = trim($extra['supported_resolutions'] ?? '');
+        $durations = trim($extra['supported_durations'] ?? '');
 
-        if (empty($aspectRatio)) return;
+        switch ($currentStep) {
+            case 'prompt':
+                if ($allowFirstFrame && empty($extra['first_frame_file_id'] ?? '')) return 'first_frame';
+                if ($allowLastFrame && empty($extra['last_frame_file_id'] ?? '')) return 'last_frame';
+                if ($allowReference && empty($extra['reference_file_id'] ?? '')) return 'reference';
+                if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
+                if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
 
+            case 'first_frame':
+                if ($allowLastFrame && empty($extra['last_frame_file_id'] ?? '')) return 'last_frame';
+                if ($allowReference && empty($extra['reference_file_id'] ?? '')) return 'reference';
+                if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
+                if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
+
+            case 'last_frame':
+                if ($allowReference && empty($extra['reference_file_id'] ?? '')) return 'reference';
+                if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
+                if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
+
+            case 'reference':
+                if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
+                if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
+
+            case 'duration':
+                if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
+
+            case 'aspect_ratio':
+                if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                return 'confirm';
+
+            case 'resolution':
+                return 'confirm';
+
+            default:
+                return 'confirm';
+        }
+    }
+
+    /**
+     * Process first frame photo.
+     */
+    private function processFirstFrame(int $chatId, int $userId, $update): void
+    {
         $db = Database::getInstance();
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $extra['aspect_ratio'] = $aspectRatio;
-        $extra['step'] = 'waiting_duration';
-        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
 
-        $this->showDurations($chatId, $userId, $modelId, $extra['prompt'] ?? '', $extra['resolution'] ?? '');
-    }
-
-    private function showDurations(int $chatId, int $userId, int $modelId, string $prompt, string $resolution): void
-    {
-        $db = Database::getInstance();
-        $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
-        if (!$model) return;
-
-        $durations = $this->parseCsv($model['supported_durations'] ?? '');
-
-        if (empty($durations)) {
-            $durations = range(3, 30);
+        $fileId = $this->getPhotoFileId($update);
+        if (!$fileId) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت تصویر. مجدداً تلاش کنید.");
+            return;
         }
 
-        $msg = "🎬 **انتخاب مدت زمان ویدئو**\n\n"
-             . "📝 پرامپت: " . mb_substr($prompt, 0, 100) . (mb_strlen($prompt) > 100 ? '...' : '') . "\n";
-        if ($resolution) $msg .= "📐 resolution: {$resolution}\n";
-        $msg .= "\n⏱️ مدت زمان مورد نظر را انتخاب کنید (ثانیه):\n";
-        $keyboard = ['inline_keyboard' => []];
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['first_frame_file_id'] = $fileId;
+        $extra['step'] = 'first_frame';
 
-        // Chunk durations into rows of 5
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Process last frame photo.
+     */
+    private function processLastFrame(int $chatId, int $userId, $update): void
+    {
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $fileId = $this->getPhotoFileId($update);
+        if (!$fileId) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت تصویر. مجدداً تلاش کنید.");
+            return;
+        }
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['last_frame_file_id'] = $fileId;
+        $extra['step'] = 'last_frame';
+
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Process reference photo.
+     */
+    private function processReference(int $chatId, int $userId, $update): void
+    {
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $fileId = $this->getPhotoFileId($update);
+        if (!$fileId) {
+            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت تصویر. مجدداً تلاش کنید.");
+            return;
+        }
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['reference_file_id'] = $fileId;
+        $extra['step'] = 'reference';
+
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Handle skip callback: vid_skip_{step}
+     */
+    private function handleSkipCallback(int $chatId, int $userId, string $callbackData): void
+    {
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Show duration selection as inline buttons.
+     */
+    private function showDurationSelection(int $chatId, int $userId, int $internalId, array $extra): void
+    {
+        $durations = $this->parseCsv($extra['supported_durations'] ?? '');
+        if (empty($durations)) {
+            $durations = ['5', '10', '15'];
+        }
+
+        $costPerSec = (int) ($extra['cost_per_second'] ?? 1);
+        $msg = "⏱️ **مدت زمان ویدئو را انتخاب کنید**\n\n"
+             . "💰 هزینه: {$costPerSec} اعتبار/ثانیه\n\n"
+             . "مدت مورد نظر را انتخاب کنید:\n";
+
+        $keyboard = ['inline_keyboard' => []];
         $durationsInt = array_map('intval', $durations);
         sort($durationsInt);
         $chunks = array_chunk($durationsInt, 5);
         foreach ($chunks as $chunk) {
             $row = [];
             foreach ($chunk as $d) {
-                $row[] = ['text' => $d . 's', 'callback_data' => 'vid_dur_' . $modelId . '_' . $d];
+                $totalCost = $d * $costPerSec;
+                $row[] = ['text' => $d . 's (' . $totalCost . ' اعتبار)', 'callback_data' => 'vid_dur_' . $d];
             }
             $keyboard['inline_keyboard'][] = $row;
         }
-        $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'vid_back_model']];
+        $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت به مدل‌ها', 'callback_data' => 'vid_back_model']];
 
         $this->baleClient->sendMessage($chatId, $msg, $keyboard);
     }
 
+    /**
+     * Handle duration callback: vid_dur_{duration}
+     */
     private function handleDurationCallback(int $chatId, int $userId, string $callbackData): void
     {
-        $rest = substr($callbackData, 9); // remove "vid_dur_"
-        $parts = explode('_', $rest);
-        $modelId = (int) ($parts[0] ?? 0);
-        $duration = (int) ($parts[1] ?? 5);
+        $rest = substr($callbackData, 8); // remove "vid_dur_"
+        $duration = (int) $rest;
 
         $db = Database::getInstance();
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
+
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
         $extra['duration'] = $duration;
-        $extra['step'] = 'confirm';
-        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+        $extra['step'] = 'duration';
 
-        $this->showConfirm($chatId, $userId, $extra['prompt'] ?? '', $modelId, $duration, $extra['resolution'] ?? '', $extra['aspect_ratio'] ?? '');
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
     }
 
-    private function showConfirm(int $chatId, int $userId, string $prompt, int $modelId, int $duration, string $resolution, string $aspectRatio): void
+    /**
+     * Show aspect ratio selection as inline buttons.
+     */
+    private function showAspectRatioSelection(int $chatId, int $userId, int $internalId, array $extra): void
+    {
+        $aspectRatios = $this->parseCsv($extra['supported_aspect_ratios'] ?? '');
+        if (empty($aspectRatios)) {
+            $aspectRatios = ['16:9', '9:16', '1:1'];
+        }
+
+        $msg = "📐 **نسبت تصویر را انتخاب کنید**\n\n";
+        $keyboard = ['inline_keyboard' => []];
+        $row = [];
+        foreach ($aspectRatios as $ar) {
+            $row[] = ['text' => $ar, 'callback_data' => 'vid_ar_' . $ar];
+        }
+        $keyboard['inline_keyboard'] = array_chunk($row, 3);
+        $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت به مدل‌ها', 'callback_data' => 'vid_back_model']];
+
+        $this->baleClient->sendMessage($chatId, $msg, $keyboard);
+    }
+
+    /**
+     * Handle aspect ratio callback: vid_ar_{aspectRatio}
+     */
+    private function handleAspectRatioCallback(int $chatId, int $userId, string $callbackData): void
+    {
+        $rest = substr($callbackData, 7); // remove "vid_ar_"
+        $aspectRatio = $rest;
+
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['aspect_ratio'] = $aspectRatio;
+        $extra['step'] = 'aspect_ratio';
+
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Show resolution selection as inline buttons.
+     */
+    private function showResolutionSelection(int $chatId, int $userId, int $internalId, array $extra): void
+    {
+        $resolutions = $this->parseCsv($extra['supported_resolutions'] ?? '');
+        if (empty($resolutions)) {
+            $resolutions = ['480p', '720p', '1080p'];
+        }
+
+        $msg = "📐 **resolution را انتخاب کنید**\n\n";
+        $keyboard = ['inline_keyboard' => []];
+        $row = [];
+        foreach ($resolutions as $r) {
+            $row[] = ['text' => $r, 'callback_data' => 'vid_res_' . $r];
+        }
+        $keyboard['inline_keyboard'] = array_chunk($row, 3);
+        $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت به مدل‌ها', 'callback_data' => 'vid_back_model']];
+
+        $this->baleClient->sendMessage($chatId, $msg, $keyboard);
+    }
+
+    /**
+     * Handle resolution callback: vid_res_{resolution}
+     */
+    private function handleResolutionCallback(int $chatId, int $userId, string $callbackData): void
+    {
+        $rest = substr($callbackData, 8); // remove "vid_res_"
+        $resolution = $rest;
+
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['resolution'] = $resolution;
+        $extra['step'] = 'resolution';
+
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
+    }
+
+    /**
+     * Show final confirmation with cost breakdown.
+     */
+    private function showConfirm(int $chatId, int $userId, int $internalId, array $extra): void
     {
         $db = Database::getInstance();
-        $model = $db->query("SELECT id, name, display_name, cost_per_video, cost_per_second FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
+        $modelId = (int) ($extra['video_model_id'] ?? 0);
+        $model = $db->query("SELECT id, name, display_name FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) return;
 
         $displayName = $model['display_name'] ?? $model['name'];
-        $costPerSecond = (int) ($model['cost_per_second'] ?? 0);
-        $baseCost = (int) ($model['cost_per_video'] ?? 5);
-        // Cost = base + (duration * cost_per_second), but at least base cost
-        $cost = $costPerSecond > 0 ? ($baseCost + ($duration * $costPerSecond)) : $baseCost;
+        $prompt = $extra['prompt'] ?? '';
+        $duration = (int) ($extra['duration'] ?? 5);
+        $costPerSec = (int) ($extra['cost_per_second'] ?? 1);
+        $totalCost = $duration * $costPerSec;
+        $resolution = $extra['resolution'] ?? '';
+        $aspectRatio = $extra['aspect_ratio'] ?? '';
+        $hasFirstFrame = !empty($extra['first_frame_file_id'] ?? '');
+        $hasLastFrame = !empty($extra['last_frame_file_id'] ?? '');
+        $hasReference = !empty($extra['reference_file_id'] ?? '');
 
         $msg = "🎬 **تایید نهایی**\n\n"
              . "📝 پرامپت: {$prompt}\n"
              . "🤖 مدل: {$displayName}\n"
-             . "⏱️ مدت: {$duration} ثانیه\n";
+             . "⏱️ مدت: {$duration} ثانیه\n"
+             . "💰 هزینه: {$costPerSec} اعتبار/ثانیه = **{$totalCost} اعتبار**\n";
         if ($resolution) $msg .= "📐 resolution: {$resolution}\n";
         if ($aspectRatio) $msg .= "📐 نسبت تصویر: {$aspectRatio}\n";
-        $msg .= "💰 **هزینه: {$cost} اعتبار**\n\n"
-              . "✅ برای ارسال، دکمه زیر را بزنید.";
+        if ($hasFirstFrame) $msg .= "🖼️ فریم اول: ✅\n";
+        if ($hasLastFrame) $msg .= "🖼️ فریم آخر: ✅\n";
+        if ($hasReference) $msg .= "🖼️ تصویر مرجع: ✅\n";
+        $msg .= "\n✅ برای ارسال، دکمه زیر را بزنید.";
 
         $keyboard = [
             'inline_keyboard' => [
-                [['text' => '✅ ارسال به هوش مصنوعی', 'callback_data' => 'vid_confirm_' . $modelId . '_' . $duration . '_' . ($resolution ?: 'auto') . '_' . ($aspectRatio ?: 'auto')]],
-                [['text' => '🔙 ویرایش تنظیمات', 'callback_data' => 'vid_back_model']],
+                [['text' => '✅ ارسال به هوش مصنوعی', 'callback_data' => 'vid_confirm_' . $modelId]],
+                [['text' => '🔙 بازگشت به مدل‌ها', 'callback_data' => 'vid_back_model']],
             ]
         ];
 
         $this->baleClient->sendMessage($chatId, $msg, $keyboard);
     }
 
+    /**
+     * Handle confirm callback: vid_confirm_{modelId}
+     */
     private function handleConfirmCallback(int $chatId, int $userId, string $callbackData): void
     {
-        // format: vid_confirm_{modelId}_{duration}_{resolution}_{aspectRatio}
         $rest = substr($callbackData, 13); // remove "vid_confirm_"
-        $parts = explode('_', $rest);
-        $modelId = (int) ($parts[0] ?? 0);
-        $duration = (int) ($parts[1] ?? 5);
-        $resolution = $parts[2] ?? '';
-        $aspectRatio = $parts[3] ?? '';
+        $modelId = (int) $rest;
 
         $db = Database::getInstance();
         $internalId = $this->resolveUserId($userId);
@@ -434,26 +672,27 @@ class VideoHandler extends BaseHandler
             return;
         }
 
-        $cost = (int) ($model['cost_per_video'] ?? 5);
+        // Get state data
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $prompt = $extra['prompt'] ?? '';
+        $duration = (int) ($extra['duration'] ?? 5);
+        $costPerSec = (int) ($extra['cost_per_second'] ?? 1);
+        $totalCost = $duration * $costPerSec;
+
+        if (empty($prompt)) {
+            $this->baleClient->sendMessage($chatId, "⚠️ پرامپت یافت نشد. دوباره تلاش کنید.");
+            return;
+        }
 
         // Check credit
-        if (!CreditService::hasEnoughCredit($internalId, $cost)) {
+        if (!CreditService::hasEnoughCredit($internalId, $totalCost)) {
             $buyCreditKeyboard = [
                 'inline_keyboard' => [
                     [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "❌ **اعتبار کافی نیست!**\n\nشما به {$cost} اعتبار نیاز دارید.\nلطفاً از بخش «💳 خرید اعتبار» حساب خود را شارژ کنید.", $buyCreditKeyboard);
-            return;
-        }
-
-        // Get prompt from state
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $prompt = $extra['prompt'] ?? '';
-
-        if (empty($prompt)) {
-            $this->baleClient->sendMessage($chatId, "⚠️ پرامپت یافت نشد. دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($chatId, "❌ **اعتبار کافی نیست!**\n\nشما به {$totalCost} اعتبار نیاز دارید.\nلطفاً از بخش «💳 خرید اعتبار» حساب خود را شارژ کنید.", $buyCreditKeyboard);
             return;
         }
 
@@ -470,15 +709,17 @@ class VideoHandler extends BaseHandler
             'prompt' => $prompt,
             'duration' => $duration,
         ];
-        if (!empty($resolution) && $resolution !== 'auto') $params['resolution'] = $resolution;
-        if (!empty($aspectRatio) && $aspectRatio !== 'auto') $params['aspect_ratio'] = $aspectRatio;
+        if (!empty($extra['resolution'] ?? '')) $params['resolution'] = $extra['resolution'];
+        if (!empty($extra['aspect_ratio'] ?? '')) $params['aspect_ratio'] = $extra['aspect_ratio'];
+        if (!empty($extra['first_frame_file_id'] ?? '')) $params['first_frame_file_id'] = $extra['first_frame_file_id'];
+        if (!empty($extra['last_frame_file_id'] ?? '')) $params['last_frame_file_id'] = $extra['last_frame_file_id'];
+        if (!empty($extra['reference_file_id'] ?? '')) $params['reference_file_id'] = $extra['reference_file_id'];
 
-        // Submit to OpenRouter
+        // Submit to VideoService
         $videoService = new VideoService();
         $result = $videoService->submit($params);
 
         if (isset($result['error'])) {
-            // Clear processing state
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
             $this->baleClient->sendMessage($chatId, "❌ خطا: " . $result['error']);
             Logger::error('VideoHandler::submit error', ['user_id' => $internalId, 'error' => $result['error']]);
@@ -496,8 +737,8 @@ class VideoHandler extends BaseHandler
         // Send initial status
         $this->baleClient->sendMessage($chatId, "✅ درخواست شما ثبت شد.\n🆔 شناسه: {$jobId}\n⏳ در حال ساخت ویدئو... این فرآیند ممکن است چند دقیقه طول بکشد.");
 
-        // Start polling in background (first check after 5 seconds)
-        $this->pollVideoJob($chatId, $internalId, $pollingUrl, $cost, $model['name'], $prompt);
+        // Start polling
+        $this->pollVideoJob($chatId, $internalId, $pollingUrl, $totalCost, $model['name'], $prompt);
     }
 
     /**
@@ -506,12 +747,12 @@ class VideoHandler extends BaseHandler
     private function pollVideoJob(int $chatId, int $internalId, string $pollingUrl, int $cost, string $modelName, string $prompt): void
     {
         $videoService = new VideoService();
-        $maxAttempts = 20; // 20 * 5 = 100 seconds max
+        $maxAttempts = 20;
         $attempt = 0;
 
         while ($attempt < $maxAttempts) {
             $attempt++;
-            sleep(5); // Wait 5 seconds between polls
+            sleep(5);
 
             $result = $videoService->poll($pollingUrl);
 
@@ -522,7 +763,6 @@ class VideoHandler extends BaseHandler
             }
 
             if ($result['status'] === 'completed') {
-                // Download video
                 $urls = $result['unsigned_urls'] ?? [];
                 if (empty($urls)) {
                     $this->baleClient->sendMessage($chatId, "⚠️ ویدئو ساخته شد اما لینک دانلودی یافت نشد.");
@@ -533,9 +773,7 @@ class VideoHandler extends BaseHandler
                 $refId = 'video_' . $internalId . '_' . time();
                 CreditService::deduct($internalId, $cost, $refId);
 
-                // Send each video to user
                 $sentCount = count($urls);
-                // Send download URLs as text since Bale API may not support file upload
                 $downloadMsg = "🔗 **لینک‌های دانلود ویدئو:**\n\n";
                 foreach ($urls as $i => $url) {
                     $num = $i + 1;
@@ -543,14 +781,12 @@ class VideoHandler extends BaseHandler
                 }
                 $this->baleClient->sendMessage($chatId, $downloadMsg);
 
-                // Success message
                 $msg = "✅ **ویدئو ساخته شد!**\n\n"
                      . "🤖 مدل: {$modelName}\n"
                      . "💰 هزینه کسر شده: {$cost} اعتبار\n"
                      . "🔖 reference: {$refId}";
                 $this->baleClient->sendMessage($chatId, $msg);
 
-                // Log
                 Logger::info('VideoHandler::completed', [
                     'user_id' => $internalId,
                     'model' => $modelName,
@@ -559,7 +795,6 @@ class VideoHandler extends BaseHandler
                     'sent_count' => $sentCount,
                 ]);
 
-                // Clear state
                 $db = Database::getInstance();
                 $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
                 return;
@@ -576,13 +811,11 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // Still in progress — send update every 3 attempts (every 15 seconds)
             if ($attempt % 3 === 0) {
                 $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت ویدئو... (مدت انتظار: " . ($attempt * 5) . " ثانیه)");
             }
         }
 
-        // Timeout
         $this->baleClient->sendMessage($chatId, "⏰ زمان انتظار به پایان رسید. ویدئو هنوز آماده نشده است.\n"
             . "لطفاً بعداً با پشتیبانی تماس بگیرید.\n"
             . "🆔 Job ID: " . basename($pollingUrl));
@@ -590,6 +823,22 @@ class VideoHandler extends BaseHandler
             'user_id' => $internalId,
             'polling_url' => $pollingUrl,
         ]);
+    }
+
+    /**
+     * Get the largest photo file_id from an update.
+     */
+    private function getPhotoFileId($update): ?string
+    {
+        try {
+            $photos = $update->getPhoto();
+            if (empty($photos)) return null;
+            // Get the largest photo (last in array)
+            $largest = end($photos);
+            return $largest['file_id'] ?? null;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     // ─── Helpers ───
