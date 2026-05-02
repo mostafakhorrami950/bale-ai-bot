@@ -55,6 +55,9 @@ abstract class BaseHandler
      * Check if user is a member of all required channels.
      * If not, send a message with clickable channel invite buttons and return false.
      * Returns true if the user can proceed.
+     *
+     * FIX: Added per-channel error handling so that a failure on one channel
+     * does not abort the entire check. Added detailed logging.
      */
     protected function checkMembership(int $baleUserId, int $chatId): bool
     {
@@ -64,13 +67,29 @@ abstract class BaseHandler
                 return true; // no required channels
             }
 
+            error_log("checkMembership: Checking " . count($channels) . " required channels for user $baleUserId");
+
             $nonMembers = [];
             foreach ($channels as $ch) {
                 $chId = $ch['channel_id'];
-                $result = $this->baleClient->getChatMember($chId, $baleUserId);
-                $status = $result['status'] ?? 'left';
+                $title = $ch['title'] ?? $chId;
+                error_log("checkMembership: Checking channel id=$chId title=$title");
+
+                try {
+                    $result = $this->baleClient->getChatMember($chId, $baleUserId);
+                    $status = $result['status'] ?? 'left';
+                    error_log("checkMembership: Channel $title result=" . json_encode($result));
+                } catch (\Throwable $e) {
+                    // Per-channel failure: log it and treat as non-member so user sees the channel
+                    error_log("checkMembership: ERROR checking channel $title: " . $e->getMessage());
+                    $status = 'left';
+                }
+
                 if (!in_array($status, ['member', 'creator', 'administrator'], true)) {
+                    error_log("checkMembership: User $baleUserId NOT a member of channel $title (status=$status)");
                     $nonMembers[] = $ch;
+                } else {
+                    error_log("checkMembership: User $baleUserId IS a member of channel $title (status=$status)");
                 }
             }
 
@@ -89,7 +108,7 @@ abstract class BaseHandler
                         $msg .= "📢 {$title}\n";
                     }
                 }
-                $msg .= "✅ پس از عضویت در تمام کانال‌ها، دکمه زیر را بزنید تا مجدداً بررسی شود.";
+                $msg .= "\n✅ پس از عضویت در تمام کانال‌ها، دکمه زیر را بزنید تا مجدداً بررسی شود.";
                 $keyboard['inline_keyboard'][] = [
                     ['text' => '✅ عضو شدم، بررسی کن', 'callback_data' => 'check_membership']
                 ];
@@ -98,13 +117,15 @@ abstract class BaseHandler
                 if ($msgId !== false) {
                     $this->storeMembershipMessageId($chatId, $msgId);
                 }
+                error_log("checkMembership: Blocked user $baleUserId — " . count($nonMembers) . " channel(s) not joined");
                 return false;
             }
 
+            error_log("checkMembership: User $baleUserId passed all " . count($channels) . " channel checks");
             return true;
         } catch (\Throwable $e) {
-            // If API fails, allow through (fail open)
-            error_log("checkMembership error: " . $e->getMessage());
+            // If API fails completely, allow through (fail open)
+            error_log("checkMembership FATAL error: " . $e->getMessage());
             return true;
         }
     }
