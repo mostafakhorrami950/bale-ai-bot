@@ -36,12 +36,7 @@ class VideoHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            // Entry: generate_video button or text
-            if ($callbackData === 'generate_video' || $text === "\xF0\x9F\x8E\xAC ساخت ویدئو با هوش مصنوعی") {
-                $this->showModelSelection($chatId, $userId);
-                return;
-            }
-
+            // PRIORITY 1: Always check callbacks BEFORE state-based photo checks
             // Model selection callback: vid_select_model_{id}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_select_model_')) {
                 $modelId = (int) str_replace('vid_select_model_', '', $callbackData);
@@ -49,7 +44,50 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // First frame photo input
+            // Skip optional step: vid_skip_{step} — check BEFORE state photo checks
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_skip_')) {
+                $this->handleSkipCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Duration selection: vid_dur_{duration}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_dur_')) {
+                $this->handleDurationCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Aspect ratio selection: vid_ar_{aspectRatio}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_ar_')) {
+                $this->handleAspectRatioCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Resolution selection: vid_res_{resolution}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_res_')) {
+                $this->handleResolutionCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Confirm and send: vid_confirm_{modelId}
+            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_confirm_')) {
+                $this->handleConfirmCallback($chatId, $userId, $callbackData);
+                return;
+            }
+
+            // Back to model selection
+            if ($callbackData === 'vid_back_model') {
+                $this->showModelSelection($chatId, $userId);
+                return;
+            }
+
+            // PRIORITY 2: Entry: generate_video button or text
+            if ($callbackData === 'generate_video' || $text === "\xF0\x9F\x8E\xAC ساخت ویدئو با هوش مصنوعی") {
+                $this->showModelSelection($chatId, $userId);
+                return;
+            }
+
+            // PRIORITY 3: State-based photo/prompt input checks
+            // First frame photo input — only if hasPhoto, otherwise fall through
             if ($state === 'awaiting_video_first_frame') {
                 if ($hasPhoto) {
                     $this->processFirstFrame($chatId, $userId, $update);
@@ -86,42 +124,6 @@ class VideoHandler extends BaseHandler
                     return;
                 }
                 $this->processPrompt($chatId, $userId, $text);
-                return;
-            }
-
-            // Duration selection: vid_dur_{duration}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_dur_')) {
-                $this->handleDurationCallback($chatId, $userId, $callbackData);
-                return;
-            }
-
-            // Aspect ratio selection: vid_ar_{aspectRatio}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_ar_')) {
-                $this->handleAspectRatioCallback($chatId, $userId, $callbackData);
-                return;
-            }
-
-            // Resolution selection: vid_res_{resolution}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_res_')) {
-                $this->handleResolutionCallback($chatId, $userId, $callbackData);
-                return;
-            }
-
-            // Confirm and send: vid_confirm_{modelId}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_confirm_')) {
-                $this->handleConfirmCallback($chatId, $userId, $callbackData);
-                return;
-            }
-
-            // Skip optional step: vid_skip_{step}
-            if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_skip_')) {
-                $this->handleSkipCallback($chatId, $userId, $callbackData);
-                return;
-            }
-
-            // Back to model selection
-            if ($callbackData === 'vid_back_model') {
-                $this->showModelSelection($chatId, $userId);
                 return;
             }
 
@@ -869,12 +871,10 @@ class VideoHandler extends BaseHandler
     private function getPhotoFileId($update): ?string
     {
         try {
-            $photos = $update->getPhoto();
-            if (empty($photos)) return null;
-            // Get the largest photo (last in array)
-            $largest = end($photos);
-            return $largest['file_id'] ?? null;
+            // Use Update class's built-in method
+            return $update->getPhotoFileId();
         } catch (\Throwable $e) {
+            error_log("VideoHandler::getPhotoFileId ERROR: " . $e->getMessage());
             return null;
         }
     }

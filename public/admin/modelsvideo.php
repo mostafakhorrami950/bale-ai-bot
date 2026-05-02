@@ -287,7 +287,7 @@ ob_start();
                     </div>
                     <div class="form-check">
                         <input type="checkbox" name="allow_generate_audio" class="form-check-input" id="aga"
-                               <?php echo $editMode ? ($editModel['allow_generate_audio'] ? 'checked' : 'checked') : 'checked'; ?>>
+                               <?php echo $editMode ? ($editModel['allow_generate_audio'] ? 'checked' : '') : 'checked'; ?>>
                         <label class="form-check-label" for="aga">generate_audio (تولید صدا)</label>
                     </div>
                     <div class="form-check">
