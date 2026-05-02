@@ -45,17 +45,7 @@ class VideoHandler extends BaseHandler
             // Model selection callback: vid_select_model_{id}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_select_model_')) {
                 $modelId = (int) str_replace('vid_select_model_', '', $callbackData);
-                $this->saveModelAndAskPrompt($chatId, $userId, $modelId);
-                return;
-            }
-
-            // Prompt input
-            if ($state === 'awaiting_video_prompt') {
-                if ($text === '/cancel' || $text === 'منو اصلی') {
-                    $this->clearState($userId);
-                    return;
-                }
-                $this->processPrompt($chatId, $userId, $text);
+                $this->saveModelAndStartFlow($chatId, $userId, $modelId);
                 return;
             }
 
@@ -89,19 +79,29 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            // Duration selection: vid_dur_{modelId}_{duration}
+            // Prompt input
+            if ($state === 'awaiting_video_prompt') {
+                if ($text === '/cancel' || $text === 'منو اصلی') {
+                    $this->clearState($userId);
+                    return;
+                }
+                $this->processPrompt($chatId, $userId, $text);
+                return;
+            }
+
+            // Duration selection: vid_dur_{duration}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_dur_')) {
                 $this->handleDurationCallback($chatId, $userId, $callbackData);
                 return;
             }
 
-            // Aspect ratio selection: vid_ar_{modelId}_{aspectRatio}
+            // Aspect ratio selection: vid_ar_{aspectRatio}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_ar_')) {
                 $this->handleAspectRatioCallback($chatId, $userId, $callbackData);
                 return;
             }
 
-            // Resolution selection: vid_res_{modelId}_{resolution}
+            // Resolution selection: vid_res_{resolution}
             if ($isCallback && is_string($callbackData) && str_starts_with($callbackData, 'vid_res_')) {
                 $this->handleResolutionCallback($chatId, $userId, $callbackData);
                 return;
@@ -174,9 +174,10 @@ class VideoHandler extends BaseHandler
     }
 
     /**
-     * Save selected model and ask for prompt text.
+     * Save selected model and start the flow.
+     * Flow order: first_frame → last_frame → reference → duration → aspect_ratio → resolution → prompt → confirm
      */
-    private function saveModelAndAskPrompt(int $chatId, int $userId, int $modelId): void
+    private function saveModelAndStartFlow(int $chatId, int $userId, int $modelId): void
     {
         try {
             $db = Database::getInstance();
@@ -196,7 +197,7 @@ class VideoHandler extends BaseHandler
                 return;
             }
 
-            $extra = json_encode([
+            $extra = [
                 'video_model_id' => $modelId,
                 'video_model_name' => $model['name'],
                 'cost_per_second' => (int) ($model['cost_per_second'] ?? 1),
@@ -206,62 +207,30 @@ class VideoHandler extends BaseHandler
                 'supported_aspect_ratios' => $model['supported_aspect_ratios'] ?? '',
                 'supported_resolutions' => $model['supported_resolutions'] ?? '',
                 'supported_durations' => $model['supported_durations'] ?? '',
-                'step' => 'prompt',
-            ]);
-            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, $extra]);
+                'step' => 'started',
+            ];
 
-            $displayName = $model['display_name'] ?? $model['name'];
-            $msg = "🎬 **مدل «{$displayName}» انتخاب شد.**\n\n"
-                 . "✏️ لطفاً متن (پرامپت) ویدئوی خود را بنویسید:\n\n"
-                 . "مثال:\n"
-                 . "• یک سگ طلایی در ساحل آفتابی در حال بازی با توپ\n"
-                 . "• غروب آفتاب بر فراز کوه‌های آلپ با دوربین آهسته\n\n"
-                 . "💡 هرچه توضیحات دقیق‌تر باشد، نتیجه بهتر است.\n"
-                 . "📝 /cancel برای لغو";
-
-            $this->baleClient->sendMessage($chatId, $msg);
+            // Move to first step based on model capabilities
+            $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
         } catch (\Throwable $e) {
-            error_log("VideoHandler::saveModelAndAskPrompt ERROR: " . $e->getMessage());
+            error_log("VideoHandler::saveModelAndStartFlow ERROR: " . $e->getMessage());
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در ذخیره مدل.");
         }
     }
 
     /**
-     * Process the prompt text, then move to next step (first_frame, last_frame, reference, duration, etc.)
-     */
-    private function processPrompt(int $chatId, int $userId, string $prompt): void
-    {
-        $db = Database::getInstance();
-        $internalId = $this->resolveUserId($userId);
-        if (!$internalId) return;
-
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        if (!$stateData) {
-            $this->baleClient->sendMessage($chatId, "⚠️ اطلاعات جلسه یافت نشد. دوباره تلاش کنید.");
-            return;
-        }
-
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
-        $extra['prompt'] = $prompt;
-
-        // Move to next step based on model capabilities
-        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
-    }
-
-    /**
      * Advance to the next step in the video creation flow.
-     * Order: first_frame → last_frame → reference → duration → aspect_ratio → resolution → confirm
+     * Correct order: first_frame → last_frame → reference → duration → aspect_ratio → resolution → prompt → confirm
      */
     private function advanceToNextStep(int $chatId, int $userId, int $internalId, array $extra): void
     {
         $db = Database::getInstance();
-        $currentStep = $extra['step'] ?? 'prompt';
+        $currentStep = $extra['step'] ?? 'started';
 
         // Determine next step
         $nextStep = $this->getNextStep($extra, $currentStep);
 
         if ($nextStep === 'confirm') {
-            // All steps done, show confirm
             $extra['step'] = 'confirm';
             $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
             $this->showConfirm($chatId, $userId, $internalId, $extra);
@@ -273,10 +242,10 @@ class VideoHandler extends BaseHandler
             $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_first_frame', ?)", [$internalId, json_encode($extra)]);
             $keyboard = [
                 'inline_keyboard' => [
-                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_first_frame']],
+                    [['text' => '⏭️ نیازی ندارم', 'callback_data' => 'vid_skip_first_frame']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم اول را ارسال کنید**\n\nیک تصویر برای فریم اول ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم اول را ارسال کنید**\n\nیک تصویر برای فریم اول ویدئو ارسال کنید.\nیا دکمه «نیازی ندارم» را بزنید.", $keyboard);
             return;
         }
 
@@ -285,10 +254,10 @@ class VideoHandler extends BaseHandler
             $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_last_frame', ?)", [$internalId, json_encode($extra)]);
             $keyboard = [
                 'inline_keyboard' => [
-                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_last_frame']],
+                    [['text' => '⏭️ نیازی ندارم', 'callback_data' => 'vid_skip_last_frame']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم آخر را ارسال کنید**\n\nیک تصویر برای فریم آخر ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر فریم آخر را ارسال کنید**\n\nیک تصویر برای فریم آخر ویدئو ارسال کنید.\nیا دکمه «نیازی ندارم» را بزنید.", $keyboard);
             return;
         }
 
@@ -297,10 +266,10 @@ class VideoHandler extends BaseHandler
             $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_reference', ?)", [$internalId, json_encode($extra)]);
             $keyboard = [
                 'inline_keyboard' => [
-                    [['text' => '⏭️ رد کردن این مرحله', 'callback_data' => 'vid_skip_reference']],
+                    [['text' => '⏭️ نیازی ندارم', 'callback_data' => 'vid_skip_reference']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر مرجع ارسال کنید**\n\nیک تصویر مرجع برای ویدئو ارسال کنید.\nیا دکمه «رد کردن» را بزنید.", $keyboard);
+            $this->baleClient->sendMessage($chatId, "🖼️ **تصویر مرجع ارسال کنید**\n\nیک تصویر مرجع برای ویدئو ارسال کنید.\nیا دکمه «نیازی ندارم» را بزنید.", $keyboard);
             return;
         }
 
@@ -325,6 +294,13 @@ class VideoHandler extends BaseHandler
             return;
         }
 
+        if ($nextStep === 'prompt') {
+            $extra['step'] = 'prompt';
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
+            $this->askPrompt($chatId, $userId, $internalId, $extra);
+            return;
+        }
+
         // Fallback: show confirm
         $extra['step'] = 'confirm';
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_video_prompt', ?)", [$internalId, json_encode($extra)]);
@@ -333,6 +309,7 @@ class VideoHandler extends BaseHandler
 
     /**
      * Determine the next step based on model capabilities and current step.
+     * Correct order: first_frame → last_frame → reference → duration → aspect_ratio → resolution → prompt → confirm
      */
     private function getNextStep(array $extra, string $currentStep): string
     {
@@ -344,13 +321,17 @@ class VideoHandler extends BaseHandler
         $durations = trim($extra['supported_durations'] ?? '');
 
         switch ($currentStep) {
-            case 'prompt':
+            case 'started':
+                // First: image steps
                 if ($allowFirstFrame && empty($extra['first_frame_file_id'] ?? '')) return 'first_frame';
                 if ($allowLastFrame && empty($extra['last_frame_file_id'] ?? '')) return 'last_frame';
                 if ($allowReference && empty($extra['reference_file_id'] ?? '')) return 'reference';
+                // Then: settings
                 if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
                 if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                // Finally: prompt
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'first_frame':
@@ -359,6 +340,7 @@ class VideoHandler extends BaseHandler
                 if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
                 if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'last_frame':
@@ -366,29 +348,85 @@ class VideoHandler extends BaseHandler
                 if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
                 if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'reference':
                 if (!empty($durations) && empty($extra['duration'] ?? '')) return 'duration';
                 if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'duration':
                 if (!empty($aspectRatios) && empty($extra['aspect_ratio'] ?? '')) return 'aspect_ratio';
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'aspect_ratio':
                 if (!empty($resolutions) && empty($extra['resolution'] ?? '')) return 'resolution';
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             case 'resolution':
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
+                return 'confirm';
+
+            case 'prompt':
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
 
             default:
+                if (empty($extra['prompt'] ?? '')) return 'prompt';
                 return 'confirm';
         }
+    }
+
+    /**
+     * Ask for prompt text.
+     */
+    private function askPrompt(int $chatId, int $userId, int $internalId, array $extra): void
+    {
+        $displayName = $extra['video_model_name'] ?? '';
+        $costPerSec = (int) ($extra['cost_per_second'] ?? 1);
+        $duration = (int) ($extra['duration'] ?? 5);
+        $totalCost = $duration * $costPerSec;
+
+        $msg = "✏️ **لطفاً متن (پرامپت) ویدئوی خود را بنویسید**\n\n"
+             . "🤖 مدل: {$displayName}\n"
+             . "⏱️ مدت: {$duration} ثانیه\n"
+             . "💰 هزینه تخمینی: {$totalCost} اعتبار\n\n"
+             . "مثال:\n"
+             . "• یک سگ طلایی در ساحل آفتابی در حال بازی با توپ\n"
+             . "• غروب آفتاب بر فراز کوه‌های آلپ با دوربین آهسته\n\n"
+             . "💡 هرچه توضیحات دقیق‌تر باشد، نتیجه بهتر است.\n"
+             . "📝 /cancel برای لغو";
+
+        $this->baleClient->sendMessage($chatId, $msg);
+    }
+
+    /**
+     * Process the prompt text, then show confirm.
+     */
+    private function processPrompt(int $chatId, int $userId, string $prompt): void
+    {
+        $db = Database::getInstance();
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) return;
+
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        if (!$stateData) {
+            $this->baleClient->sendMessage($chatId, "⚠️ اطلاعات جلسه یافت نشد. دوباره تلاش کنید.");
+            return;
+        }
+
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $extra['prompt'] = $prompt;
+        $extra['step'] = 'prompt';
+
+        // Move to confirm
+        $this->advanceToNextStep($chatId, $userId, $internalId, $extra);
     }
 
     /**
@@ -612,7 +650,7 @@ class VideoHandler extends BaseHandler
     }
 
     /**
-     * Show final confirmation with cost breakdown.
+     * Show final confirmation with cost breakdown and prompt.
      */
     private function showConfirm(int $chatId, int $userId, int $internalId, array $extra): void
     {

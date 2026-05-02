@@ -98,6 +98,11 @@ class Router
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> ChatHandler");
                 return new ChatHandler($this->baleClient);
             }
+            // Video states
+            if (in_array($state, ['awaiting_video_prompt', 'awaiting_video_first_frame', 'awaiting_video_last_frame', 'awaiting_video_reference', 'vid_processing', 'vid_polling'], true)) {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> VideoHandler");
+                return new VideoHandler($this->baleClient);
+            }
             // Memory add text state
             if ($state === 'awaiting_memory_text') {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> MemoryCommandHandler");
