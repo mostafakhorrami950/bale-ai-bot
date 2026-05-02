@@ -75,15 +75,23 @@ abstract class BaseHandler
                 $title = $ch['title'] ?? $chId;
                 error_log("checkMembership: Checking channel id=$chId title=$title");
 
-                try {
-                    $result = $this->baleClient->getChatMember($chId, $baleUserId);
-                    $status = $result['status'] ?? 'left';
-                    error_log("checkMembership: Channel $title result=" . json_encode($result));
-                } catch (\Throwable $e) {
-                    // Per-channel failure: log it and treat as non-member so user sees the channel
-                    error_log("checkMembership: ERROR checking channel $title: " . $e->getMessage());
-                    $status = 'left';
-                }
+                    try {
+                        $result = $this->baleClient->getChatMember($chId, $baleUserId);
+                        error_log("checkMembership: Channel $title result=" . json_encode($result));
+
+                        // If result is null, API returned ok:false (bot not admin, wrong channel_id, etc.)
+                        // In this case, fail OPEN — assume membership rather than blocking the user.
+                        if ($result === null) {
+                            error_log("checkMembership: API returned null for channel $title — fail open, assuming member");
+                            continue; // skip this channel, user passes
+                        }
+
+                        $status = $result['status'] ?? 'left';
+                    } catch (\Throwable $e) {
+                        // Per-channel failure: log it and fail OPEN (assume member)
+                        error_log("checkMembership: ERROR checking channel $title: " . $e->getMessage());
+                        continue; // skip this channel, user passes
+                    }
 
                 if (!in_array($status, ['member', 'creator', 'administrator'], true)) {
                     error_log("checkMembership: User $baleUserId NOT a member of channel $title (status=$status)");
