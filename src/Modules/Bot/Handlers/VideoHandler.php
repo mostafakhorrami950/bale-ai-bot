@@ -700,21 +700,31 @@ class VideoHandler extends BaseHandler
     private function handleConfirmCallback(int $chatId, int $userId, string $callbackData): void
     {
         $rest = substr($callbackData, 13); // remove "vid_confirm_"
-        $modelId = (int) $rest;
+        $modelIdFromCallback = (int) $rest;
 
         $db = Database::getInstance();
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
 
+        // Get state data FIRST — it has the correct model_id
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        if (!$stateData) {
+            $this->baleClient->sendMessage($chatId, "⚠️ اطلاعات جلسه یافت نشد. دوباره از منو انتخاب کنید.");
+            return;
+        }
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+
+        // Use model_id from state (more reliable than callback parsing)
+        $modelId = (int) ($extra['video_model_id'] ?? $modelIdFromCallback);
+        error_log("VideoHandler::handleConfirmCallback: modelIdFromCallback=$modelIdFromCallback modelIdFromState=" . ($extra['video_model_id'] ?? 'none') . " resolved=$modelId");
+
         $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
-            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
+            error_log("VideoHandler::handleConfirmCallback: Model id=$modelId NOT FOUND in ai_video_models");
+            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد. لطفاً دوباره از منو انتخاب کنید.");
             return;
         }
 
-        // Get state data
-        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
-        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
         $prompt = $extra['prompt'] ?? '';
         $duration = (int) ($extra['duration'] ?? 5);
         $costPerSec = (int) ($extra['cost_per_second'] ?? 1);
