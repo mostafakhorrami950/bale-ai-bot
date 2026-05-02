@@ -203,6 +203,7 @@ class VideoService
 
     /**
      * Download video content from unsigned_url.
+     * OpenRouter requires Authorization header for content endpoint.
      * Returns binary data.
      */
     public function download(string $contentUrl): ?string
@@ -212,20 +213,30 @@ class VideoService
         $ch = curl_init($contentUrl);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 60,
+            CURLOPT_TIMEOUT => 120,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HTTPHEADER => [
+                'Authorization: Bearer ' . $this->apiKey,
+            ],
         ]);
 
         $data = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
         curl_close($ch);
 
-        if ($httpCode !== 200 || empty($data)) {
-            $this->aiLog('ERROR', 'Download failed', ['http_code' => $httpCode]);
+        if ($curlError) {
+            $this->aiLog('ERROR', 'Download cURL error', ['error' => $curlError, 'http_code' => $httpCode]);
             return null;
         }
 
+        if ($httpCode !== 200 || empty($data)) {
+            $this->aiLog('ERROR', 'Download failed', ['http_code' => $httpCode, 'url' => $contentUrl]);
+            return null;
+        }
+
+        $this->aiLog('INFO', 'Download successful', ['http_code' => $httpCode, 'size' => strlen($data)]);
         return $data;
     }
 
