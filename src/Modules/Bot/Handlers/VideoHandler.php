@@ -696,6 +696,7 @@ class VideoHandler extends BaseHandler
 
     /**
      * Handle confirm callback: vid_confirm_{modelId}
+     * Fixes: frame_images format per OpenRouter docs, logging to log file.
      */
     private function handleConfirmCallback(int $chatId, int $userId, string $callbackData): void
     {
@@ -716,11 +717,15 @@ class VideoHandler extends BaseHandler
 
         // Use model_id from state (more reliable than callback parsing)
         $modelId = (int) ($extra['video_model_id'] ?? $modelIdFromCallback);
-        error_log("VideoHandler::handleConfirmCallback: modelIdFromCallback=$modelIdFromCallback modelIdFromState=" . ($extra['video_model_id'] ?? 'none') . " resolved=$modelId");
+        $this->aiLog('INFO', 'handleConfirmCallback', [
+            'modelIdFromCallback' => $modelIdFromCallback,
+            'modelIdFromState' => $extra['video_model_id'] ?? 'none',
+            'resolved' => $modelId,
+        ]);
 
         $model = $db->query("SELECT * FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
-            error_log("VideoHandler::handleConfirmCallback: Model id=$modelId NOT FOUND in ai_video_models");
+            $this->aiLog('ERROR', 'Model not found', ['model_id' => $modelId]);
             $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد. لطفاً دوباره از منو انتخاب کنید.");
             return;
         }
@@ -753,52 +758,143 @@ class VideoHandler extends BaseHandler
         $extra['step'] = 'processing';
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'vid_processing', ?)", [$internalId, json_encode($extra)]);
 
-        // Build payload
-        $params = [
+        // Build payload per OpenRouter docs
+        $payload = [
             'model' => $model['name'],
             'prompt' => $prompt,
-            'duration' => $duration,
         ];
-        if (!empty($extra['resolution'] ?? '')) $params['resolution'] = $extra['resolution'];
-        if (!empty($extra['aspect_ratio'] ?? '')) $params['aspect_ratio'] = $extra['aspect_ratio'];
-        if (!empty($extra['first_frame_file_id'] ?? '')) $params['first_frame_file_id'] = $extra['first_frame_file_id'];
-        if (!empty($extra['last_frame_file_id'] ?? '')) $params['last_frame_file_id'] = $extra['last_frame_file_id'];
-        if (!empty($extra['reference_file_id'] ?? '')) $params['reference_file_id'] = $extra['reference_file_id'];
+        if (!empty($duration)) $payload['duration'] = $duration;
+        if (!empty($extra['resolution'] ?? '')) $payload['resolution'] = $extra['resolution'];
+        if (!empty($extra['aspect_ratio'] ?? '')) $payload['aspect_ratio'] = $extra['aspect_ratio'];
+
+        // Handle frame_images per OpenRouter docs: download from Bale, convert to base64 data URI
+        $frameImages = [];
+        if (!empty($extra['first_frame_file_id'] ?? '')) {
+            $base64 = $this->downloadBalePhotoAsBase64($extra['first_frame_file_id']);
+            if ($base64) {
+                $frameImages[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => 'data:image/jpeg;base64,' . $base64],
+                    'frame_type' => 'first_frame',
+                ];
+                $this->aiLog('INFO', 'First frame downloaded and converted to base64', ['file_id' => $extra['first_frame_file_id']]);
+            } else {
+                $this->aiLog('WARN', 'Failed to download first frame from Bale', ['file_id' => $extra['first_frame_file_id']]);
+            }
+        }
+        if (!empty($extra['last_frame_file_id'] ?? '')) {
+            $base64 = $this->downloadBalePhotoAsBase64($extra['last_frame_file_id']);
+            if ($base64) {
+                $frameImages[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => 'data:image/jpeg;base64,' . $base64],
+                    'frame_type' => 'last_frame',
+                ];
+                $this->aiLog('INFO', 'Last frame downloaded and converted to base64', ['file_id' => $extra['last_frame_file_id']]);
+            } else {
+                $this->aiLog('WARN', 'Failed to download last frame from Bale', ['file_id' => $extra['last_frame_file_id']]);
+            }
+        }
+        if (!empty($frameImages)) {
+            $payload['frame_images'] = $frameImages;
+        }
+
+        // Handle input_references per OpenRouter docs
+        if (!empty($extra['reference_file_id'] ?? '')) {
+            $base64 = $this->downloadBalePhotoAsBase64($extra['reference_file_id']);
+            if ($base64) {
+                $payload['input_references'] = [
+                    [
+                        'type' => 'image_url',
+                        'image_url' => ['url' => 'data:image/jpeg;base64,' . $base64],
+                    ]
+                ];
+                $this->aiLog('INFO', 'Reference image downloaded and converted to base64', ['file_id' => $extra['reference_file_id']]);
+            } else {
+                $this->aiLog('WARN', 'Failed to download reference image from Bale', ['file_id' => $extra['reference_file_id']]);
+            }
+        }
+
+        $this->aiLog('INFO', 'Submitting video job', [
+            'model' => $model['name'],
+            'payload_keys' => array_keys($payload),
+            'has_frame_images' => !empty($frameImages),
+        ]);
 
         // Submit to VideoService
         $videoService = new VideoService();
-        $result = $videoService->submit($params);
+        $result = $videoService->submit($payload);
 
         if (isset($result['error'])) {
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
             $this->baleClient->sendMessage($chatId, "❌ خطا: " . $result['error']);
-            Logger::error('VideoHandler::submit error', ['user_id' => $internalId, 'error' => $result['error']]);
+            $this->aiLog('ERROR', 'Submit failed', ['error' => $result['error']]);
             return;
         }
 
         $jobId = $result['job_id'];
         $pollingUrl = $result['polling_url'];
 
+        $this->aiLog('INFO', 'Job submitted', ['job_id' => $jobId, 'polling_url' => $pollingUrl]);
+
         // Save job info in state
         $extra['job_id'] = $jobId;
         $extra['polling_url'] = $pollingUrl;
+        $extra['status_message_id'] = 0; // will be set on first status update
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'vid_polling', ?)", [$internalId, json_encode($extra)]);
 
         // Send initial status
-        $this->baleClient->sendMessage($chatId, "✅ درخواست شما ثبت شد.\n🆔 شناسه: {$jobId}\n⏳ در حال ساخت ویدئو... این فرآیند ممکن است چند دقیقه طول بکشد.");
+        $statusMsgId = $this->baleClient->sendMessage($chatId, "✅ درخواست شما ثبت شد.\n🆔 شناسه: {$jobId}\n⏳ در حال ساخت ویدئو... این فرآیند ممکن است چند دقیقه طول بکشد.");
+        if ($statusMsgId) {
+            $extra['status_message_id'] = $statusMsgId;
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'vid_polling', ?)", [$internalId, json_encode($extra)]);
+        }
 
         // Start polling
         $this->pollVideoJob($chatId, $internalId, $pollingUrl, $totalCost, $model['name'], $prompt);
     }
 
     /**
+     * Download a photo from Bale by file_id and return as base64 string.
+     */
+    private function downloadBalePhotoAsBase64(string $fileId): ?string
+    {
+        try {
+            $fileInfo = $this->baleClient->getFile($fileId);
+            if (!$fileInfo || empty($fileInfo['file_path'])) {
+                $this->aiLog('ERROR', 'getFile failed', ['file_id' => $fileId]);
+                return null;
+            }
+            $binary = $this->baleClient->downloadFile($fileInfo['file_path']);
+            if ($binary === null) {
+                $this->aiLog('ERROR', 'downloadFile failed', ['file_path' => $fileInfo['file_path']]);
+                return null;
+            }
+            return base64_encode($binary);
+        } catch (\Throwable $e) {
+            $this->aiLog('ERROR', 'downloadBalePhotoAsBase64 exception', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
      * Poll the video job and send result back to user.
+     * Fixes: delete previous status messages, download video and send as file, logging.
      */
     private function pollVideoJob(int $chatId, int $internalId, string $pollingUrl, int $cost, string $modelName, string $prompt): void
     {
         $videoService = new VideoService();
-        $maxAttempts = 20;
+        $maxAttempts = 60; // 60 * 5s = 5 minutes max
         $attempt = 0;
+        $lastStatusMsgId = 0;
+
+        // Get current status_message_id from state
+        $db = Database::getInstance();
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        if ($stateData) {
+            $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+            $lastStatusMsgId = (int) ($extra['status_message_id'] ?? 0);
+        }
 
         while ($attempt < $maxAttempts) {
             $attempt++;
@@ -808,7 +904,8 @@ class VideoHandler extends BaseHandler
 
             if (isset($result['error'])) {
                 $this->baleClient->sendMessage($chatId, "❌ خطا در بررسی وضعیت: " . $result['error']);
-                Logger::error('VideoHandler::poll error', ['user_id' => $internalId, 'error' => $result['error']]);
+                $this->aiLog('ERROR', 'Poll error', ['user_id' => $internalId, 'error' => $result['error']]);
+                $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
                 return;
             }
 
@@ -816,63 +913,135 @@ class VideoHandler extends BaseHandler
                 $urls = $result['unsigned_urls'] ?? [];
                 if (empty($urls)) {
                     $this->baleClient->sendMessage($chatId, "⚠️ ویدئو ساخته شد اما لینک دانلودی یافت نشد.");
+                    $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
                     return;
                 }
 
-                // Deduct credit
-                $refId = 'video_' . $internalId . '_' . time();
-                CreditService::deduct($internalId, $cost, $refId);
-
-                $sentCount = count($urls);
-                $downloadMsg = "🔗 **لینک‌های دانلود ویدئو:**\n\n";
-                foreach ($urls as $i => $url) {
-                    $num = $i + 1;
-                    $downloadMsg .= "{$num}. [دانلود ویدئو {$num}]({$url})\n";
-                }
-                $this->baleClient->sendMessage($chatId, $downloadMsg);
-
-                $msg = "✅ **ویدئو ساخته شد!**\n\n"
-                     . "🤖 مدل: {$modelName}\n"
-                     . "💰 هزینه کسر شده: {$cost} اعتبار\n"
-                     . "🔖 reference: {$refId}";
-                $this->baleClient->sendMessage($chatId, $msg);
-
-                Logger::info('VideoHandler::completed', [
+                $this->aiLog('INFO', 'Video completed, downloading...', [
                     'user_id' => $internalId,
-                    'model' => $modelName,
-                    'cost' => $cost,
-                    'ref_id' => $refId,
-                    'sent_count' => $sentCount,
+                    'url_count' => count($urls),
+                    'urls' => $urls,
                 ]);
 
-                $db = Database::getInstance();
+                // Download each video and send as file
+                $sentCount = 0;
+                foreach ($urls as $index => $contentUrl) {
+                    $this->aiLog('INFO', 'Downloading video', ['index' => $index, 'url' => $contentUrl]);
+                    $videoData = $videoService->download($contentUrl);
+                    if ($videoData === null) {
+                        $this->aiLog('ERROR', 'Download failed', ['index' => $index, 'url' => $contentUrl]);
+                        $this->baleClient->sendMessage($chatId, "⚠️ خطا در دانلود ویدئو شماره " . ($index + 1));
+                        continue;
+                    }
+
+                    // Save to temp file
+                    $ext = '.mp4';
+                    $tempFile = $this->tempDir . 'video_' . $internalId . '_' . time() . '_' . $index . $ext;
+                    file_put_contents($tempFile, $videoData);
+
+                    $this->aiLog('INFO', 'Video saved to temp file', ['path' => $tempFile, 'size' => strlen($videoData)]);
+
+                    // Send via Bale sendVideo
+                    $caption = ($index === 0) ? "🎬 **ویدئو ساخته شد!**\n🤖 مدل: {$modelName}" : '';
+                    $success = $this->baleClient->sendVideo($chatId, $tempFile, $caption);
+                    if ($success) {
+                        $sentCount++;
+                        $this->aiLog('INFO', 'Video sent to user', ['index' => $index, 'file' => $tempFile]);
+                    } else {
+                        $this->aiLog('ERROR', 'Failed to send video to user', ['index' => $index, 'error' => $this->baleClient->getLastError()]);
+                        // Fallback: try sendDocument
+                        $docSuccess = $this->baleClient->sendDocument($chatId, $tempFile, $caption);
+                        if ($docSuccess) {
+                            $sentCount++;
+                            $this->aiLog('INFO', 'Video sent as document fallback', ['index' => $index]);
+                        } else {
+                            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال ویدئو. لینک مستقیم:\n{$contentUrl}");
+                        }
+                    }
+
+                    // Clean up temp file
+                    @unlink($tempFile);
+                }
+
+                if ($sentCount > 0) {
+                    // Deduct credit
+                    $refId = 'video_' . $internalId . '_' . time();
+                    CreditService::deduct($internalId, $cost, $refId);
+
+                    $msg = "✅ **{$sentCount} ویدئو ارسال شد!**\n"
+                         . "💰 هزینه کسر شده: {$cost} اعتبار\n"
+                         . "🔖 reference: {$refId}";
+                    $this->baleClient->sendMessage($chatId, $msg);
+
+                    $this->aiLog('INFO', 'Video generation completed', [
+                        'user_id' => $internalId,
+                        'model' => $modelName,
+                        'cost' => $cost,
+                        'ref_id' => $refId,
+                        'sent_count' => $sentCount,
+                    ]);
+                }
+
                 $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
                 return;
             }
 
             if ($result['status'] === 'failed') {
-                $this->baleClient->sendMessage($chatId, "❌ **ساخت ویدئو ناموفق بود.**\n\n" . ($result['error'] ?? 'خطای نامشخص'));
-                Logger::error('VideoHandler::failed', [
+                $errorMsg = $result['error'] ?? 'خطای نامشخص';
+                $this->baleClient->sendMessage($chatId, "❌ **ساخت ویدئو ناموفق بود.**\n\n{$errorMsg}");
+                $this->aiLog('ERROR', 'Video generation failed', [
                     'user_id' => $internalId,
-                    'error' => $result['error'] ?? 'unknown',
+                    'error' => $errorMsg,
                 ]);
-                $db = Database::getInstance();
                 $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
                 return;
             }
 
+            // Send/update status message every 3 attempts (15 seconds)
             if ($attempt % 3 === 0) {
-                $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت ویدئو... (مدت انتظار: " . ($attempt * 5) . " ثانیه)");
+                $statusText = "⏳ در حال ساخت ویدئو... (مدت انتظار: " . ($attempt * 5) . " ثانیه)";
+                
+                // Delete previous status message if exists
+                if ($lastStatusMsgId > 0) {
+                    $this->baleClient->deleteMessage($chatId, $lastStatusMsgId);
+                }
+                
+                // Send new status message
+                $newMsgId = $this->baleClient->sendMessage($chatId, $statusText);
+                if ($newMsgId) {
+                    $lastStatusMsgId = $newMsgId;
+                    // Update state with new message_id
+                    $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+                    if ($stateData) {
+                        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+                        $extra['status_message_id'] = $lastStatusMsgId;
+                        $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'vid_polling', ?)", [$internalId, json_encode($extra)]);
+                    }
+                }
             }
         }
 
+        // Timeout
         $this->baleClient->sendMessage($chatId, "⏰ زمان انتظار به پایان رسید. ویدئو هنوز آماده نشده است.\n"
             . "لطفاً بعداً با پشتیبانی تماس بگیرید.\n"
             . "🆔 Job ID: " . basename($pollingUrl));
-        Logger::error('VideoHandler::timeout', [
+        $this->aiLog('ERROR', 'Poll timeout', [
             'user_id' => $internalId,
             'polling_url' => $pollingUrl,
         ]);
+        $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
+    }
+
+    /**
+     * Log to the AI log file.
+     */
+    private function aiLog(string $level, string $message, array $context = []): void
+    {
+        $logFile = Config::get('AI_LOG_FILE', Config::get('BASE_PATH', __DIR__ . '/../../..') . '/logs_ai.txt');
+        $timestamp = date('Y-m-d H:i:s');
+        $contextStr = !empty($context) ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
+        $line = "[{$timestamp}] [{$level}] [VideoHandler] {$message}{$contextStr}\n";
+        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
     }
 
     /**

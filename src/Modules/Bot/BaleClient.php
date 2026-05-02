@@ -295,6 +295,126 @@ class BaleClient
     }
 
     /**
+     * Send a document file to a chat.
+     * Uses multipart/form-data for file upload.
+     */
+    public function sendDocument(int $chatId, string $filePath, ?string $caption = null, $replyMarkup = null): bool
+    {
+        if (!file_exists($filePath)) {
+            $this->lastError = "File not found: $filePath";
+            Logger::error('BaleClient::sendDocument failed', ['error' => $this->lastError]);
+            return false;
+        }
+
+        $url = $this->apiUrl . 'sendDocument';
+        $ch = curl_init();
+        
+        $postFields = [
+            'chat_id' => $chatId,
+            'document' => new \CURLFile($filePath),
+        ];
+        if ($caption) {
+            $postFields['caption'] = $caption;
+        }
+        if ($replyMarkup) {
+            $postFields['reply_markup'] = json_encode($replyMarkup);
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $postFields,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_TIMEOUT        => 120,
+        ]);
+
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($error) {
+            $this->lastError = "cURL Error: " . $error;
+            Logger::error('BaleClient::sendDocument cURL Error', ['error' => $error]);
+            return false;
+        }
+
+        $result = json_decode($response, true);
+        if (!isset($result['ok']) || $result['ok'] !== true) {
+            $this->lastError = $result['description'] ?? 'Unknown sendDocument error';
+            Logger::error('BaleClient::sendDocument failed', [
+                'chat_id' => $chatId,
+                'error'   => $this->lastError,
+                'http'    => $httpCode,
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Send a video file to a chat.
+     * Uses multipart/form-data for file upload.
+     */
+    public function sendVideo(int $chatId, string $filePath, ?string $caption = null, $replyMarkup = null): bool
+    {
+        if (!file_exists($filePath)) {
+            $this->lastError = "File not found: $filePath";
+            Logger::error('BaleClient::sendVideo failed', ['error' => $this->lastError]);
+            return false;
+        }
+
+        $url = $this->apiUrl . 'sendVideo';
+        $ch = curl_init();
+        
+        $postFields = [
+            'chat_id' => $chatId,
+            'video' => new \CURLFile($filePath),
+        ];
+        if ($caption) {
+            $postFields['caption'] = $caption;
+        }
+        if ($replyMarkup) {
+            $postFields['reply_markup'] = json_encode($replyMarkup);
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $postFields,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_TIMEOUT        => 120,
+        ]);
+
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($error) {
+            $this->lastError = "cURL Error: " . $error;
+            Logger::error('BaleClient::sendVideo cURL Error', ['error' => $error]);
+            return false;
+        }
+
+        $result = json_decode($response, true);
+        if (!isset($result['ok']) || $result['ok'] !== true) {
+            $this->lastError = $result['description'] ?? 'Unknown sendVideo error';
+            Logger::error('BaleClient::sendVideo failed', [
+                'chat_id' => $chatId,
+                'error'   => $this->lastError,
+                'http'    => $httpCode,
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Send generic request to Bale API — uses JSON encoding as required by Bale API docs.
      * 
      * C1: Replaced http_build_query with json_encode for Bale API compatibility.
