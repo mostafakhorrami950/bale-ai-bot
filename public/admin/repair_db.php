@@ -147,7 +147,7 @@ $totalCount = count($messages);
             <br>📦 جداول: required_channels, payment_plans, payments, settings, bot_logs,
             ai_requests, credit_ledger, uploaded_files, chat_conversations, chat_messages,
             ai_image_models, ai_edit_models, ai_text_models, ai_video_models, user_profiles,
-            user_memories, conversation_summaries
+            user_memories, conversation_summaries, broadcast_jobs, broadcast_log
             <br>🧠 ماژول حافظه (Memory) و تنظیمات پرداخت نیز بررسی می‌شود.
         </p>
     </div>

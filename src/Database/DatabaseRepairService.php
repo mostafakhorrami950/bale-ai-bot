@@ -47,6 +47,9 @@ class DatabaseRepairService
         $this->ensurePhase14Columns();
         $this->ensurePhase15Columns();
         $this->ensurePhase16VideoCapabilities();
+        $this->ensureBroadcastJobsTable();
+        $this->ensureBroadcastLogTable();
+        $this->ensureVideoCostPerSecondColumn();
 
         return $this->messages;
     }
@@ -835,6 +838,55 @@ class DatabaseRepairService
         $this->exec("UPDATE ai_video_models SET pricing_json = '{}' WHERE pricing_json IS NULL");
 
         $this->log('✅ قابلیت‌های مدل ویدئو (فاز ۱۶) بروزرسانی شد.');
+    }
+
+    private function ensureBroadcastJobsTable(): void
+    {
+        if (!$this->tableExists('broadcast_jobs')) {
+            $this->exec("
+                CREATE TABLE broadcast_jobs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id INT DEFAULT 0,
+                    message_text TEXT NOT NULL,
+                    image_path VARCHAR(500) DEFAULT NULL,
+                    total_users INT DEFAULT 0,
+                    sent_count INT DEFAULT 0,
+                    failed_count INT DEFAULT 0,
+                    status ENUM('pending','processing','completed') DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    started_at TIMESTAMP NULL,
+                    completed_at TIMESTAMP NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول broadcast_jobs ایجاد شد.');
+        }
+    }
+
+    private function ensureBroadcastLogTable(): void
+    {
+        if (!$this->tableExists('broadcast_log')) {
+            $this->exec("
+                CREATE TABLE broadcast_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    job_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    status ENUM('sent','failed') DEFAULT 'sent',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_job_id (job_id),
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول broadcast_log ایجاد شد.');
+        }
+    }
+
+    private function ensureVideoCostPerSecondColumn(): void
+    {
+        if (!$this->tableExists('ai_video_models')) return;
+        if (!$this->columnExists('ai_video_models', 'cost_per_second')) {
+            $this->exec("ALTER TABLE ai_video_models ADD COLUMN cost_per_second INT DEFAULT 0 AFTER cost_per_video");
+            $this->log('✅ ستون cost_per_second به جدول ai_video_models اضافه شد.');
+        }
     }
 
     private function log(string $msg): void
