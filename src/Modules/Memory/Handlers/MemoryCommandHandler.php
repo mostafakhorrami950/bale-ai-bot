@@ -12,9 +12,6 @@ class MemoryCommandHandler
     private BaleClient $baleClient;
     private MemoryManager $memoryManager;
 
-    // Track users who are adding memory (state: awaiting text)
-    private static array $addingMemory = [];
-
     public function __construct(BaleClient $baleClient, MemoryManager $memoryManager)
     {
         $this->baleClient = $baleClient;
@@ -71,6 +68,17 @@ class MemoryCommandHandler
             return;
         }
 
+        // ─── Handle text (check DB bot_state for add_memory flow) ───
+        $db = Database::getInstance();
+        $stateRow = $db->query("SELECT state, extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $isAdding = $stateRow && $stateRow['state'] === 'awaiting_memory_text';
+        $text = trim($text);
+        if ($isAdding && !empty($text)) {
+            $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
+            $this->showImportanceButtons($chatId, $userId, $text);
+            return;
+        }
+
         // Delete specific memory: delete_mem_{id}
         if (str_starts_with($callbackData, 'delete_mem_')) {
             $memId = (int) str_replace('delete_mem_', '', $callbackData);
@@ -106,13 +114,6 @@ class MemoryCommandHandler
             return;
         }
 
-        // ─── Handle text (from add_memory flow) ───
-        $text = trim($text);
-        if (!empty($text) && isset(self::$addingMemory[$userId]) && self::$addingMemory[$userId] === true) {
-            unset(self::$addingMemory[$userId]);
-            $this->showImportanceButtons($chatId, $userId, $text);
-            return;
-        }
 
         // Handle text commands
         if ($text === '🧠 حافظه من') {
@@ -273,7 +274,11 @@ class MemoryCommandHandler
      */
     private function askMemoryText(int $chatId, int $baleUserId, int $internalId): void
     {
-        self::$addingMemory[$baleUserId] = true;
+        // Save state in DB so any PHP worker can pick it up
+        try {
+            $db = Database::getInstance();
+            $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'awaiting_memory_text', '{}')", [$internalId]);
+        } catch (\Throwable $e) {}
         $this->baleClient->sendMessage(
             $chatId,
             "✏️ **متن مورد نظر خود را بنویسید:**\n\n"

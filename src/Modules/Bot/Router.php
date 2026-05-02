@@ -199,10 +199,19 @@ class Router
                 error_log("DEBUG ROUTER: memory command -> MemoryCommandHandler");
                 return new MemoryCommandHandler($this->baleClient, $memoryManager);
             }
-            // If user is in add_memory flow (text state), route to MemoryCommandHandler
-            if ($memoryManager->isEnabled() && $baleUserIdForMemory && isset(\Modules\Memory\Handlers\MemoryCommandHandler::$addingMemory[$baleUserIdForMemory]) && \Modules\Memory\Handlers\MemoryCommandHandler::$addingMemory[$baleUserIdForMemory] === true) {
-                error_log("DEBUG ROUTER: memory add text -> MemoryCommandHandler");
-                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            // If user is in add_memory flow (DB state), route to MemoryCommandHandler
+            if ($memoryManager->isEnabled() && $baleUserIdForMemory) {
+                try {
+                    $dbForMem = Database::getInstance();
+                    $userRow = $dbForMem->query("SELECT id FROM users WHERE bale_user_id = ?", [$baleUserIdForMemory])->fetch();
+                    if ($userRow) {
+                        $memState = $dbForMem->query("SELECT state FROM bot_state WHERE user_id = ?", [(int)$userRow['id']])->fetch();
+                        if ($memState && $memState['state'] === 'awaiting_memory_text') {
+                            error_log("DEBUG ROUTER: memory add text (DB state) -> MemoryCommandHandler");
+                            return new MemoryCommandHandler($this->baleClient, $memoryManager);
+                        }
+                    }
+                } catch (\Throwable $e) {}
             }
             
             // Map Persian menu texts to handlers

@@ -386,11 +386,14 @@ class VideoHandler extends BaseHandler
     private function showConfirm(int $chatId, int $userId, string $prompt, int $modelId, int $duration, string $resolution, string $aspectRatio): void
     {
         $db = Database::getInstance();
-        $model = $db->query("SELECT id, name, display_name, cost_per_video FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
+        $model = $db->query("SELECT id, name, display_name, cost_per_video, cost_per_second FROM ai_video_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) return;
 
         $displayName = $model['display_name'] ?? $model['name'];
-        $cost = (int) ($model['cost_per_video'] ?? 5);
+        $costPerSecond = (int) ($model['cost_per_second'] ?? 0);
+        $baseCost = (int) ($model['cost_per_video'] ?? 5);
+        // Cost = base + (duration * cost_per_second), but at least base cost
+        $cost = $costPerSecond > 0 ? ($baseCost + ($duration * $costPerSecond)) : $baseCost;
 
         $msg = "🎬 **تایید نهایی**\n\n"
              . "📝 پرامپت: {$prompt}\n"
@@ -597,6 +600,23 @@ class VideoHandler extends BaseHandler
         $items = explode(',', $csv);
         $items = array_map('trim', $items);
         return array_filter($items, fn($v) => $v !== '');
+    }
+
+    private function getUserState(int $baleUserId): ?string
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query(
+                "SELECT bs.state FROM bot_state bs 
+                 JOIN users u ON bs.user_id = u.id 
+                 WHERE u.bale_user_id = ?",
+                [$baleUserId]
+            );
+            $row = $stmt->fetch();
+            return $row['state'] ?? null;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     private function resolveUserId(int $baleUserId): ?int
