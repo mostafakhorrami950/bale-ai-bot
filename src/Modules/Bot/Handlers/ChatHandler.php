@@ -454,6 +454,7 @@ class ChatHandler extends BaseHandler
                 [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost, $modelName]
             );
         } catch (\Throwable $e) {
+            error_log("ChatHandler INSERT user msg failed (model_name): " . $e->getMessage() . " | modelName=" . var_export($modelName, true) . " | convId=$convId");
             // Fallback: table may not have model_name column yet
             $db->query(
                 "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0)",

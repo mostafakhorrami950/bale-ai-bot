@@ -99,6 +99,16 @@ if ($errorLogFile && file_exists($errorLogFile)) {
     }
 }
 
+// Get debug.txt (error_handler.php redirects all errors here)
+$debugTxtLines = [];
+$debugTxtFile = __DIR__ . '/debug.txt';
+if (file_exists($debugTxtFile)) {
+    $lines = @file($debugTxtFile);
+    if ($lines) {
+        $debugTxtLines = array_slice($lines, -30);
+    }
+}
+
 // Get ai_debug.log (last 20 lines)
 $aiDebugLines = [];
 $aiDebugFile = defined('BASE_PATH') ? BASE_PATH . '/ai_debug.log' : __DIR__ . '/../../ai_debug.log';
