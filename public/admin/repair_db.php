@@ -99,9 +99,9 @@ if ($errorLogFile && file_exists($errorLogFile)) {
     }
 }
 
-// Get debug.txt (error_handler.php redirects all errors here)
+// Get debug.txt (error_handler.php in public/ redirects all errors here)
 $debugTxtLines = [];
-$debugTxtFile = __DIR__ . '/debug.txt';
+$debugTxtFile = dirname(__DIR__) . '/debug.txt'; // public/debug.txt
 if (file_exists($debugTxtFile)) {
     $lines = @file($debugTxtFile);
     if ($lines) {
@@ -383,6 +383,17 @@ if (file_exists($logsAiFile)) {
                 <span class="text-muted">هیچ خطایی یافت نشد یا فایل لاگ وجود ندارد.</span>
             <?php else: ?>
                 <?php foreach ($errorLogLines as $line): ?>
+                    <?php echo htmlspecialchars($line); ?>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+
+        <h5 class="mt-3">📄 debug.txt (error_handler.php — تمام خطاهای PHP در اینجا ذخیره می‌شوند)</h5>
+        <div class="error-box" style="max-height:400px;">
+            <?php if (empty($debugTxtLines)): ?>
+                <span class="text-muted">فایل debug.txt خالی است یا وجود ندارد.</span>
+            <?php else: ?>
+                <?php foreach ($debugTxtLines as $line): ?>
                     <?php echo htmlspecialchars($line); ?>
                 <?php endforeach; ?>
             <?php endif; ?>
