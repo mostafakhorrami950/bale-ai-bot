@@ -585,4 +585,142 @@ class MemoryManager
             return $row && (int)$row['memory_disabled'] === 1;
         } catch (\Throwable $e) { return false; }
     }
+
+    // ———— Conversation Summarization ————
+
+    /**
+     * Summarize a conversation using the model configured in memory_summarization_model setting.
+     * Saves the summary to conversation_summaries table.
+     * Called by Hooks::checkSummarization when message count exceeds threshold.
+     */
+    public function summarizeConversation(int $userId, string $conversationText, ?int $conversationId = null): void
+    {
+        if (!$this->isEnabled()) return;
+
+        try {
+            // 1. Load summarization model from config/settings (memory_summarization_model)
+            $modelName = $this->getConfig('summarization_model', '');
+            $modelData = [];
+
+            if (empty($modelName)) {
+                // Fallback: try loading from settings
+                $row = $this->db->query(
+                    "SELECT value FROM settings WHERE key_name = 'memory_summarization_model'"
+                )->fetch();
+                if ($row && !empty($row['value'])) {
+                    $modelId = (int)$row['value'];
+                    $modelRow = $this->db->query(
+                        "SELECT name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config 
+                         FROM ai_text_models WHERE id = ? AND is_active = 1",
+                        [$modelId]
+                    )->fetch();
+                    if ($modelRow) {
+                        $modelName = $modelRow['name'];
+                        $modelData = [
+                            'name' => $modelName,
+                            'id' => $modelId,
+                            'provider' => $modelRow['provider'] ?? 'openrouter',
+                            'cost_per_input_char' => (float)($modelRow['cost_per_input_char'] ?? 0.000001),
+                            'cost_per_output_char' => (float)($modelRow['cost_per_output_char'] ?? 0.000002),
+                            'free_model' => (int)($modelRow['free_model'] ?? 0),
+                            'model_config' => $modelRow['model_config'] ?? null,
+                        ];
+                    }
+                }
+            } else {
+                // modelName is already set from config — get full data
+                $modelRow = $this->db->query(
+                    "SELECT id, name, provider, cost_per_input_char, cost_per_output_char, free_model, model_config 
+                     FROM ai_text_models WHERE name = ? AND is_active = 1",
+                    [$modelName]
+                )->fetch();
+                if ($modelRow) {
+                    $modelData = [
+                        'name' => $modelRow['name'],
+                        'id' => (int)$modelRow['id'],
+                        'provider' => $modelRow['provider'] ?? 'openrouter',
+                        'cost_per_input_char' => (float)($modelRow['cost_per_input_char'] ?? 0.000001),
+                        'cost_per_output_char' => (float)($modelRow['cost_per_output_char'] ?? 0.000002),
+                        'free_model' => (int)($modelRow['free_model'] ?? 0),
+                        'model_config' => $modelRow['model_config'] ?? null,
+                    ];
+                }
+            }
+
+            if (empty($modelName)) {
+                // Final fallback: first active text model
+                $modelRow = $this->db->query(
+                    "SELECT name, provider, cost_per_input_char, cost_per_output_char, free_model 
+                     FROM ai_text_models WHERE is_active = 1 ORDER BY id ASC LIMIT 1"
+                )->fetch();
+                if ($modelRow) {
+                    $modelName = $modelRow['name'];
+                    $modelData = [
+                        'name' => $modelName,
+                        'provider' => $modelRow['provider'] ?? 'openrouter',
+                        'cost_per_input_char' => (float)($modelRow['cost_per_input_char'] ?? 0.000001),
+                        'cost_per_output_char' => (float)($modelRow['cost_per_output_char'] ?? 0.000002),
+                        'free_model' => (int)($modelRow['free_model'] ?? 0),
+                    ];
+                }
+            }
+
+            if (empty($modelName)) {
+                Logger::error('MemoryManager::summarizeConversation no model found', ['user_id' => $userId]);
+                return;
+            }
+
+            // 2. Build system prompt for summarization
+            $systemPrompt = "تو یک دستیار خلاصه‌ساز گفتگو هستی.\n"
+                . "متن یک گفتگو بین یک کاربر و یک دستیار هوش مصنوعی به تو داده می‌شود.\n"
+                . "وظیفه تو: خلاصه‌ای مختصر و مفید از گفتگو به زبان فارسی بنویس.\n"
+                . "قوانین:\n"
+                . "1. فقط مهم‌ترین نکات گفتگو را نگه دار\n"
+                . "2. خروجی حداکثر 300 کاراکتر باشد\n"
+                . "3. اطلاعات شخصی کاربر (نام، علایق، اهداف) را حتماً حفظ کن\n"
+                . "4. از خط تیره برای بولت‌پوینت استفاده کن\n"
+                . "5. خروجی فقط متن فارسی باشد (بدون JSON)";
+
+            $messages = [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => "متن گفتگو:\n" . mb_substr($conversationText, 0, 4000)],
+            ];
+
+            // 3. Call AI to summarize
+            $chatService = new ChatService();
+            $result = $chatService->chat($messages, $modelName, $modelData);
+
+            if (isset($result['error'])) {
+                Logger::error('MemoryManager::summarizeConversation AI error', [
+                    'user_id' => $userId,
+                    'error' => $result['error'],
+                ]);
+                return;
+            }
+
+            $summaryText = trim($result['response'] ?? '');
+            if (empty($summaryText)) {
+                Logger::error('MemoryManager::summarizeConversation empty response', ['user_id' => $userId]);
+                return;
+            }
+
+            // 4. Save summary to conversation_summaries table
+            $this->db->query(
+                "INSERT INTO conversation_summaries (user_id, summary_text, conversation_id) VALUES (?, ?, ?)",
+                [$userId, $summaryText, $conversationId]
+            );
+
+            Logger::info('MemoryManager::summarizeConversation saved', [
+                'user_id' => $userId,
+                'summary_length' => mb_strlen($summaryText),
+                'conversation_id' => $conversationId,
+            ]);
+
+        } catch (\Throwable $e) {
+            Logger::error('MemoryManager::summarizeConversation exception', [
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
 }
