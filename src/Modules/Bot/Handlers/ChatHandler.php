@@ -511,7 +511,32 @@ class ChatHandler extends BaseHandler
 
         $responseText = $result['response'];
         $outputChars = $result['output_chars'];
-        $outputCost = $freeModel ? 0 : ChatService::calcCreditCost($outputChars, $costPerOutput);
+
+        // Use actual cost from OpenRouter API response (usage.cost in USD)
+        // Convert USD to Toman using dollar_rate + profit_margin from settings
+        $actualCostUsd = (float)($result['cost_usd'] ?? 0);
+        $outputCost = 0;
+
+        if ($freeModel) {
+            // Free model — no charge
+            $outputCost = 0;
+        } elseif ($actualCostUsd > 0) {
+            // API returned actual cost — use it for precise billing
+            // Get dollar_rate and profit_margin from settings
+            $settingsRow = $db->query("SELECT value FROM settings WHERE key_name = 'dollar_rate'")->fetch();
+            $dollarRate = (float)($settingsRow['value'] ?? 231000);
+            $settingsRow = $db->query("SELECT value FROM settings WHERE key_name = 'profit_margin_percent'")->fetch();
+            $profitPercent = (float)($settingsRow['value'] ?? 25);
+
+            // Convert USD to Toman: cost_usd * dollar_rate * (1 + profit_margin/100)
+            // Then convert Toman to credits (1 credit = 1000 Toman)
+            $costToman = $actualCostUsd * $dollarRate * (1 + $profitPercent / 100);
+            $outputCost = round($costToman / 1000, 6);
+        } else {
+            // Fallback: API did not return cost (e.g. GapGPT, MetisAI)
+            // Use char-based calculation as before
+            $outputCost = $freeModel ? 0 : ChatService::calcCreditCost($outputChars, $costPerOutput);
+        }
 
         // Deduct output cost
         if (!$freeModel && $outputCost > 0) {

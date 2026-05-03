@@ -31,6 +31,20 @@ class MemoryManager
                 // ignore
             }
         }
+
+        // Load extraction model from settings if not provided in config
+        if (empty($this->config['extraction_model'])) {
+            try {
+                $row = $this->db->query(
+                    "SELECT value FROM settings WHERE key_name = 'memory_extraction_model'"
+                )->fetch();
+                if ($row && !empty($row['value'])) {
+                    $this->config['extraction_model'] = $row['value'];
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
     }
 
     /**

@@ -66,6 +66,73 @@ class Router
         }
 
         // -------------------------------------------------------
+        // PRIORITY 1.b: Callback queries — always respected, bypass state
+        // -------------------------------------------------------
+        if ($update->isCallback()) {
+            $data = $update->getCallbackData() ?? '';
+            error_log("DEBUG ROUTER: callback=[" . $data . "]");
+            $map = [
+                'buy_credit' => 'BuyCreditHandler',
+                'generate_image' => 'ImageHandler',
+                'edit_image' => 'Img2ImgHandler',
+                'account' => 'AccountHandler',
+                'help' => 'MessageHandler',
+                'check_membership' => 'CallbackHandler',
+                'edit_photos_done' => 'Img2ImgHandler',
+                'start_chat' => 'ChatHandler',
+                'chat_use_default' => 'ChatHandler',
+                'chat_select_model' => 'ChatHandler',
+                'chat_history' => 'ChatHandler',
+                'generate_video' => 'VideoHandler',
+                'show_memory' => 'MemoryCommandHandler',
+                'clear_memory' => 'MemoryCommandHandler',
+                'toggle_memory' => 'MemoryCommandHandler',
+                'add_memory' => 'MemoryCommandHandler',
+                'confirm_clear_memory' => 'MemoryCommandHandler',
+                'cancel_clear_memory' => 'MemoryCommandHandler',
+            ];
+
+            // Memory callbacks — special handler with different namespace and constructor
+            if (in_array($data, ['show_memory', 'clear_memory', 'toggle_memory', 'add_memory', 'confirm_clear_memory', 'cancel_clear_memory'], true)) {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            // Memory delete by ID: delete_mem_{id}
+            if (str_starts_with($data, 'delete_mem_')) {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+            // Memory importance: mem_imp_{text}_{stars}
+            if (str_starts_with($data, 'mem_imp_')) {
+                $memoryManager = new MemoryManager();
+                return new MemoryCommandHandler($this->baleClient, $memoryManager);
+            }
+
+            // Unique prefixes — each handler owns its own namespace
+            if (str_starts_with($data, 'img_select_model_')) {
+                return new ImageHandler($this->baleClient);
+            }
+            if (str_starts_with($data, 'edit_select_model_')) {
+                return new Img2ImgHandler($this->baleClient);
+            }
+            if (str_starts_with($data, 'vid_select_model_') || str_starts_with($data, 'vid_res_') || str_starts_with($data, 'vid_ar_') || str_starts_with($data, 'vid_dur_') || str_starts_with($data, 'vid_confirm_') || str_starts_with($data, 'vid_skip_') || $data === 'vid_back_model') {
+                return new VideoHandler($this->baleClient);
+            }
+            if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {
+                return new ChatHandler($this->baleClient);
+            }
+            // plan_* callbacks — buy credit flow
+            if (str_starts_with($data, 'plan_') || str_starts_with($data, 'pay_zibal_') || str_starts_with($data, 'pay_bale_')) {
+                return new BuyCreditHandler($this->baleClient);
+            }
+            if (isset($map[$data])) {
+                $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
+                return new $class($this->baleClient);
+            }
+            return new UnknownUpdateHandler($this->baleClient);
+        }
+
+        // -------------------------------------------------------
         // PRIORITY 2: State-based routing (for ongoing flows)
         // -------------------------------------------------------
         $userId = $update->getUserId();
@@ -129,74 +196,6 @@ class Router
             }
             error_log("DEBUG ROUTER: document -> MessageHandler");
             return new MessageHandler($this->baleClient);
-        }
-
-        // 6. Callback queries (inline buttons)
-        if ($update->isCallback()) {
-            $data = $update->getCallbackData() ?? '';
-            error_log("DEBUG ROUTER: callback=[" . $data . "]");
-            $map = [
-                'buy_credit' => 'BuyCreditHandler',
-                'plan_basic' => 'BuyCreditHandler',
-                'plan_standard' => 'BuyCreditHandler',
-                'plan_premium' => 'BuyCreditHandler',
-                'plan_1' => 'BuyCreditHandler',
-                'plan_2' => 'BuyCreditHandler',
-                'plan_3' => 'BuyCreditHandler',
-                'generate_image' => 'ImageHandler',
-                'edit_image' => 'Img2ImgHandler',
-                'account' => 'AccountHandler',
-                'help' => 'MessageHandler',
-                'check_membership' => 'CallbackHandler',
-                'edit_photos_done' => 'Img2ImgHandler',
-                'start_chat' => 'ChatHandler',
-                'chat_use_default' => 'ChatHandler',
-                'chat_select_model' => 'ChatHandler',
-                'chat_history' => 'ChatHandler',
-                'generate_video' => 'VideoHandler',
-                'show_memory' => 'MemoryCommandHandler',
-                'clear_memory' => 'MemoryCommandHandler',
-                'toggle_memory' => 'MemoryCommandHandler',
-                'add_memory' => 'MemoryCommandHandler',
-                'confirm_clear_memory' => 'MemoryCommandHandler',
-                'cancel_clear_memory' => 'MemoryCommandHandler',
-            ];
-
-            
-            // Memory callbacks — special handler with different namespace and constructor
-            if (in_array($data, ['show_memory', 'clear_memory', 'toggle_memory', 'add_memory', 'confirm_clear_memory', 'cancel_clear_memory'], true)) {
-                $memoryManager = new MemoryManager();
-                return new MemoryCommandHandler($this->baleClient, $memoryManager);
-            }
-            // Memory delete by ID: delete_mem_{id}
-            if (str_starts_with($data, 'delete_mem_')) {
-                $memoryManager = new MemoryManager();
-                return new MemoryCommandHandler($this->baleClient, $memoryManager);
-            }
-            // Memory importance: mem_imp_{text}_{stars}
-            if (str_starts_with($data, 'mem_imp_')) {
-                $memoryManager = new MemoryManager();
-                return new MemoryCommandHandler($this->baleClient, $memoryManager);
-            }
-
-            // Unique prefixes — each handler owns its own namespace
-            if (str_starts_with($data, 'img_select_model_')) {
-                return new ImageHandler($this->baleClient);
-            }
-            if (str_starts_with($data, 'edit_select_model_')) {
-                return new Img2ImgHandler($this->baleClient);
-            }
-            if (str_starts_with($data, 'vid_select_model_') || str_starts_with($data, 'vid_res_') || str_starts_with($data, 'vid_ar_') || str_starts_with($data, 'vid_dur_') || str_starts_with($data, 'vid_confirm_') || str_starts_with($data, 'vid_skip_') || $data === 'vid_back_model') {
-                return new VideoHandler($this->baleClient);
-            }
-            if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {
-                return new ChatHandler($this->baleClient);
-            }
-            if (isset($map[$data])) {
-                $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
-                return new $class($this->baleClient);
-            }
-            return new UnknownUpdateHandler($this->baleClient);
         }
 
         // 7. Regular message — route by text content

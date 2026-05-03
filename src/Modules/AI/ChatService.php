@@ -129,20 +129,23 @@ class ChatService
 
         $responseText = $result['response'] ?? '';
         $outputChars = mb_strlen($responseText);
+        $actualCostUsd = $result['cost_usd'] ?? 0.0;
 
         \Core\AILogger::log('CHATSERVICE_DONE', [
             'provider' => $provider,
             'model' => $model,
             'input_chars' => $inputChars,
             'output_chars' => $outputChars,
+            'actual_cost_usd' => $actualCostUsd,
             'duration' => round($duration, 2) . 's',
         ]);
 
         return [
-            'response'     => $responseText,
-            'input_chars'  => $inputChars,
-            'output_chars' => $outputChars,
-            'error'        => null,
+            'response'       => $responseText,
+            'input_chars'    => $inputChars,
+            'output_chars'   => $outputChars,
+            'cost_usd'       => $actualCostUsd,
+            'error'          => null,
         ];
     }
 
@@ -284,6 +287,12 @@ class ChatService
 
         if (empty(trim($text))) return ['error' => 'پاسخ خالی از API دریافت شد', 'http_code' => $httpCode, 'raw_body' => $body];
 
-        return ['response' => $text, 'http_code' => $httpCode, 'raw_body' => $body];
+        // Extract actual cost from OpenRouter's usage.cost field
+        $costUsd = 0.0;
+        if (isset($r['usage']['cost'])) {
+            $costUsd = (float)$r['usage']['cost'];
+        }
+
+        return ['response' => $text, 'http_code' => $httpCode, 'raw_body' => $body, 'cost_usd' => $costUsd];
     }
 }
