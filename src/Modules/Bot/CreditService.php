@@ -94,6 +94,51 @@ class CreditService
     }
 
     /**
+     * Refund/credit back previously deducted credits. Idempotent.
+     * Logged as 'credit_back' type in ledger for traceability.
+     */
+    public static function creditBack(int $userId, float $amount, string $referenceId): bool
+    {
+        $db = Database::getInstance();
+        $conn = $db->getConnection();
+
+        try {
+            $conn->beginTransaction();
+
+            $stmt = $conn->prepare("SELECT id FROM credit_ledger WHERE reference_id = ?");
+            $stmt->execute([$referenceId]);
+            if ($stmt->fetch()) {
+                $conn->commit();
+                return true;
+            }
+
+            $stmt = $conn->prepare("UPDATE users SET credits = credits + ? WHERE id = ?");
+            $stmt->execute([$amount, $userId]);
+
+            if ($stmt->rowCount() === 0) {
+                throw new \Exception("User not found");
+            }
+
+            $stmt = $conn->prepare(
+                "INSERT INTO credit_ledger (user_id, amount, type, reference_id) VALUES (?, ?, 'credit_back', ?)"
+            );
+            $stmt->execute([$userId, $amount, $referenceId]);
+
+            $conn->commit();
+            Logger::info('CreditService::creditBack success', [
+                'user_id' => $userId, 'amount' => $amount, 'reference_id' => $referenceId
+            ]);
+            return true;
+        } catch (\Throwable $e) {
+            $conn->rollBack();
+            Logger::error('CreditService::creditBack failed', [
+                'user_id' => $userId, 'amount' => $amount, 'reference_id' => $referenceId, 'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
      * Add credits to user. Idempotent.
      */
     public static function addCredits(int $userId, float $amount, string $referenceId): bool

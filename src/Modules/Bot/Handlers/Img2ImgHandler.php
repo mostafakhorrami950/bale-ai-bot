@@ -342,8 +342,8 @@ class Img2ImgHandler extends BaseHandler
 
         if (empty($imageDataUris)) {
             $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
-                [$internalId, $modelId, $prompt, 'img2img', $referenceId]
+                "INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'img2img', 'failed', ?)",
+                [$internalId, $modelId, $model['name'], $prompt, $referenceId]
             );
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, '⚠️ تصاویر معتبر نیستند.');
@@ -351,8 +351,6 @@ class Img2ImgHandler extends BaseHandler
         }
 
         // Single API call with ALL images in the `images` array
-        // OpenRouter/Gemini receives all photos as content parts in one message
-        // and produces ONE image output based on all inputs
         $result = $aiService->generate([
             'model'      => $model['name'],
             'prompt'     => $prompt,
@@ -363,14 +361,73 @@ class Img2ImgHandler extends BaseHandler
 
         $imageType = 'img2img';
 
+        // Check if model returned text instead of image
+        if (!empty($result['text'])) {
+            $textResponse = $result['text'];
+            
+            // Refund the image cost
+            CreditService::creditBack($internalId, $cost, $referenceId . '_refund');
+            
+            // Calculate text-based cost
+            $inputChars = mb_strlen($prompt);
+            $outputChars = mb_strlen($textResponse);
+            $costPerInputChar = (float)($model['cost_per_input_char'] ?? 0.000001);
+            $costPerOutputChar = (float)($model['cost_per_output_char'] ?? 0.000002);
+            $textCost = (int)ceil(($inputChars * $costPerInputChar) + ($outputChars * $costPerOutputChar));
+            if ($textCost < 1) $textCost = 1;
+            
+            $textRefId = $referenceId . '_text';
+            CreditService::deduct($internalId, $textCost, $textRefId);
+            
+            // Fetch actual USD cost
+            $usage = $result['usage'] ?? [];
+            $actualUsd = 0;
+            if (!empty($usage)) {
+                $actualUsd = (float)($usage['cost'] ?? 0);
+                if ($actualUsd <= 0 && !empty($usage['cost_details']['upstream_inference_cost'] ?? null)) {
+                    $actualUsd = (float)$usage['cost_details']['upstream_inference_cost'];
+                }
+            }
+            
+            \Core\AILogger::log('IMG2IMG_TEXT_FALLBACK', [
+                'input_chars' => $inputChars,
+                'output_chars' => $outputChars,
+                'text_cost' => $textCost,
+                'original_image_cost' => $cost,
+                'actual_cost_usd' => $actualUsd,
+                'model' => $model['name'],
+            ]);
+            
+            $db->query(
+                "INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id, actual_cost_usd, input_chars, output_chars, cost_charged) VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?, ?, ?)",
+                [$internalId, $modelId, $model['name'], $prompt, $imageType, $referenceId, $actualUsd, $inputChars, $outputChars, $textCost]
+            );
+            
+            $this->clearUserState($internalId);
+            
+            $displayText = mb_substr($textResponse, 0, 4000);
+            $caption = "مدل به جای تصویر، متن زیر را تولید کرد:\n\n" . $displayText . "\n———\n💎 هزینه: {$textCost} اعتبار";
+            $this->baleClient->sendMessage($chatId, $caption, $this->getMainMenuInlineKeyboard());
+            return;
+        }
+
         if (!empty($result['images'])) {
             // Success — ONE image output
+            $usage = $result['usage'] ?? [];
+            $actualUsd = 0;
+            if (!empty($usage)) {
+                $actualUsd = (float)($usage['cost'] ?? 0);
+                if ($actualUsd <= 0 && !empty($usage['cost_details']['upstream_inference_cost'] ?? null)) {
+                    $actualUsd = (float)$usage['cost_details']['upstream_inference_cost'];
+                }
+            }
+            
             $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'success', ?)",
-                [$internalId, $modelId, $prompt, $imageType, $referenceId]
+                "INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id, actual_cost_usd, cost_charged) VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?)",
+                [$internalId, $modelId, $model['name'], $prompt, $imageType, $referenceId, $actualUsd, $cost]
             );
 
-            // Send only the first image (single output from multi-image input)
+            // Send only the first image
             $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, '✨ انجام شد.', $this->getMainMenuInlineKeyboard());
@@ -378,8 +435,8 @@ class Img2ImgHandler extends BaseHandler
             // Failure
             $errMsg = $result['error'] ?? 'خطای نامشخص';
             $db->query(
-                "INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'failed', ?)",
-                [$internalId, $modelId, $prompt, $imageType, $referenceId]
+                "INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, ?, 'failed', ?)",
+                [$internalId, $modelId, $model['name'], $prompt, $imageType, $referenceId]
             );
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, '⚠️ خطا: ' . $errMsg);

@@ -191,13 +191,76 @@ class ImageHandler extends BaseHandler
 
         if (isset($result['error'])) {
             \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, false, $result['error']);
-            $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $prompt, $referenceId]);
+            $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $model['name'], $prompt, $referenceId]);
             $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
             return;
         }
 
-        $db->query("INSERT INTO ai_requests (user_id, model_id, prompt, image_type, status, reference_id) VALUES (?, ?, ?, 'text2img', 'success', ?)", [$internalId, $modelId, $prompt, $referenceId]);
+        // Check if model returned text instead of image
+        if (!empty($result['text'])) {
+            // Model returned text only — refund image cost, charge based on chars
+            $textResponse = $result['text'];
+            $usage = $result['usage'] ?? [];
+            
+            // Refund the image cost (it was deducted earlier)
+            CreditService::creditBack($internalId, $cost, $referenceId . '_refund');
+            
+            // Calculate text-based cost
+            $inputChars = mb_strlen($prompt);
+            $outputChars = mb_strlen($textResponse);
+            $costPerInputChar = (float)($model['cost_per_input_char'] ?? 0.000001);
+            $costPerOutputChar = (float)($model['cost_per_output_char'] ?? 0.000002);
+            $textCost = (int)ceil(($inputChars * $costPerInputChar) + ($outputChars * $costPerOutputChar));
+            if ($textCost < 1) $textCost = 1; // Minimum 1 credit
+            
+            // Deduct text-based cost
+            $textRefId = $referenceId . '_text';
+            CreditService::deduct($internalId, $textCost, $textRefId);
+            
+            // Fetch actual USD cost from usage if available
+            $actualUsd = 0;
+            if (!empty($usage)) {
+                $actualUsd = (float)($usage['cost'] ?? 0);
+                if ($actualUsd <= 0 && !empty($usage['cost_details']['upstream_inference_cost'] ?? null)) {
+                    $actualUsd = (float)$usage['cost_details']['upstream_inference_cost'];
+                }
+            }
+            
+            \Core\AILogger::log('IMAGE_TEXT_FALLBACK', [
+                'input_chars' => $inputChars,
+                'output_chars' => $outputChars,
+                'text_cost' => $textCost,
+                'original_image_cost' => $cost,
+                'actual_cost_usd' => $actualUsd,
+                'model' => $model['name'],
+            ]);
+            
+            $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id, actual_cost_usd, input_chars, output_chars, cost_charged) VALUES (?, ?, ?, ?, 'text2img', 'success', ?, ?, ?, ?, ?)", 
+                [$internalId, $modelId, $model['name'], $prompt, $referenceId, $actualUsd, $inputChars, $outputChars, $textCost]);
+            
+            $this->clearUserState($internalId);
+            
+            // Send text response (clamped to 4000 chars for Bale API limit)
+            $displayText = mb_substr($textResponse, 0, 4000);
+            $caption = "مدل به جای تصویر، متن زیر را تولید کرد:\n\n" . $displayText . "\n———\n💎 هزینه: {$textCost} اعتبار";
+            $this->baleClient->sendMessage($chatId, $caption, $this->getMainMenuInlineKeyboard());
+            return;
+        }
+
+        // For image output, fetch actual USD cost from usage
+        $usage = $result['usage'] ?? [];
+        $actualUsd = 0;
+        if (!empty($usage)) {
+            $actualUsd = (float)($usage['cost'] ?? 0);
+            if ($actualUsd <= 0 && !empty($usage['cost_details']['upstream_inference_cost'] ?? null)) {
+                $actualUsd = (float)$usage['cost_details']['upstream_inference_cost'];
+            }
+        }
+        
+        // Model returned image(s) — normal flow
+        $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id, actual_cost_usd, cost_charged) VALUES (?, ?, ?, ?, 'text2img', 'success', ?, ?, ?)", 
+            [$internalId, $modelId, $model['name'], $prompt, $referenceId, $actualUsd, $cost]);
 
         $images = $result['images'] ?? [];
         \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);

@@ -52,6 +52,7 @@ class DatabaseRepairService
         $this->ensureVideoCostPerSecondColumn();
         $this->ensureChatMessagesModelNameColumn();
         $this->ensureChatMessagesActualCostColumn();
+        $this->ensureAiRequestsFinanceColumns();
 
         return $this->messages;
     }
@@ -954,6 +955,54 @@ class DatabaseRepairService
             if ($this->columnExists('chat_messages', 'output_tokens')) {
                 $this->log('✅ ستون output_tokens با روش جایگزین اضافه شد.');
             }
+        }
+    }
+
+    private function ensureAiRequestsFinanceColumns(): void
+    {
+        if (!$this->tableExists('ai_requests')) {
+            $this->log('⚠️ جدول ai_requests وجود ندارد.');
+            return;
+        }
+
+        // model_name
+        $this->execIgnored("ALTER TABLE ai_requests ADD COLUMN model_name VARCHAR(200) DEFAULT NULL AFTER model_id");
+        if ($this->columnExists('ai_requests', 'model_name')) {
+            $this->log('✅ ستون model_name به جدول ai_requests اضافه شد.');
+        }
+
+        // actual_cost_usd
+        $this->execIgnored("ALTER TABLE ai_requests ADD COLUMN actual_cost_usd DECIMAL(16,8) DEFAULT 0 AFTER model_name");
+        if ($this->columnExists('ai_requests', 'actual_cost_usd')) {
+            $this->log('✅ ستون actual_cost_usd به جدول ai_requests اضافه شد.');
+        }
+
+        // input_chars
+        $this->execIgnored("ALTER TABLE ai_requests ADD COLUMN input_chars INT DEFAULT 0 AFTER actual_cost_usd");
+        if ($this->columnExists('ai_requests', 'input_chars')) {
+            $this->log('✅ ستون input_chars به جدول ai_requests اضافه شد.');
+        }
+
+        // output_chars
+        $this->execIgnored("ALTER TABLE ai_requests ADD COLUMN output_chars INT DEFAULT 0 AFTER input_chars");
+        if ($this->columnExists('ai_requests', 'output_chars')) {
+            $this->log('✅ ستون output_chars به جدول ai_requests اضافه شد.');
+        }
+
+        // cost_charged
+        $this->execIgnored("ALTER TABLE ai_requests ADD COLUMN cost_charged DECIMAL(12,6) DEFAULT 0 AFTER output_chars");
+        if ($this->columnExists('ai_requests', 'cost_charged')) {
+            $this->log('✅ ستون cost_charged به جدول ai_requests اضافه شد.');
+        }
+
+        // Indexes
+        if (!$this->indexExists('ai_requests', 'idx_model_name')) {
+            $this->exec("CREATE INDEX idx_model_name ON ai_requests (model_name)");
+            $this->log('✅ ایندکس idx_model_name روی ai_requests ایجاد شد.');
+        }
+        if (!$this->indexExists('ai_requests', 'idx_created_at')) {
+            $this->exec("CREATE INDEX idx_created_at ON ai_requests (created_at)");
+            $this->log('✅ ایندکس idx_created_at روی ai_requests ایجاد شد.');
         }
     }
 

@@ -56,6 +56,23 @@ try {
     $totalCreditsConsumed = 0.0;
 }
 
+// Fetch AI request image model stats for this user
+$imageAiStats = [];
+try {
+    $imageAiStats = $db->query("
+        SELECT 
+            COALESCE(SUM(actual_cost_usd), 0) as total_image_usd,
+            COALESCE(SUM(cost_charged), 0) as total_image_credits,
+            COUNT(*) as total_image_requests,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count
+        FROM ai_requests
+        WHERE user_id = ?
+    ", [$userId])->fetch();
+} catch (\Throwable $e) {
+    $imageAiStats = ['total_image_usd' => 0, 'total_image_credits' => 0, 'total_image_requests' => 0, 'success_count' => 0, 'failed_count' => 0];
+}
+
 // Handle profile update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_profile') {
     try {
@@ -178,10 +195,12 @@ try {
     $aiRequests = $db->query("
         (SELECT 
             ar.created_at,
-            COALESCE(aim.name, aem.name, atm.name, 'نامشخص') as model_name,
+            COALESCE(ar.model_name, aim.name, aem.name, atm.name, 'نامشخص') as model_name,
             ar.image_type as type,
             ar.status,
-            ar.prompt as prompt
+            ar.prompt as prompt,
+            ar.actual_cost_usd,
+            ar.cost_charged
         FROM ai_requests ar
         LEFT JOIN ai_image_models aim ON ar.model_id = aim.id
         LEFT JOIN ai_edit_models aem ON ar.model_id = aem.id
@@ -195,7 +214,9 @@ try {
             cc.model as model_name,
             'chat' as type,
             'success' as status,
-            cc.title as prompt
+            cc.title as prompt,
+            NULL as actual_cost_usd,
+            NULL as cost_charged
         FROM chat_conversations cc
         WHERE cc.user_id = ?
         ORDER BY cc.created_at DESC
@@ -240,8 +261,11 @@ ob_start();
                 <tr><td>وضعیت ثبت‌نام:</td><td><?php echo ($user['is_registered'] ?? 0) ? '✅ ثبت‌نام شده' : '❌ ثبت‌نام نشده'; ?></td></tr>
                 <tr><td>تاریخ ثبت‌نام:</td><td><?php echo $user['created_at'] ?? '-'; ?></td></tr>
                 <tr><td>آخرین فعالیت:</td><td><?php echo $user['last_active_at'] ?? '-'; ?></td></tr>
-                <tr><td>💵 مجموع هزینه دلاری:</td><td><strong class="text-info">$<?php echo number_format($totalUsdSpent, 8); ?></strong></td></tr>
-                <tr><td>📊 مجموع کردیت مصرفی:</td><td><strong class="text-warning"><?php echo number_format($totalCreditsConsumed, 4); ?></strong> کردیت</td></tr>
+                <tr><td>💵 مجموع هزینه دلاری چت:</td><td><strong class="text-info">$<?php echo number_format($totalUsdSpent, 8); ?></strong></td></tr>
+                <tr><td>📊 مجموع کردیت مصرفی چت:</td><td><strong class="text-warning"><?php echo number_format($totalCreditsConsumed, 4); ?></strong> کردیت</td></tr>
+                <tr><td>🎨 هزینه دلاری تصاویر:</td><td><strong class="text-info">$<?php echo number_format((float)($imageAiStats['total_image_usd'] ?? 0), 8); ?></strong></td></tr>
+                <tr><td>🖼 کردیت مصرفی تصاویر:</td><td><strong class="text-warning"><?php echo number_format((float)($imageAiStats['total_image_credits'] ?? 0), 4); ?></strong></td></tr>
+                <tr><td>📸 درخواست‌های تصویری:</td><td><?php echo (int)($imageAiStats['total_image_requests'] ?? 0); ?> (✅ <?php echo (int)($imageAiStats['success_count'] ?? 0); ?> / ❌ <?php echo (int)($imageAiStats['failed_count'] ?? 0); ?>)</td></tr>
             </table>
         </div>
     </div>
@@ -392,11 +416,13 @@ ob_start();
                         <th>نوع</th>
                         <th>وضعیت</th>
                         <th>متن (خلاصه)</th>
+                        <th>هزینه ($)</th>
+                        <th>کردیت</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($aiRequests)): ?>
-                        <tr><td colspan="5" class="text-muted text-center">درخواستی ثبت نشده.</td></tr>
+                        <tr><td colspan="7" class="text-muted text-center">درخواستی ثبت نشده.</td></tr>
                     <?php else: ?>
                         <?php foreach ($aiRequests as $r): ?>
                         <tr>
@@ -419,8 +445,14 @@ ob_start();
                                     <span class="badge-inactive">❌ ناموفق</span>
                                 <?php endif; ?>
                             </td>
-                            <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            <td style="max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                                 <?php echo htmlspecialchars(mb_substr($r['prompt'] ?? '', 0, 80)); ?>
+                            </td>
+                            <td style="font-size:0.85rem;">
+                                <?php echo $r['actual_cost_usd'] ? '$' . number_format((float)$r['actual_cost_usd'], 8) : '-'; ?>
+                            </td>
+                            <td style="font-size:0.85rem;">
+                                <?php echo $r['cost_charged'] ? number_format((float)$r['cost_charged'], 4) : '-'; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>

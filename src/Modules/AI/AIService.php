@@ -256,21 +256,40 @@ class AIService
         }
 
         if (empty($imageUrls)) {
-            // Log the raw response for debugging
-            $contentSample = '';
+            // No images found — check if model returned text response instead
+            $textResponse = '';
             if (!empty($choices[0]['message']['content'] ?? null)) {
                 $raw = $choices[0]['message']['content'];
                 if (is_string($raw)) {
-                    $contentSample = mb_substr($raw, 0, 500);
+                    $textResponse = $raw;
                 } elseif (is_array($raw)) {
-                    $contentSample = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    // Try to extract text from content array
+                    foreach ($raw as $part) {
+                        if (($part['type'] ?? '') === 'text' && !empty($part['text'])) {
+                            $textResponse .= $part['text'];
+                        }
+                    }
                 }
+                $textResponse = trim($textResponse);
             }
+            
+            if (!empty($textResponse)) {
+                // Model returned text only — return it as text response
+                \Core\AILogger::log('AISERVICE_TEXT_ONLY', [
+                    'model' => $r['model'] ?? 'unknown',
+                    'text_len' => mb_strlen($textResponse),
+                ]);
+                return [
+                    'text' => $textResponse,
+                    'usage' => $r['usage'] ?? null,
+                ];
+            }
+            
+            // Log the raw response for debugging  
             \Core\AILogger::log('AISERVICE_NO_IMAGE', [
                 'http_code' => $httpCode,
                 'model' => $r['model'] ?? 'unknown',
                 'content_type' => gettype($choices[0]['message']['content'] ?? null),
-                'content_preview' => $contentSample,
                 'finish_reason' => $choices[0]['finish_reason'] ?? null,
                 'usage' => $r['usage'] ?? null,
             ]);
