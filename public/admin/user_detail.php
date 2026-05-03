@@ -28,6 +28,34 @@ if (!$user) {
     exit;
 }
 
+// Fetch total USD spent by this user across all chat messages
+$totalUsdSpent = 0.0;
+try {
+    $row = $db->query("
+        SELECT COALESCE(SUM(actual_cost_usd), 0) as total_usd
+        FROM chat_messages
+        WHERE conversation_id IN (
+            SELECT id FROM chat_conversations WHERE user_id = ?
+        ) AND role = 'assistant'
+    ", [$userId])->fetch();
+    $totalUsdSpent = (float)($row['total_usd'] ?? 0);
+} catch (\Throwable $e) {
+    $totalUsdSpent = 0.0;
+}
+
+// Fetch total credits consumed by this user (from credit_ledger)
+$totalCreditsConsumed = 0.0;
+try {
+    $row = $db->query("
+        SELECT COALESCE(SUM(ABS(amount)), 0) as total_credits
+        FROM credit_ledger
+        WHERE user_id = ? AND type = 'deduction'
+    ", [$userId])->fetch();
+    $totalCreditsConsumed = (float)($row['total_credits'] ?? 0);
+} catch (\Throwable $e) {
+    $totalCreditsConsumed = 0.0;
+}
+
 // Handle profile update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_profile') {
     try {
@@ -212,6 +240,8 @@ ob_start();
                 <tr><td>وضعیت ثبت‌نام:</td><td><?php echo ($user['is_registered'] ?? 0) ? '✅ ثبت‌نام شده' : '❌ ثبت‌نام نشده'; ?></td></tr>
                 <tr><td>تاریخ ثبت‌نام:</td><td><?php echo $user['created_at'] ?? '-'; ?></td></tr>
                 <tr><td>آخرین فعالیت:</td><td><?php echo $user['last_active_at'] ?? '-'; ?></td></tr>
+                <tr><td>💵 مجموع هزینه دلاری:</td><td><strong class="text-info">$<?php echo number_format($totalUsdSpent, 8); ?></strong></td></tr>
+                <tr><td>📊 مجموع کردیت مصرفی:</td><td><strong class="text-warning"><?php echo number_format($totalCreditsConsumed, 4); ?></strong> کردیت</td></tr>
             </table>
         </div>
     </div>

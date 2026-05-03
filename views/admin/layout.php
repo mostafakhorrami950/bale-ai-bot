@@ -200,6 +200,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'models' ? 'active' : ''; ?>" href="models.php">
             <i class="bi bi-cpu"></i> 📋 همه مدل‌ها
         </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'model_stats' ? 'active' : ''; ?>" href="model_stats.php">
+            <i class="bi bi-bar-chart"></i> 📊 آمار مدل‌ها
+        </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'modelstext2img' ? 'active' : ''; ?>" href="modelstext2img.php" style="padding-right:40px;font-size:0.9rem;">
             <i class="bi bi-image"></i> 🎨 ساخت تصویر
         </a>

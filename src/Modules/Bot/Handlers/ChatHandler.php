@@ -447,11 +447,19 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save user message with model_name
-        $db->query(
-            "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0, ?)",
-            [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost, $modelName]
-        );
+        // Save user message with model_name (backward-compatible with/without model_name column)
+        try {
+            $db->query(
+                "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0, ?)",
+                [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost, $modelName]
+            );
+        } catch (\Throwable $e) {
+            // Fallback: table may not have model_name column yet
+            $db->query(
+                "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0)",
+                [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost]
+            );
+        }
 
         $loadingMsgId = $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت پاسخ...");
 
@@ -553,13 +561,21 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save assistant message with model_name, actual_cost_usd, and token counts
+        // Save assistant message with model_name, actual_cost_usd, and token counts (backward-compatible)
         $inputTokens = (int)($result['input_tokens'] ?? 0);
         $outputTokens = (int)($result['output_tokens'] ?? 0);
-        $db->query(
-            "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name, actual_cost_usd, input_tokens, output_tokens) VALUES (?, 'assistant', ?, 0, ?, 0, ?, ?, ?, ?, ?)",
-            [$convId, $responseText, $outputChars, $outputCost, $modelName, $actualCostUsd, $inputTokens, $outputTokens]
-        );
+        try {
+            $db->query(
+                "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name, actual_cost_usd, input_tokens, output_tokens) VALUES (?, 'assistant', ?, 0, ?, 0, ?, ?, ?, ?, ?)",
+                [$convId, $responseText, $outputChars, $outputCost, $modelName, $actualCostUsd, $inputTokens, $outputTokens]
+            );
+        } catch (\Throwable $e) {
+            // Fallback: table may not have new columns yet
+            $db->query(
+                "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'assistant', ?, 0, ?, 0, ?)",
+                [$convId, $responseText, $outputChars, $outputCost]
+            );
+        }
 
         // Update conversation totals
         $db->query(
