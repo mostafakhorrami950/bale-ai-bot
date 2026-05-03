@@ -108,7 +108,7 @@ echo ModelHelper::alertHtml($message, $messageType);
                 </div>
 
                 <hr>
-                <h6>🎨 تنظیمات</h6>
+                <h6>🎨 تنظیمات تصویر</h6>
                 <div class="mb-3">
                     <label class="form-label">هزینه هر تصویر (اعتبار):</label>
                     <input type="number" name="cost_per_image" class="form-control" min="1" required
@@ -134,6 +134,22 @@ echo ModelHelper::alertHtml($message, $messageType);
                     </select>
                 </div>
 
+                <hr>
+                <h6>📝 تنظیمات هزینه کاراکتر (Fallback متنی)</h6>
+                <p class="text-muted small">زمانی که مدل به جای تصویر، متن برمی‌گرداند، هزینه بر اساس کاراکتر محاسبه می‌شود.</p>
+                <div class="mb-3">
+                    <label class="form-label">هزینه هر کاراکتر ورودی (اعتبار):</label>
+                    <input type="number" name="cost_per_input_char" class="form-control" step="0.0000001" min="0"
+                           value="<?php echo $editMode ? ($editModel['cost_per_input_char'] ?? 0.000001) : '0.000001'; ?>">
+                    <div class="form-text">مقدار اعشاری (مثلاً: 0.000001)</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">هزینه هر کاراکتر خروجی (اعتبار):</label>
+                    <input type="number" name="cost_per_output_char" class="form-control" step="0.0000001" min="0"
+                           value="<?php echo $editMode ? ($editModel['cost_per_output_char'] ?? 0.000002) : '0.000002'; ?>">
+                    <div class="form-text">مقدار اعشاری (مثلاً: 0.000002)</div>
+                </div>
+
                 <button type="submit" class="btn btn-primary mt-3"><?php echo $editMode ? 'بروزرسانی' : 'ذخیره'; ?></button>
                 <?php if ($editMode): ?><a href="modelstext2img.php" class="btn btn-secondary mt-3">انصراف</a><?php endif; ?>
             </form>
@@ -144,16 +160,18 @@ echo ModelHelper::alertHtml($message, $messageType);
         <div class="table-container">
             <h5>📋 لیست مدل‌های ساخت تصویر (<?php echo count($models); ?>)</h5>
             <table class="table table-hover align-middle">
-                <thead><tr><th>ID</th><th>نام نمایشی</th><th>نام مدل</th><th>هزینه</th><th>سایز</th><th>نسبت</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+                <thead><tr><th>ID</th><th>نام نمایشی</th><th>نام مدل</th><th>هزینه</th><th>هزینه/کاراکتر ورودی</th><th>هزینه/کاراکتر خروجی</th><th>سایز</th><th>نسبت</th><th>وضعیت</th><th>عملیات</th></tr></thead>
                 <tbody>
                     <?php if (empty($models)): ?>
-                        <tr><td colspan="8" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
+                        <tr><td colspan="10" class="text-center text-muted">هیچ مدلی یافت نشد.</td></tr>
                     <?php else: foreach ($models as $m): ?>
                         <tr>
                             <td><?php echo $m['id']; ?></td>
                             <td><strong><?php echo htmlspecialchars($m['display_name'] ?? $m['name'] ?? '—'); ?></strong></td>
                             <td><code><?php echo htmlspecialchars($m['name']); ?></code></td>
                             <td><?php echo $m['cost']; ?> اعتبار</td>
+                            <td><?php echo number_format((float)($m['cost_per_input_char'] ?? 0), 8); ?></td>
+                            <td><?php echo number_format((float)($m['cost_per_output_char'] ?? 0), 8); ?></td>
                             <td><?php echo $m['size'] ?? 'auto'; ?></td>
                             <td><?php echo $m['aspect_ratio'] ?? 'auto'; ?></td>
                             <td><?php echo $m['is_active'] ? '<span class="badge-active">✅ فعال</span>' : '<span class="badge-inactive">❌ غیرفعال</span>'; ?></td>

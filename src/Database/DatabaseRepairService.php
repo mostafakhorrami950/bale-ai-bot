@@ -52,6 +52,7 @@ class DatabaseRepairService
         $this->ensureVideoCostPerSecondColumn();
         $this->ensureChatMessagesModelNameColumn();
         $this->ensureChatMessagesActualCostColumn();
+        $this->ensureImageModelCharCostColumns();
         $this->ensureAiRequestsFinanceColumns();
 
         return $this->messages;
@@ -954,6 +955,36 @@ class DatabaseRepairService
             $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN output_tokens INT DEFAULT 0");
             if ($this->columnExists('chat_messages', 'output_tokens')) {
                 $this->log('✅ ستون output_tokens با روش جایگزین اضافه شد.');
+            }
+        }
+    }
+
+    /**
+     * Add cost_per_input_char and cost_per_output_char columns to ai_image_models and ai_edit_models.
+     * These are used when image models return text instead of images (text fallback).
+     */
+    private function ensureImageModelCharCostColumns(): void
+    {
+        // ai_image_models: cost_per_input_char, cost_per_output_char
+        if ($this->tableExists('ai_image_models')) {
+            if (!$this->columnExists('ai_image_models', 'cost_per_input_char')) {
+                $this->exec("ALTER TABLE ai_image_models ADD COLUMN cost_per_input_char DECIMAL(10,6) DEFAULT 0.000001 AFTER cost_per_image");
+                $this->log('✅ ستون cost_per_input_char به ai_image_models اضافه شد.');
+            }
+            if (!$this->columnExists('ai_image_models', 'cost_per_output_char')) {
+                $this->exec("ALTER TABLE ai_image_models ADD COLUMN cost_per_output_char DECIMAL(10,6) DEFAULT 0.000002 AFTER cost_per_input_char");
+                $this->log('✅ ستون cost_per_output_char به ai_image_models اضافه شد.');
+            }
+        }
+        // ai_edit_models: cost_per_input_char, cost_per_output_char
+        if ($this->tableExists('ai_edit_models')) {
+            if (!$this->columnExists('ai_edit_models', 'cost_per_input_char')) {
+                $this->exec("ALTER TABLE ai_edit_models ADD COLUMN cost_per_input_char DECIMAL(10,6) DEFAULT 0.000001 AFTER cost_per_edit");
+                $this->log('✅ ستون cost_per_input_char به ai_edit_models اضافه شد.');
+            }
+            if (!$this->columnExists('ai_edit_models', 'cost_per_output_char')) {
+                $this->exec("ALTER TABLE ai_edit_models ADD COLUMN cost_per_output_char DECIMAL(10,6) DEFAULT 0.000002 AFTER cost_per_input_char");
+                $this->log('✅ ستون cost_per_output_char به ai_edit_models اضافه شد.');
             }
         }
     }

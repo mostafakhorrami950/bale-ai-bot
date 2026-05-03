@@ -85,12 +85,13 @@ class ModelHelper
         // Active
         $isActive = isset($post['is_active']) ? 1 : 0;
 
-        // Text-specific: per-character costs, no cost_per_image
+        // Common defaults
         $costPerInputChar = 0.000001;
         $costPerOutputChar = 0.000002;
         $freeModel = 0;
         $costPerImage = 0;
         $supportedFormats = '';
+        $sortOrder = 0;
 
         if ($modelType === 'text') {
             $costPerInputChar = (float)($post['cost_per_input_char'] ?? 0.000001);
@@ -133,6 +134,10 @@ class ModelHelper
                     throw new \InvalidArgumentException('نسبت تصویر نامعتبر است');
                 }
                 $post['aspect_ratio'] = $postAr;
+
+                // Per-character costs for image models (used when model returns text instead of image)
+                $costPerInputChar = (float)($post['cost_per_input_char'] ?? 0.000001);
+                $costPerOutputChar = (float)($post['cost_per_output_char'] ?? 0.000002);
             }
         }
 
@@ -148,7 +153,7 @@ class ModelHelper
             'cost_per_output_char' => $costPerOutputChar,
             'free_model'           => $freeModel,
             'supported_formats'    => $supportedFormats,
-            'sort_order'           => $sortOrder ?? 0,
+            'sort_order'           => $sortOrder,
             'size'                 => $post['size'] ?? 'auto',
             'aspect_ratio'         => $post['aspect_ratio'] ?? 'auto',
             'model_config'         => '{}',

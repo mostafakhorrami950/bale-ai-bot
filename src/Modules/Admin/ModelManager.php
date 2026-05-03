@@ -47,12 +47,12 @@ class ModelManager
         $all = [];
 
         $imageRows = $this->db->query(
-            "SELECT id, name, display_name, description, provider, cost_per_image AS cost, size, aspect_ratio, model_config, is_active, created_at, 'image_generation' AS model_type FROM ai_image_models ORDER BY created_at DESC"
+            "SELECT id, name, display_name, description, provider, cost_per_image AS cost, cost_per_input_char, cost_per_output_char, size, aspect_ratio, model_config, is_active, created_at, 'image_generation' AS model_type FROM ai_image_models ORDER BY created_at DESC"
         )->fetchAll();
         foreach ($imageRows as $r) { $r['cost_label'] = $r['cost'] . ' اعتبار'; $all[] = $r; }
 
         $editRows = $this->db->query(
-            "SELECT id, name, display_name, description, provider, cost_per_edit AS cost, size, aspect_ratio, model_config, is_active, created_at, 'image_editing' AS model_type FROM ai_edit_models ORDER BY created_at DESC"
+            "SELECT id, name, display_name, description, provider, cost_per_edit AS cost, cost_per_input_char, cost_per_output_char, size, aspect_ratio, model_config, is_active, created_at, 'image_editing' AS model_type FROM ai_edit_models ORDER BY created_at DESC"
         )->fetchAll();
         foreach ($editRows as $r) { $r['cost_label'] = $r['cost'] . ' اعتبار'; $all[] = $r; }
 
@@ -147,8 +147,11 @@ class ModelManager
                 $size = $data['size'] ?? 'auto';
                 $ar = $data['aspect_ratio'] ?? 'auto';
                 $this->db->query(
-                    "INSERT INTO ai_edit_models (name, display_name, description, provider, cost_per_edit, size, aspect_ratio, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost, $size, $ar, $config, $active]
+                    "INSERT INTO ai_edit_models (name, display_name, description, provider, cost_per_edit, cost_per_input_char, cost_per_output_char, size, aspect_ratio, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost,
+                     (float)($data['cost_per_input_char'] ?? 0.000001),
+                     (float)($data['cost_per_output_char'] ?? 0.000002),
+                     $size, $ar, $config, $active]
                 );
                 break;
 
@@ -168,8 +171,11 @@ class ModelManager
                 $size = $data['size'] ?? 'auto';
                 $ar = $data['aspect_ratio'] ?? 'auto';
                 $this->db->query(
-                    "INSERT INTO ai_image_models (name, display_name, description, provider, cost_per_image, size, aspect_ratio, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost, $size, $ar, $config, $active]
+                    "INSERT INTO ai_image_models (name, display_name, description, provider, cost_per_image, cost_per_input_char, cost_per_output_char, size, aspect_ratio, model_config, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost,
+                     (float)($data['cost_per_input_char'] ?? 0.000001),
+                     (float)($data['cost_per_output_char'] ?? 0.000002),
+                     $size, $ar, $config, $active]
                 );
                 break;
         }
@@ -221,8 +227,11 @@ class ModelManager
                 $size = $data['size'] ?? 'auto';
                 $ar = $data['aspect_ratio'] ?? 'auto';
                 $this->db->query(
-                    "UPDATE ai_edit_models SET name=?, display_name=?, description=?, provider=?, cost_per_edit=?, size=?, aspect_ratio=?, model_config=?, is_active=? WHERE id=?",
-                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost, $size, $ar, $config, $active, $id]
+                    "UPDATE ai_edit_models SET name=?, display_name=?, description=?, provider=?, cost_per_edit=?, cost_per_input_char=?, cost_per_output_char=?, size=?, aspect_ratio=?, model_config=?, is_active=? WHERE id=?",
+                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost,
+                     (float)($data['cost_per_input_char'] ?? 0.000001),
+                     (float)($data['cost_per_output_char'] ?? 0.000002),
+                     $size, $ar, $config, $active, $id]
                 );
                 break;
 
@@ -242,8 +251,11 @@ class ModelManager
                 $size = $data['size'] ?? 'auto';
                 $ar = $data['aspect_ratio'] ?? 'auto';
                 $this->db->query(
-                    "UPDATE ai_image_models SET name=?, display_name=?, description=?, provider=?, cost_per_image=?, size=?, aspect_ratio=?, model_config=?, is_active=? WHERE id=?",
-                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost, $size, $ar, $config, $active, $id]
+                    "UPDATE ai_image_models SET name=?, display_name=?, description=?, provider=?, cost_per_image=?, cost_per_input_char=?, cost_per_output_char=?, size=?, aspect_ratio=?, model_config=?, is_active=? WHERE id=?",
+                    [$name, $displayName, $description, $data['provider'] ?? 'openrouter', $cost,
+                     (float)($data['cost_per_input_char'] ?? 0.000001),
+                     (float)($data['cost_per_output_char'] ?? 0.000002),
+                     $size, $ar, $config, $active, $id]
                 );
                 break;
         }
