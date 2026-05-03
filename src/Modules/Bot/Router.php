@@ -68,7 +68,7 @@ class Router
         // -------------------------------------------------------
         // PRIORITY 1.b: Callback queries — always respected, bypass state
         // -------------------------------------------------------
-        if ($update->isCallback()) {
+        if ($update->isCallback() && !empty($update->getCallbackData())) {
             $data = $update->getCallbackData() ?? '';
             error_log("DEBUG ROUTER: callback=[" . $data . "]");
             $map = [
