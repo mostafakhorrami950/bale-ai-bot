@@ -257,10 +257,22 @@ class AIService
 
         if (empty($imageUrls)) {
             // Log the raw response for debugging
+            $contentSample = '';
+            if (!empty($choices[0]['message']['content'] ?? null)) {
+                $raw = $choices[0]['message']['content'];
+                if (is_string($raw)) {
+                    $contentSample = mb_substr($raw, 0, 500);
+                } elseif (is_array($raw)) {
+                    $contentSample = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+            }
             \Core\AILogger::log('AISERVICE_NO_IMAGE', [
-                'http_code' => $r['http_code'] ?? 200,
+                'http_code' => $httpCode,
                 'model' => $r['model'] ?? 'unknown',
                 'content_type' => gettype($choices[0]['message']['content'] ?? null),
+                'content_preview' => $contentSample,
+                'finish_reason' => $choices[0]['finish_reason'] ?? null,
+                'usage' => $r['usage'] ?? null,
             ]);
             return ['error' => 'OpenRouter: تصویری در پاسخ یافت نشد'];
         }
