@@ -50,6 +50,8 @@ class DatabaseRepairService
         $this->ensureBroadcastJobsTable();
         $this->ensureBroadcastLogTable();
         $this->ensureVideoCostPerSecondColumn();
+        $this->ensureChatMessagesModelNameColumn();
+        $this->ensureChatMessagesActualCostColumn();
 
         return $this->messages;
     }
@@ -413,9 +415,13 @@ class DatabaseRepairService
             ");
             $this->log('✅ جدول conversation_summaries ایجاد شد.');
         }
-        // Memory module setting
+        // Memory module settings
         $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('memory_module_enabled', '1')");
         $this->log('✅ تنظیم memory_module_enabled اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('memory_summarization_model', '')");
+        $this->log('✅ تنظیم memory_summarization_model اضافه شد.');
+        $this->execIgnored("INSERT IGNORE INTO settings (key_name, value) VALUES ('memory_extraction_model', '')");
+        $this->log('✅ تنظیم memory_extraction_model اضافه شد.');
     }
 
     private function ensureUserMemorySettingsTable(): void
@@ -890,6 +896,33 @@ class DatabaseRepairService
         if (!$this->columnExists('ai_video_models', 'cost_per_second')) {
             $this->exec("ALTER TABLE ai_video_models ADD COLUMN cost_per_second INT DEFAULT 0 AFTER cost_per_video");
             $this->log('✅ ستون cost_per_second به جدول ai_video_models اضافه شد.');
+        }
+    }
+
+    private function ensureChatMessagesModelNameColumn(): void
+    {
+        if (!$this->tableExists('chat_messages')) return;
+        if (!$this->columnExists('chat_messages', 'model_name')) {
+            $this->exec("ALTER TABLE chat_messages ADD COLUMN model_name VARCHAR(200) DEFAULT NULL AFTER file_content");
+            $this->log('✅ ستون model_name به جدول chat_messages اضافه شد.');
+        }
+    }
+
+    private function ensureChatMessagesActualCostColumn(): void
+    {
+        if (!$this->tableExists('chat_messages')) return;
+        if (!$this->columnExists('chat_messages', 'actual_cost_usd')) {
+            $this->exec("ALTER TABLE chat_messages ADD COLUMN actual_cost_usd DECIMAL(16,8) DEFAULT 0 AFTER model_name");
+            $this->log('✅ ستون actual_cost_usd به جدول chat_messages اضافه شد.');
+        }
+        // Also ensure input_tokens and output_tokens columns from API response
+        if (!$this->columnExists('chat_messages', 'input_tokens')) {
+            $this->exec("ALTER TABLE chat_messages ADD COLUMN input_tokens INT DEFAULT 0 AFTER actual_cost_usd");
+            $this->log('✅ ستون input_tokens به جدول chat_messages اضافه شد.');
+        }
+        if (!$this->columnExists('chat_messages', 'output_tokens')) {
+            $this->exec("ALTER TABLE chat_messages ADD COLUMN output_tokens INT DEFAULT 0 AFTER input_tokens");
+            $this->log('✅ ستون output_tokens به جدول chat_messages اضافه شد.');
         }
     }
 

@@ -145,6 +145,8 @@ class ChatService
             'input_chars'    => $inputChars,
             'output_chars'   => $outputChars,
             'cost_usd'       => $actualCostUsd,
+            'input_tokens'   => $result['input_tokens'] ?? 0,
+            'output_tokens'  => $result['output_tokens'] ?? 0,
             'error'          => null,
         ];
     }
@@ -293,6 +295,23 @@ class ChatService
             $costUsd = (float)$r['usage']['cost'];
         }
 
-        return ['response' => $text, 'http_code' => $httpCode, 'raw_body' => $body, 'cost_usd' => $costUsd];
+        // Extract token counts from API response
+        $inputTokens = 0;
+        $outputTokens = 0;
+        if (isset($r['usage']['prompt_tokens'])) {
+            $inputTokens = (int)$r['usage']['prompt_tokens'];
+        }
+        if (isset($r['usage']['completion_tokens'])) {
+            $outputTokens = (int)$r['usage']['completion_tokens'];
+        }
+
+        return [
+            'response' => $text,
+            'http_code' => $httpCode,
+            'raw_body' => $body,
+            'cost_usd' => $costUsd,
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+        ];
     }
 }

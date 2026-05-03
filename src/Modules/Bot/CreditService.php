@@ -31,7 +31,7 @@ class CreditService
      */
     public static function hasEnoughCredit(int $userId, float $cost): bool
     {
-        return self::getBalance($userId) >= $cost - 0.00001; // tolerance for floating point
+        return self::getBalance($userId) >= $cost - 0.0000000001; // tolerance for floating point (10 decimal precision)
     }
 
     /**
@@ -61,7 +61,7 @@ class CreditService
             }
 
             // 2. Deduct credits with decimal support (atomic: only if sufficient)
-            $stmt = $conn->prepare("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ? - 0.00001");
+            $stmt = $conn->prepare("UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ? - 0.0000000001");
             $stmt->execute([$amount, $userId, $amount]);
 
             if ($stmt->rowCount() === 0) {

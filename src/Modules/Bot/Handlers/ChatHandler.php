@@ -447,10 +447,10 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save user message
+        // Save user message with model_name
         $db->query(
-            "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0)",
-            [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost]
+            "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0, ?)",
+            [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost, $modelName]
         );
 
         $loadingMsgId = $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت پاسخ...");
@@ -553,10 +553,12 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save assistant message
+        // Save assistant message with model_name, actual_cost_usd, and token counts
+        $inputTokens = (int)($result['input_tokens'] ?? 0);
+        $outputTokens = (int)($result['output_tokens'] ?? 0);
         $db->query(
-            "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'assistant', ?, 0, ?, 0, ?)",
-            [$convId, $responseText, $outputChars, $outputCost]
+            "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name, actual_cost_usd, input_tokens, output_tokens) VALUES (?, 'assistant', ?, 0, ?, 0, ?, ?, ?, ?, ?)",
+            [$convId, $responseText, $outputChars, $outputCost, $modelName, $actualCostUsd, $inputTokens, $outputTokens]
         );
 
         // Update conversation totals

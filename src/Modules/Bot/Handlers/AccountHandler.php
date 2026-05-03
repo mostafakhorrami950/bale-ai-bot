@@ -33,7 +33,7 @@ class AccountHandler extends BaseHandler
                     $message .= "🧑 نام: {$name}\n";
                 }
                 $message .= "📱 شماره: {$phone}\n";
-                $message .= "💎 اعتبار: " . number_format($credits) . " کردیت\n";
+                $message .= "💎 اعتبار: " . number_format((float)$credits, 10) . " کردیت\n";
                 $message .= "🆔 شناسه: {$userId}\n";
 
                 // Memory info (if module enabled) — WITH CLEAR EXAMPLES
