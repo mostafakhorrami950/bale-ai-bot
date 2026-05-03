@@ -224,7 +224,7 @@ class AIService
         foreach ($choices as $idx => $choice) {
             $message = $choice['message'] ?? [];
 
-            // OpenRouter returns images in an "images" field (array of {image_url: {url: ...}})
+            // Method 1: OpenRouter "images" field (array of {image_url: {url: ...}})
             $imagesField = $message['images'] ?? [];
             if (is_array($imagesField)) {
                 foreach ($imagesField as $img) {
@@ -239,9 +239,29 @@ class AIService
                     }
                 }
             }
+
+            // Method 2: Some models (Gemini, etc.) return image_url directly in content array
+            if (empty($imageUrls) && is_array($message['content'] ?? null)) {
+                foreach ($message['content'] as $part) {
+                    if (($part['type'] ?? '') === 'image_url' && !empty($part['image_url']['url'] ?? '')) {
+                        $imageUrls[] = $part['image_url']['url'];
+                    }
+                }
+            }
+
+            // Method 3: Text content may contain a data URI (base64 image embedded in markdown)
+            if (empty($imageUrls) && is_string($message['content'] ?? null) && preg_match('/(data:image\/[a-z]+;base64,[^\s\'"]+)/', $message['content'], $m)) {
+                $imageUrls[] = $m[1];
+            }
         }
 
         if (empty($imageUrls)) {
+            // Log the raw response for debugging
+            \Core\AILogger::log('AISERVICE_NO_IMAGE', [
+                'http_code' => $r['http_code'] ?? 200,
+                'model' => $r['model'] ?? 'unknown',
+                'content_type' => gettype($choices[0]['message']['content'] ?? null),
+            ]);
             return ['error' => 'OpenRouter: تصویری در پاسخ یافت نشد'];
         }
 
