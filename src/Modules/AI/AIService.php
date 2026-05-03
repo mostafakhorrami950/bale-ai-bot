@@ -7,12 +7,7 @@ use Database\Logger;
 
 class AIService
 {
-    private string $gapgptApiKey;
-    private string $gapgptBaseUrl;
-    private string $metisaiApiKey;
-    private string $metisaiBaseUrl;
     private int $timeout;
-    private string $logFile;
 
     // OpenRouter
     private string $openrouterApiKey;
@@ -20,38 +15,19 @@ class AIService
 
     public function __construct()
     {
-        $this->gapgptApiKey = Config::get('GAPGPT_API_KEY', '');
-        $this->gapgptBaseUrl = rtrim(Config::get('GAPGPT_BASE_URL', 'https://api.gapgpt.app/v1'), '/');
-        $this->metisaiApiKey = Config::get('METISAI_API_KEY', '');
-        $this->metisaiBaseUrl = rtrim(Config::get('METISAI_BASE_URL', 'https://api.metisai.ir/api/v2'), '/');
-
         $this->openrouterApiKey = Config::get('OPENROUTER_API_KEY', '');
         $this->openrouterBaseUrl = 'https://openrouter.ai/api/v1';
 
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
-        // Use __DIR__ relative path to avoid BASE_PATH issues
-        $this->logFile = Config::get('AI_LOG_FILE', __DIR__ . '/../../logs_ai.txt');
-        $logDir = dirname($this->logFile);
-        if (!is_dir($logDir)) {
-            @mkdir($logDir, 0755, true);
-        }
-    }
-
-    private function aiLog(string $level, string $message, array $context = []): void
-    {
-        $timestamp = date('Y-m-d H:i:s');
-        $contextStr = !empty($context) ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
-        $line = "[{$timestamp}] [{$level}] {$message}{$contextStr}\n";
-        @file_put_contents($this->logFile, $line, FILE_APPEND | LOCK_EX);
     }
 
     /**
-     * Generate image(s). Routes to correct provider.
+     * Generate image(s). Routes to OpenRouter provider only.
      *
      * $params:
      *   - model      (string) required — model name
      *   - prompt     (string) required
-     *   - provider   (string) — "gapgpt", "metisai", "openrouter"
+     *   - provider   (string) — "openrouter" (default)
      *   - image      (string|null) single base64 data URI for img2img (backward compat)
      *   - images     (array|null) multiple base64 data URIs for multi-image input
      *   - model_data (array|null) full model row from DB (includes model_config JSON)
@@ -80,20 +56,8 @@ class AIService
 
         $startTime = microtime(true);
 
-        // Multi-image support — only OpenRouter supports it
-        $hasMultipleImages = is_array($images) && count($images) > 0;
-
-        if ($provider === 'metisai') {
-            $parts = explode(' ', trim($modelName));
-            $cleanModel = $parts[0];
-            $result = $this->metisaiGenerate($prompt, $cleanModel, $image, $modelData);
-        } elseif ($provider === 'openrouter') {
-            $result = $this->openrouterGenerate($prompt, $modelName, $image, $modelData, $images);
-        } elseif ($image) {
-            $result = $this->gapgptImageEdit($prompt, $image, $modelName);
-        } else {
-            $result = $this->gapgptImageGeneration($prompt, $modelName);
-        }
+        // Only OpenRouter is supported — route all requests to OpenRouter
+        $result = $this->openrouterGenerate($prompt, $modelName, $image, $modelData, $images);
 
         $duration = microtime(true) - $startTime;
         \Core\AILogger::log('AISERVICE_RESULT', [
@@ -188,20 +152,7 @@ class AIService
             $payload['image_config'] = $imageConfig;
         }
 
-        $this->aiLog('INFO', 'OpenRouter request', [
-            'model'       => $modelName,
-            'modalities'  => $modalities,
-            'image_count' => count($imageUris),
-            'image_config' => $imageConfig ?: null,
-        ]);
-
         $result = $this->openrouterCall($payload);
-
-        $this->aiLog('INFO', 'OpenRouter response', [
-            'result_keys' => array_keys($result),
-            'has_images'  => isset($result['images']),
-            'error'       => $result['error'] ?? null,
-        ]);
 
         return $result;
     }
@@ -252,13 +203,6 @@ class AIService
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        $this->aiLog('INFO', 'OpenRouter API call', [
-            'http'   => $httpCode,
-            'errno'  => $errno,
-            'error'  => $error,
-            'body'   => mb_substr($body ?? '', 0, 3000),
-        ]);
-
         if ($errno) return ['error' => 'OpenRouter connection error: ' . $error];
         if ($httpCode >= 400) {
             return ['error' => "OpenRouter HTTP {$httpCode}: " . mb_substr($body, 0, 500)];
@@ -270,26 +214,16 @@ class AIService
         // Standard OpenAI-compatible error
         if (isset($r['error'])) {
             $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
-            $this->aiLog('ERROR', 'OpenRouter API error', ['msg' => $msg]);
             return ['error' => $msg];
         }
 
         // Extract images from response
         $imageUrls = [];
         $choices = $r['choices'] ?? [];
-        
-        // Log full response structure for debugging
-        $this->aiLog('DEBUG', 'OpenRouter full response sample', [
-            'has_choices' => !empty($choices),
-            'choice_keys' => !empty($choices) ? array_keys($choices[0] ?? []) : [],
-            'message_keys' => !empty($choices) ? array_keys($choices[0]['message'] ?? []) : [],
-            'has_images_field' => isset($choices[0]['message']['images']),
-            'content_type' => gettype($choices[0]['message']['content'] ?? null),
-        ]);
-        
+
         foreach ($choices as $idx => $choice) {
             $message = $choice['message'] ?? [];
-            
+
             // OpenRouter returns images in an "images" field (array of {image_url: {url: ...}})
             $imagesField = $message['images'] ?? [];
             if (is_array($imagesField)) {
@@ -308,16 +242,8 @@ class AIService
         }
 
         if (empty($imageUrls)) {
-            $this->aiLog('WARN', 'OpenRouter: no images in response', [
-                'full' => json_encode($r, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            ]);
             return ['error' => 'OpenRouter: تصویری در پاسخ یافت نشد'];
         }
-
-        $this->aiLog('INFO', 'OpenRouter images found', [
-            'count'      => count($imageUrls),
-            'first_type' => str_starts_with($imageUrls[0] ?? '', 'data:') ? 'data_uri' : 'url',
-        ]);
 
         // Download images that are data URIs or HTTP URLs
         $downloadedImages = [];
@@ -349,11 +275,6 @@ class AIService
                     elseif (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
                     $downloadedImages[] = 'data:' . $mime . ';base64,' . base64_encode($imageBinary);
                 } else {
-                    $this->aiLog('ERROR', 'OpenRouter image download failed. URL won\'t work with Bale.', [
-                        'http' => $httpCode,
-                        'size' => $downloadSize,
-                        'curl_err' => $curlError ?: null,
-                    ]);
                     return ['error' => 'امکان دانلود تصویر از سرور OpenRouter وجود ندارد. لطفاً دوباره تلاش کنید.'];
                 }
             } else {
@@ -362,88 +283,6 @@ class AIService
         }
 
         return ['images' => $downloadedImages];
-    }
-
-    // ═══════════════════════════════════════════════
-    //   GapGPT (OpenAI-compatible)
-    // ═══════════════════════════════════════════════
-
-    private function gapgptImageGeneration(string $prompt, string $modelName): array
-    {
-        $url = $this->gapgptBaseUrl . '/images/generations';
-        $payload = [
-            'model'  => $modelName,
-            'prompt' => $prompt,
-            'n'      => 1,
-            'size'   => '1024x1024',
-        ];
-
-        $result = $this->gapgptCall($url, $payload);
-        if (isset($result['error'])) return $result;
-
-        $images = [];
-        foreach ($result['data'] ?? [] as $item) {
-            $images[] = $item['url'] ?? $item['b64_json'] ?? '';
-        }
-        return array_filter($images) ? ['images' => $images] : ['error' => 'GapGPT: پاسخی دریافت نشد'];
-    }
-
-    private function gapgptImageEdit(string $prompt, string $image, string $modelName): array
-    {
-        $url = $this->gapgptBaseUrl . '/images/edits';
-        $payload = [
-            'model'  => $modelName,
-            'prompt' => $prompt,
-            'image'  => $image,
-            'n'      => 1,
-            'size'   => '1024x1024',
-        ];
-
-        $result = $this->gapgptCall($url, $payload);
-        if (isset($result['error'])) return $result;
-
-        $images = [];
-        foreach ($result['data'] ?? [] as $item) {
-            $images[] = $item['url'] ?? $item['b64_json'] ?? '';
-        }
-        return array_filter($images) ? ['images' => $images] : ['error' => 'GapGPT: پاسخی دریافت نشد'];
-    }
-
-    private function gapgptCall(string $url, array $payload): array
-    {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_UNICODE),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => $this->timeout,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $this->gapgptApiKey,
-            ],
-        ]);
-        $body = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if (empty($body)) return ['error' => 'GapGPT: پاسخی دریافت نشد'];
-        $r = json_decode($body, true);
-        if (!is_array($r)) return ['error' => 'GapGPT: پاسخ نامعتبر'];
-        if (isset($r['error'])) {
-            $msg = is_array($r['error']) ? ($r['error']['message'] ?? json_encode($r['error'])) : $r['error'];
-            return ['error' => $msg];
-        }
-        return $r;
-    }
-
-    // ═══════════════════════════════════════════════
-    //   MetisAI
-    // ═══════════════════════════════════════════════
-
-    private function metisaiGenerate(string $prompt, string $modelName, ?string $image, ?array $modelData): array
-    {
-        return ['error' => 'MetisAI: پیاده‌سازی نشده است'];
     }
 
     // ═══════════════════════════════════════════════

@@ -77,11 +77,4 @@ class StartHandler extends BaseHandler
         );
     }
 
-    /**
-     * Get the Bale user ID from the update for membership checking.
-     */
-    public function getUserId(): ?int
-    {
-        return null; // placeholder, actual user ID is passed to handle()
-    }
 }

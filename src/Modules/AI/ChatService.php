@@ -15,8 +15,6 @@ use Database\Logger;
  */
 class ChatService
 {
-    private string $logFile;
-
     private const PROVIDERS = [
         'openrouter' => [
             'base_url' => 'https://openrouter.ai/api/v1',
@@ -34,18 +32,6 @@ class ChatService
             'endpoint' => '/wrapper/',  // + {provider_name}/chat/completions
         ],
     ];
-
-    public function __construct()
-    {
-        $this->logFile = Config::get('AI_LOG_FILE', BASE_PATH . '/logs_ai.txt');
-    }
-
-    private function aiLog(string $level, string $message, array $ctx = []): void
-    {
-        $ts = date('Y-m-d H:i:s');
-        $c = !empty($ctx) ? ' ' . json_encode($ctx, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
-        @file_put_contents($this->logFile, "[{$ts}] [{$level}] {$message}{$c}\n", FILE_APPEND | LOCK_EX);
-    }
 
     /**
      * Build the appropriate API endpoint URL based on provider.
@@ -95,7 +81,6 @@ class ChatService
 
         if (empty($apiKey)) {
             $msg = "API Key برای ارائه‌دهنده «{$provider}» تنظیم نشده است.";
-            $this->aiLog('ERROR', $msg, ['provider' => $provider]);
             \Core\AILogger::error('chat', $msg, ['provider' => $provider]);
             return ['error' => $msg];
         }
@@ -128,14 +113,6 @@ class ChatService
         }
 
         $endpoint = $this->buildEndpoint($provider, $modelData);
-
-        $this->aiLog('INFO', 'ChatService request', [
-            'provider' => $provider,
-            'model' => $payload['model'],
-            'endpoint' => $endpoint,
-            'msg_count' => count($messages),
-            'input_chars' => $inputChars,
-        ]);
 
         \Core\AILogger::request($provider, $endpoint, $payload);
 
@@ -287,14 +264,6 @@ class ChatService
         $error    = curl_error($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-
-        $this->aiLog('INFO', 'ChatService API', [
-            'http'     => $httpCode,
-            'errno'    => $errno,
-            'error'    => $error,
-            'endpoint' => $endpoint,
-            'body'     => mb_substr($body ?? '', 0, 2000),
-        ]);
 
         if ($errno) return ['error' => 'خطای اتصال: ' . $error, 'http_code' => $httpCode, 'raw_body' => $body];
         if ($httpCode >= 400) return ['error' => "HTTP {$httpCode}: " . mb_substr($body, 0, 500), 'http_code' => $httpCode, 'raw_body' => $body];

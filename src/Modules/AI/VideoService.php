@@ -14,26 +14,12 @@ class VideoService
     private string $apiKey;
     private string $baseUrl;
     private int $timeout;
-    private string $logFile;
 
     public function __construct()
     {
         $this->apiKey = Config::get('OPENROUTER_API_KEY', '');
         $this->baseUrl = 'https://openrouter.ai/api/v1';
         $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
-        $this->logFile = Config::get('AI_LOG_FILE', Config::get('BASE_PATH', __DIR__ . '/../..') . '/logs_ai.txt');
-        $logDir = dirname($this->logFile);
-        if (!is_dir($logDir)) {
-            @mkdir($logDir, 0755, true);
-        }
-    }
-
-    private function aiLog(string $level, string $message, array $context = []): void
-    {
-        $timestamp = date('Y-m-d H:i:s');
-        $contextStr = !empty($context) ? ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
-        $line = "[{$timestamp}] [{$level}] [VideoService] {$message}{$contextStr}\n";
-        @file_put_contents($this->logFile, $line, FILE_APPEND | LOCK_EX);
     }
 
     /**
@@ -92,11 +78,6 @@ class VideoService
         }
 
         $url = $this->baseUrl . '/videos';
-        $this->aiLog('INFO', 'Submitting video job', [
-            'model' => $model,
-            'url' => $url,
-            'payload_keys' => array_keys($payload),
-        ]);
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -119,16 +100,12 @@ class VideoService
         curl_close($ch);
 
         if ($curlError) {
-            $this->aiLog('ERROR', 'cURL error on submit', ['error' => $curlError]);
             return ['error' => 'خطا در ارتباط با سرور: ' . $curlError];
         }
-
-        $this->aiLog('INFO', 'Submit response', ['http_code' => $httpCode, 'body' => $response]);
 
         $result = json_decode($response, true);
         if (json_last_error() !== JSON_ERROR_NONE || $httpCode >= 400) {
             $errMsg = $result['error']['message'] ?? $result['error'] ?? "HTTP {$httpCode}";
-            $this->aiLog('ERROR', 'Submit failed', ['http_code' => $httpCode, 'error' => $errMsg]);
             return ['error' => $errMsg];
         }
 
@@ -168,7 +145,6 @@ class VideoService
         curl_close($ch);
 
         if ($curlError) {
-            $this->aiLog('ERROR', 'Poll cURL error', ['error' => $curlError]);
             return ['error' => 'خطا در بررسی وضعیت: ' . $curlError];
         }
 
@@ -227,16 +203,13 @@ class VideoService
         curl_close($ch);
 
         if ($curlError) {
-            $this->aiLog('ERROR', 'Download cURL error', ['error' => $curlError, 'http_code' => $httpCode]);
             return null;
         }
 
         if ($httpCode !== 200 || empty($data)) {
-            $this->aiLog('ERROR', 'Download failed', ['http_code' => $httpCode, 'url' => $contentUrl]);
             return null;
         }
 
-        $this->aiLog('INFO', 'Download successful', ['http_code' => $httpCode, 'size' => strlen($data)]);
         return $data;
     }
 

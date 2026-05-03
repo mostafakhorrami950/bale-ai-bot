@@ -486,7 +486,8 @@ class DatabaseRepairService
     private function tableExists(string $name): bool
     {
         try {
-            $stmt = $this->conn->query("SHOW TABLES LIKE '{$name}'");
+            $safe = str_replace('`', '', $name);
+            $stmt = $this->conn->query("SHOW TABLES LIKE '{$safe}'");
             return $stmt->rowCount() > 0;
         } catch (\Throwable $e) {
             return false;
@@ -496,8 +497,9 @@ class DatabaseRepairService
     private function columnExists(string $table, string $col): bool
     {
         try {
-            // Use WHERE Field = instead of LIKE to avoid underscore wildcard issues
-            $stmt = $this->conn->query("SHOW COLUMNS FROM {$table} WHERE Field = '{$col}'");
+            $safeTable = str_replace('`', '', $table);
+            $safeCol = str_replace('`', '', $col);
+            $stmt = $this->conn->query("SHOW COLUMNS FROM `{$safeTable}` WHERE Field = '{$safeCol}'");
             return $stmt->rowCount() > 0;
         } catch (\Throwable $e) {
             return false;
@@ -508,9 +510,11 @@ class DatabaseRepairService
     {
         try {
             $dbName = $this->conn->query("SELECT DATABASE() as db")->fetch()['db'];
+            $safeTable = str_replace('`', '', $table);
+            $safeIdx = str_replace('`', '', $idx);
             $stmt = $this->conn->query(
                 "SELECT COUNT(*) as c FROM information_schema.STATISTICS 
-                 WHERE TABLE_SCHEMA = '{$dbName}' AND TABLE_NAME = '{$table}' AND INDEX_NAME = '{$idx}'"
+                 WHERE TABLE_SCHEMA = '{$dbName}' AND TABLE_NAME = '{$safeTable}' AND INDEX_NAME = '{$safeIdx}'"
             );
             $row = $stmt->fetch();
             return $row && $row['c'] > 0;

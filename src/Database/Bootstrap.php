@@ -25,6 +25,8 @@ class Bootstrap
         $this->createDailyUsageTable();
         $this->createSystemLogsTable();
         $this->createApiKeysTable();
+        $this->createBotLogsTable();
+        $this->createProcessedUpdatesTable();
     }
 
     private function createAdminsTable()
@@ -115,10 +117,31 @@ class Bootstrap
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NOT NULL,
             amount DECIMAL(10, 2) NOT NULL,
-            type ENUM('credit', 'debit') NOT NULL,
+            type VARCHAR(20) NOT NULL DEFAULT 'debit',
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+        $this->db->query($sql);
+    }
+
+    private function createBotLogsTable()
+    {
+        $sql = "CREATE TABLE IF NOT EXISTS bot_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            level VARCHAR(20) NOT NULL,
+            message TEXT NOT NULL,
+            context JSON DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+        $this->db->query($sql);
+    }
+
+    private function createProcessedUpdatesTable()
+    {
+        $sql = "CREATE TABLE IF NOT EXISTS processed_updates (
+            update_id BIGINT PRIMARY KEY,
+            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
         $this->db->query($sql);
     }

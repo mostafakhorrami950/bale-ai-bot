@@ -24,10 +24,27 @@ function parseCsvToArray(?string $csv): array {
     return array_filter(array_map('trim', $items));
 }
 
+$db = \Database\Database::getInstance();
+
 // Handle POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $action = trim($_POST['action'] ?? '');
+
+        // Handle toggle and delete BEFORE validation (they don't need all fields)
+        if ($action === 'toggle' && isset($_POST['id'])) {
+            $id = (int) $_POST['id'];
+            $row = $db->query("SELECT is_active FROM ai_video_models WHERE id=?", [$id])->fetch();
+            $newActive = $row ? (1 - (int)$row['is_active']) : 1;
+            $db->query("UPDATE ai_video_models SET is_active=? WHERE id=?", [$newActive, $id]);
+            $message = '✅ وضعیت مدل تغییر کرد.';
+            goto render;
+        } elseif ($action === 'delete' && isset($_POST['id'])) {
+            $id = (int) $_POST['id'];
+            $db->query("DELETE FROM ai_video_models WHERE id=?", [$id]);
+            $message = '✅ مدل حذف شد.';
+            goto render;
+        }
 
         $data = [
             'name' => trim($_POST['name'] ?? ''),
@@ -41,8 +58,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($data['name'])) throw new \InvalidArgumentException('نام مدل الزامی است.');
         if ($data['cost_per_second'] < 1) throw new \InvalidArgumentException('هزینه هر ثانیه باید حداقل 1 باشد.');
 
-        $data['supported_resolutions'] = trim($_POST['supported_resolutions'] ?? '480p,720p,1080p');
-        $data['supported_sizes'] = trim($_POST['supported_sizes'] ?? '854x480,1280x720,1920x1080');
+        // Only read resolutions/sizes if the enable checkbox is checked
+        $enableRes = isset($_POST['enable_resolutions']);
+        $enableSizes = isset($_POST['enable_sizes']);
+
+        $data['supported_resolutions'] = $enableRes ? trim($_POST['supported_resolutions'] ?? '480p,720p,1080p') : '';
+        $data['supported_sizes'] = $enableSizes ? trim($_POST['supported_sizes'] ?? '854x480,1280x720,1920x1080') : '';
         $data['supported_aspect_ratios'] = trim($_POST['supported_aspect_ratios'] ?? '16:9,9:16,1:1');
 
         $durationsArr = [];
@@ -60,17 +81,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $data['allow_img2video'] = isset($_POST['allow_img2video']) ? 1 : 0;
 
         $pricingJson = [];
-        $resolutions = parseCsvToArray($data['supported_resolutions']);
-        foreach ($resolutions as $res) {
-            $priceKey = 'price_' . str_replace(['.', ':'], '_', $res);
-            $priceVal = (int) ($_POST[$priceKey] ?? 0);
-            if ($priceVal > 0) {
-                $pricingJson[$res] = $priceVal;
+        if ($enableRes) {
+            $resolutions = parseCsvToArray($data['supported_resolutions']);
+            foreach ($resolutions as $res) {
+                $priceKey = 'price_' . str_replace(['.', ':'], '_', $res);
+                $priceVal = (int) ($_POST[$priceKey] ?? 0);
+                if ($priceVal > 0) {
+                    $pricingJson[$res] = $priceVal;
+                }
             }
         }
         $data['pricing_json'] = !empty($pricingJson) ? json_encode($pricingJson, JSON_UNESCAPED_UNICODE) : '{}';
-
-        $db = \Database\Database::getInstance();
 
         if ($action === 'create') {
             $db->query("INSERT INTO ai_video_models (name, display_name, description, provider, cost_per_second, is_active,
@@ -99,16 +120,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $data['allow_generate_audio'], $data['allow_img2video'], $data['pricing_json'], $id
             ]);
             $message = '✅ مدل ویدئو بروزرسانی شد (هزینه: ' . number_format($data['cost_per_second']) . ' اعتبار/ثانیه).';
-        } elseif ($action === 'toggle' && isset($_POST['id'])) {
-            $id = (int) $_POST['id'];
-            $row = $db->query("SELECT is_active FROM ai_video_models WHERE id=?", [$id])->fetch();
-            $newActive = $row ? (1 - (int)$row['is_active']) : 1;
-            $db->query("UPDATE ai_video_models SET is_active=? WHERE id=?", [$newActive, $id]);
-            $message = '✅ وضعیت مدل تغییر کرد.';
-        } elseif ($action === 'delete' && isset($_POST['id'])) {
-            $id = (int) $_POST['id'];
-            $db->query("DELETE FROM ai_video_models WHERE id=?", [$id]);
-            $message = '✅ مدل حذف شد.';
         } else {
             throw new \InvalidArgumentException('عملیات نامعتبر');
         }
@@ -119,9 +130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+render:
+
 // Edit mode
 if (isset($_GET['edit'])) {
-    $db = \Database\Database::getInstance();
     $row = $db->query("SELECT * FROM ai_video_models WHERE id=?", [(int)$_GET['edit']])->fetch();
     if ($row) {
         $editModel = $row;
@@ -130,7 +142,6 @@ if (isset($_GET['edit'])) {
 }
 
 // List all video models
-$db = \Database\Database::getInstance();
 $models = $db->query("SELECT * FROM ai_video_models ORDER BY id ASC")->fetchAll();
 
 ob_start();
@@ -204,10 +215,19 @@ ob_start();
                 <hr>
                 <h6>📐 رزولوشن‌های پشتیبانی شده</h6>
                 <div class="mb-3">
-                    <label class="form-label">رزولوشن‌ها (با کاما جدا کنید):</label>
-                    <input type="text" name="supported_resolutions" class="form-control"
-                           value="<?php echo $editMode ? htmlspecialchars($editModel['supported_resolutions'] ?? '480p,720p,1080p') : '480p,720p,1080p'; ?>"
-                           placeholder="مثلاً: 480p,720p,1080p" id="resInput">
+                    <div class="form-check mb-2">
+                        <?php
+                        $hasRes = $editMode && !empty($editModel['supported_resolutions']);
+                        ?>
+                        <input type="checkbox" class="form-check-input" id="enableRes" name="enable_resolutions" value="1"
+                               onchange="document.getElementById('resInput').disabled=!this.checked; document.querySelectorAll('.price-input').forEach(el=>el.disabled=!this.checked)"
+                               <?php echo $hasRes ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="enableRes">✅ فعال کردن رزولوشن‌های خاص</label>
+                    </div>
+                    <input type="text" name="supported_resolutions" class="form-control" id="resInput"
+                           value="<?php echo $editMode ? htmlspecialchars($editModel['supported_resolutions'] ?? '') : ''; ?>"
+                           placeholder="مثلاً: 480p,720p,1080p"
+                           <?php echo $hasRes ? '' : 'disabled'; ?>>
                 </div>
 
                 <?php
@@ -215,7 +235,7 @@ ob_start();
                 if ($editMode && !empty($editModel['pricing_json'])) {
                     $editPricing = json_decode($editModel['pricing_json'], true) ?: [];
                 }
-                $editResolutions = parseCsvToArray($editMode ? $editModel['supported_resolutions'] ?? '' : '');
+                $editResolutions = $hasRes ? parseCsvToArray($editModel['supported_resolutions'] ?? '') : [];
                 ?>
                 <div class="mb-3" id="pricingSection">
                     <label class="form-label">قیمت جداگانه هر رزولوشن (صفر = استفاده از هزینه هر ثانیه):</label>
@@ -224,21 +244,31 @@ ob_start();
                         <?php foreach ($editResolutions as $res): ?>
                         <div class="col-md-4 mb-2">
                             <label class="form-label small"><?php echo htmlspecialchars($res); ?>:</label>
-                            <input type="number" name="<?php echo 'price_' . str_replace(['.', ':'], '_', $res); ?>" class="form-control" min="0"
-                                   value="<?php echo $editPricing[$res] ?? 0; ?>">
+                            <input type="number" name="<?php echo 'price_' . str_replace(['.', ':'], '_', $res); ?>" class="form-control price-input" min="0"
+                                   value="<?php echo $editPricing[$res] ?? 0; ?>"
+                                   <?php echo $hasRes ? '' : 'disabled'; ?>>
                         </div>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <div class="col-12 text-muted small">ابتدا رزولوشن‌ها را وارد کنید و سپس ذخیره کنید.</div>
+                        <div class="col-12 text-muted small">ابتدا رزولوشن‌ها را فعال کرده و وارد کنید.</div>
                     <?php endif; ?>
                     </div>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label">سایزهای پشتیبانی شده (با کاما جدا کنید):</label>
-                    <input type="text" name="supported_sizes" class="form-control"
-                           value="<?php echo $editMode ? htmlspecialchars($editModel['supported_sizes'] ?? '854x480,1280x720,1920x1080') : '854x480,1280x720,1920x1080'; ?>"
-                           placeholder="مثلاً: 854x480,1280x720,1920x1080">
+                    <div class="form-check mb-2">
+                        <?php
+                        $hasSizes = $editMode && !empty($editModel['supported_sizes']);
+                        ?>
+                        <input type="checkbox" class="form-check-input" id="enableSizes" name="enable_sizes" value="1"
+                               onchange="document.getElementById('sizesInput').disabled=!this.checked"
+                               <?php echo $hasSizes ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="enableSizes">✅ فعال کردن سایزهای خاص</label>
+                    </div>
+                    <input type="text" name="supported_sizes" class="form-control" id="sizesInput"
+                           value="<?php echo $editMode ? htmlspecialchars($editModel['supported_sizes'] ?? '') : ''; ?>"
+                           placeholder="مثلاً: 854x480,1280x720,1920x1080"
+                           <?php echo $hasSizes ? '' : 'disabled'; ?>>
                 </div>
 
                 <div class="mb-3">

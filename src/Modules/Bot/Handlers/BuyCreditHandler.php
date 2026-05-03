@@ -21,11 +21,6 @@ class BuyCreditHandler extends BaseHandler
             // Membership check
             if (!$this->checkMembership($userId, $chatId)) return;
 
-            if ($text === '💳 شارژ اعتبار') {
-                $this->showPlans($chatId, $userId);
-                return;
-            }
-
             if ($callbackData && str_starts_with($callbackData, 'plan_')) {
                 $callbackId = $update->getCallbackId();
                 $this->processPlan($chatId, $userId, $callbackId, $callbackData);
@@ -184,7 +179,6 @@ class BuyCreditHandler extends BaseHandler
 
             if (isset($result['trackId'])) {
                 $trackId = $result['trackId'];
-                $orderId = 'ORD-' . $internalId . '-' . time();
 
                 Database::getInstance()->query(
                     "INSERT INTO payments (user_id, track_id, order_id, amount_rial, credits, plan_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
