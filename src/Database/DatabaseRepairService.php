@@ -901,28 +901,59 @@ class DatabaseRepairService
 
     private function ensureChatMessagesModelNameColumn(): void
     {
-        if (!$this->tableExists('chat_messages')) return;
-        if (!$this->columnExists('chat_messages', 'model_name')) {
-            $this->exec("ALTER TABLE chat_messages ADD COLUMN model_name VARCHAR(200) DEFAULT NULL AFTER file_content");
-            $this->log('✅ ستون model_name به جدول chat_messages اضافه شد.');
+        if (!$this->tableExists('chat_messages')) {
+            $this->log('⚠️ جدول chat_messages وجود ندارد.');
+            return;
+        }
+        // Always try to add — execIgnored ignores "Duplicate column" errors
+        $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN model_name VARCHAR(200) DEFAULT NULL AFTER file_content");
+        if ($this->columnExists('chat_messages', 'model_name')) {
+            $this->log('✅ ستون model_name در جدول chat_messages بررسی/اضافه شد.');
+        } else {
+            $this->log('⚠️ ستون model_name در جدول chat_messages اضافه نشد (ممکن است ستون file_content وجود نداشته باشد).');
+            // Fallback: try adding without AFTER clause
+            $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN model_name VARCHAR(200) DEFAULT NULL");
+            if ($this->columnExists('chat_messages', 'model_name')) {
+                $this->log('✅ ستون model_name با روش جایگزین اضافه شد.');
+            }
         }
     }
 
     private function ensureChatMessagesActualCostColumn(): void
     {
-        if (!$this->tableExists('chat_messages')) return;
-        if (!$this->columnExists('chat_messages', 'actual_cost_usd')) {
-            $this->exec("ALTER TABLE chat_messages ADD COLUMN actual_cost_usd DECIMAL(16,8) DEFAULT 0 AFTER model_name");
-            $this->log('✅ ستون actual_cost_usd به جدول chat_messages اضافه شد.');
+        if (!$this->tableExists('chat_messages')) {
+            $this->log('⚠️ جدول chat_messages وجود ندارد.');
+            return;
         }
-        // Also ensure input_tokens and output_tokens columns from API response
-        if (!$this->columnExists('chat_messages', 'input_tokens')) {
-            $this->exec("ALTER TABLE chat_messages ADD COLUMN input_tokens INT DEFAULT 0 AFTER actual_cost_usd");
-            $this->log('✅ ستون input_tokens به جدول chat_messages اضافه شد.');
+        // actual_cost_usd
+        $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN actual_cost_usd DECIMAL(16,8) DEFAULT 0 AFTER model_name");
+        if ($this->columnExists('chat_messages', 'actual_cost_usd')) {
+            $this->log('✅ ستون actual_cost_usd در جدول chat_messages بررسی/اضافه شد.');
+        } else {
+            $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN actual_cost_usd DECIMAL(16,8) DEFAULT 0");
+            if ($this->columnExists('chat_messages', 'actual_cost_usd')) {
+                $this->log('✅ ستون actual_cost_usd با روش جایگزین اضافه شد.');
+            }
         }
-        if (!$this->columnExists('chat_messages', 'output_tokens')) {
-            $this->exec("ALTER TABLE chat_messages ADD COLUMN output_tokens INT DEFAULT 0 AFTER input_tokens");
-            $this->log('✅ ستون output_tokens به جدول chat_messages اضافه شد.');
+        // input_tokens
+        $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN input_tokens INT DEFAULT 0 AFTER actual_cost_usd");
+        if ($this->columnExists('chat_messages', 'input_tokens')) {
+            $this->log('✅ ستون input_tokens در جدول chat_messages بررسی/اضافه شد.');
+        } else {
+            $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN input_tokens INT DEFAULT 0");
+            if ($this->columnExists('chat_messages', 'input_tokens')) {
+                $this->log('✅ ستون input_tokens با روش جایگزین اضافه شد.');
+            }
+        }
+        // output_tokens
+        $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN output_tokens INT DEFAULT 0 AFTER input_tokens");
+        if ($this->columnExists('chat_messages', 'output_tokens')) {
+            $this->log('✅ ستون output_tokens در جدول chat_messages بررسی/اضافه شد.');
+        } else {
+            $this->execIgnored("ALTER TABLE chat_messages ADD COLUMN output_tokens INT DEFAULT 0");
+            if ($this->columnExists('chat_messages', 'output_tokens')) {
+                $this->log('✅ ستون output_tokens با روش جایگزین اضافه شد.');
+            }
         }
     }
 
