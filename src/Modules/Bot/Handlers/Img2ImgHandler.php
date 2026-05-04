@@ -6,6 +6,7 @@ use Modules\AI\AIService;
 use Modules\Bot\CreditService;
 use Database\Database;
 use Database\Logger;
+use Core\BotTextService;
 
 class Img2ImgHandler extends BaseHandler
 {
@@ -38,10 +39,10 @@ class Img2ImgHandler extends BaseHandler
             // AI processing lock
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
-                    $this->baleClient->sendMessage($chatId, '⚠️ درخواست شما در حال پردازش است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.');
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('edit_ai_processing_warning'));
                     return;
                 }
-                $this->baleClient->sendMessage($chatId, '⏳ لطفاً صبور باشید...');
+                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_ai_processing_wait'));
                 return;
             }
 
@@ -69,7 +70,7 @@ class Img2ImgHandler extends BaseHandler
                 if ($update->hasPhoto()) {
                     $this->storeFileId($chatId, $userId, $update->getPhotoFileId());
                 } else {
-                    $this->baleClient->sendMessage($chatId, "📸 لطفاً عکس ارسال کنید (حداکثر {$this->maxPhotos})\nسپس دکمه ✅ انجام شد را بزنید:", $this->getDoneKeyboard());
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('edit_photo_prompt', ['max_photos' => $this->maxPhotos]), $this->getDoneKeyboard());
                 }
                 return;
             }
@@ -80,12 +81,12 @@ class Img2ImgHandler extends BaseHandler
                 return;
             }
 
-            $this->baleClient->sendMessage($chatId, '🤖 لطفاً یکی از گزینه‌های منو را انتخاب کنید:', $this->getPersistentKeyboard());
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_fallback_menu'), $this->getPersistentKeyboard());
         } catch (\Throwable $e) {
             error_log("Img2ImgHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             Logger::error('Img2ImgHandler exception', ['user_id' => $userId ?? 0, 'error' => $e->getMessage()]);
             if (isset($chatId)) {
-                $this->baleClient->sendMessage($chatId, '⚠️ خطایی رخ داد. مجدداً تلاش کنید.');
+                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_error', ['error' => $e->getMessage()]));
             }
         }
     }
@@ -108,12 +109,12 @@ class Img2ImgHandler extends BaseHandler
         $models = $db->query("SELECT id, name, display_name, cost_per_edit AS cost_per_image, description FROM ai_edit_models WHERE is_active = 1")->fetchAll();
 
         if (empty($models)) {
-            $this->baleClient->sendMessage($chatId, '❌ هیچ مدل فعالی یافت نشد.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_no_active_models'));
             return;
         }
 
         $keyboard = ['inline_keyboard' => []];
-        $msg = "🎯 مدل مورد نظر را انتخاب کنید:\n\n";
+        $msg = BotTextService::get('edit_model_selection_title');
         foreach ($models as $model) {
             $displayName = $model['display_name'] ?? $model['name'];
             $desc = $model['description'] ?? '';
@@ -139,7 +140,7 @@ class Img2ImgHandler extends BaseHandler
             "UPDATE bot_state SET state = 'awaiting_edit_photo', extra_data = ? WHERE user_id = ?",
             [json_encode(['model_id' => $modelId, 'file_ids' => []]), $internalId]
         );
-        $this->baleClient->sendMessage($chatId, "📸 مدل انتخاب شد. عکس‌ها را ارسال کنید (حداکثر {$this->maxPhotos})\nسپس دکمه ✅ انجام شد را بزنید:", $this->getDoneKeyboard());
+        $this->baleClient->sendMessage($chatId, BotTextService::get('edit_model_selected_photos', ['max_photos' => $this->maxPhotos]), $this->getDoneKeyboard());
     }
 
     private function getDoneKeyboard(): array
@@ -168,7 +169,7 @@ class Img2ImgHandler extends BaseHandler
 
             // Server-side limit validation
             if (count($fileIds) >= $this->maxPhotos) {
-                $this->baleClient->sendMessage($chatId, "⚠️ حداکثر {$this->maxPhotos} عکس مجاز است.", $this->getDoneKeyboard());
+                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_max_photos', ['max_photos' => $this->maxPhotos]), $this->getDoneKeyboard());
                 return;
             }
 
@@ -183,7 +184,7 @@ class Img2ImgHandler extends BaseHandler
             $db->query("UPDATE bot_state SET extra_data = ? WHERE user_id = ?", [json_encode($extra), $internalId]);
 
             if ($wasEmpty) {
-                $this->baleClient->sendMessage($chatId, "✅ عکس دریافت شد. می‌توانید عکس‌های بیشتری ارسال کنید یا دکمه ✅ انجام شد را بزنید.", $this->getDoneKeyboard());
+                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_photo_received'), $this->getDoneKeyboard());
             }
         } catch (\Throwable $e) {
             Logger::error('storeFileId', ['error' => $e->getMessage()]);
@@ -203,11 +204,11 @@ class Img2ImgHandler extends BaseHandler
         $fileIds = $extra['file_ids'] ?? [];
 
         if (count($fileIds) < 1) {
-            $this->baleClient->sendMessage($chatId, '⚠️ حداقل ۱ عکس ارسال کنید.', $this->getDoneKeyboard());
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_min_photos'), $this->getDoneKeyboard());
             return;
         }
 
-        $this->baleClient->sendMessage($chatId, '⏳ در حال دریافت عکس‌ها از بله...');
+        $this->baleClient->sendMessage($chatId, BotTextService::get('edit_downloading'));
 
         $paths = [];
         $failedCount = 0;
@@ -239,7 +240,7 @@ class Img2ImgHandler extends BaseHandler
         }
 
         if (empty($paths)) {
-            $this->baleClient->sendMessage($chatId, '⚠️ هیچ‌کدام از عکس‌ها قابل دریافت نبود.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_download_failed'));
             return;
         }
 
@@ -251,11 +252,11 @@ class Img2ImgHandler extends BaseHandler
             [json_encode($extra), $internalId]
         );
 
-        $msg = '✏️ ' . count($paths) . ' عکس دریافت شد.';
+        $msg = BotTextService::get('edit_photos_received', ['count' => count($paths)]);
         if ($failedCount > 0) {
-            $msg .= " {$failedCount} عکس قابل دریافت نبود.";
+            $msg .= BotTextService::get('edit_photos_partial', ['failed' => $failedCount]);
         }
-        $msg .= ' متن تغییرات (Prompt) را بنویسید:';
+        $msg .= BotTextService::get('edit_enter_prompt');
         $this->baleClient->sendMessage($chatId, $msg);
     }
 
@@ -279,7 +280,7 @@ class Img2ImgHandler extends BaseHandler
 
         if (empty($modelId) || empty($paths)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '❌ خطا در بازیابی اطلاعات. دوباره شروع کنید.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_state_error'));
             return;
         }
 
@@ -288,7 +289,7 @@ class Img2ImgHandler extends BaseHandler
 
         if (!$model) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '❌ مدل یافت نشد.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_model_not_found'));
             return;
         }
 
@@ -302,7 +303,7 @@ class Img2ImgHandler extends BaseHandler
                     [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$cost} اعتبار).", $buyCreditKeyboard);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_insufficient_credit', ['cost' => $cost]), $buyCreditKeyboard);
             return;
         }
 
@@ -310,15 +311,14 @@ class Img2ImgHandler extends BaseHandler
 
         if (!CreditService::deduct($internalId, $cost, $referenceId)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '⚠️ خطا در کسر اعتبار.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_credit_deduct_error'));
             return;
         }
 
-        $this->baleClient->sendMessage($chatId, '⏳ در حال پردازش ویرایش عکس... لطفاً صبور باشید.');
+        $this->baleClient->sendMessage($chatId, BotTextService::get('edit_processing'));
 
         // Convert ALL photos to data URIs
         $imageDataUris = [];
-        $failedPaths = [];
 
         foreach ($paths as $photoPath) {
             if (!file_exists($photoPath)) {
@@ -328,7 +328,6 @@ class Img2ImgHandler extends BaseHandler
             @unlink($photoPath);
 
             if (empty($photoData) || strlen($photoData) < 500) {
-                $failedPaths[] = $photoPath;
                 continue;
             }
 
@@ -346,7 +345,7 @@ class Img2ImgHandler extends BaseHandler
                 [$internalId, $modelId, $model['name'], $prompt, $referenceId]
             );
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '⚠️ تصاویر معتبر نیستند.');
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_invalid_images'));
             return;
         }
 
@@ -406,7 +405,7 @@ class Img2ImgHandler extends BaseHandler
             $this->clearUserState($internalId);
             
             $displayText = mb_substr($textResponse, 0, 4000);
-            $caption = "مدل به جای تصویر، متن زیر را تولید کرد:\n\n" . $displayText . "\n———\n💎 هزینه: {$textCost} اعتبار";
+            $caption = BotTextService::get('edit_text_fallback_caption', ['text' => $displayText, 'cost' => $textCost]);
             $this->baleClient->sendMessage($chatId, $caption, $this->getMainMenuInlineKeyboard());
             return;
         }
@@ -430,7 +429,7 @@ class Img2ImgHandler extends BaseHandler
             // Send only the first image
             $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '✨ انجام شد.', $this->getMainMenuInlineKeyboard());
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_complete'), $this->getMainMenuInlineKeyboard());
         } else {
             // Failure
             $errMsg = $result['error'] ?? 'خطای نامشخص';
@@ -439,7 +438,7 @@ class Img2ImgHandler extends BaseHandler
                 [$internalId, $modelId, $model['name'], $prompt, $imageType, $referenceId]
             );
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, '⚠️ خطا: ' . $errMsg);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_error', ['error' => $errMsg]));
         }
     }
 
@@ -461,7 +460,7 @@ class Img2ImgHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
                 file_put_contents($tmpFile, $imageData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return;
             }
@@ -469,7 +468,7 @@ class Img2ImgHandler extends BaseHandler
 
         // HTTP URL — try direct, then download
         if (str_starts_with($urlOrData, 'http')) {
-            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, BotTextService::get('edit_image_caption', ['cost' => $cost]));
             if (isset($resp['ok']) && $resp['ok'] === true) {
                 return;
             }
@@ -493,7 +492,7 @@ class Img2ImgHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
                 file_put_contents($tmpFile, $imgData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ ویرایش تصویر انجام شد\n💎 هزینه: {$cost} اعتبار");
+                $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return;
             }

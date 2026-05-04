@@ -9,6 +9,7 @@ use Modules\Memory\MemoryManager;
 use Modules\Memory\Hooks as MemoryHooks;
 use Database\Database;
 use Database\Logger;
+use Core\BotTextService;
 
 class ChatHandler extends BaseHandler
 {
@@ -108,7 +109,7 @@ class ChatHandler extends BaseHandler
                     $this->processChatMessage($chatId, $userId, trim($text), null, null);
                     return;
                 }
-                $this->baleClient->sendMessage($chatId, "📝 لطفاً پیام خود را بنویسید یا عکس/فایل ارسال کنید.\n/exit برای خروج.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('chat_enter_message'));
                 return;
             }
 
@@ -124,7 +125,7 @@ class ChatHandler extends BaseHandler
         } catch (\Throwable $e) {
             error_log("ChatHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             if (isset($chatId)) {
-                $this->baleClient->sendMessage($chatId, "⚠️ خطایی رخ داد. مجدداً تلاش کنید.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('chat_error'));
             }
         }
     }
@@ -136,12 +137,7 @@ class ChatHandler extends BaseHandler
     private function showChatMenu(int $chatId, int $userId): void
     {
         $this->baleClient->sendMessage($chatId,
-            "💬 گفتگوی هوش مصنوعی\n\n"
-          . "آیا می‌خواهید از مدل پیش‌فرض استفاده کنید یا مدل دیگری انتخاب نمایید؟\n\n"
-          . "📌 نکات:\n"
-          . "• هزینه بر اساس تعداد کاراکتر محاسبه می‌شود\n"
-          . "• می‌توانید عکس و فایل نیز ارسال کنید\n"
-          . "• با /exit از مکالمه خارج شوید",
+            BotTextService::get('chat_menu_title'),
             $this->getChatEntryKeyboard()
         );
     }
@@ -150,7 +146,7 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) {
-            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
             return;
         }
 
@@ -158,8 +154,7 @@ class ChatHandler extends BaseHandler
         $model = $aiService->getFirstActiveTextModel();
 
         if (!$model) {
-            $msg = '❌ هیچ مدل متنی فعالی یافت نشد. لطفاً ابتدا یک مدل اضافه کنید.';
-            $this->baleClient->sendMessage($chatId, $msg);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_no_text_models'));
             return;
         }
 
@@ -174,11 +169,11 @@ class ChatHandler extends BaseHandler
             $models = $db->query("SELECT id, name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, free_model DESC, id ASC")->fetchAll();
 
             if (empty($models)) {
-                $this->baleClient->sendMessage($chatId, "❌ هیچ مدل فعالی یافت نشد.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('chat_model_list_error'));
                 return;
             }
 
-            $msg = "🎯 مدل مورد نظر را انتخاب کنید:\n\n";
+            $msg = BotTextService::get('chat_model_list_title');
             $keyboard = ['inline_keyboard' => []];
 
             foreach ($models as $m) {
@@ -207,7 +202,7 @@ class ChatHandler extends BaseHandler
             $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'chat_selecting_model')", [$internalId]);
             $this->baleClient->sendMessage($chatId, $msg, $keyboard);
         } catch (\Throwable $e) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_model_list_error'));
         }
     }
 
@@ -220,7 +215,7 @@ class ChatHandler extends BaseHandler
         $model = $db->query("SELECT * FROM ai_text_models WHERE id = ? AND is_active = 1", [$modelId])->fetch();
 
         if (!$model) {
-            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_model_not_found'));
             return;
         }
 
@@ -260,16 +255,15 @@ class ChatHandler extends BaseHandler
         $formats = $model['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp';
         $displayName = $model['display_name'] ?? $modelName;
 
-        $msg = "✅ گفتگو با مدل «{$displayName}» آغاز شد.\n\n"
-             . "📊 هزینه:\n"
-             . "  💰 ورودی: {$inCost} اعتبار/کاراکتر\n"
-             . "  💰 خروجی: {$outCost} اعتبار/کاراکتر\n"
-             . ($free ? "  🆓 این مدل رایگان است\n" : "")
-             . "\n📁 فرمت‌های پشتیبانی شده:\n"
-             . "  {$formats}\n"
-             . "\n📝 پیام خود را بنویسید.\n"
-             . "📸 می‌توانید عکس یا فایل با فرمت‌های مجاز ارسال کنید.\n"
-             . "🚪 /exit برای خروج از مکالمه.";
+        $freeText = $free ? "  🆓 این مدل رایگان است\n" : '';
+
+        $msg = BotTextService::get('chat_conversation_started', [
+            'display_name' => $displayName,
+            'in_cost' => $inCost,
+            'out_cost' => $outCost,
+            'free_text' => $freeText,
+            'formats' => $formats,
+        ]);
 
         $this->baleClient->sendMessage($chatId, $msg, $this->getChatActiveKeyboard());
     }
@@ -282,7 +276,7 @@ class ChatHandler extends BaseHandler
         $db = Database::getInstance();
         $conv = $db->query("SELECT * FROM chat_conversations WHERE id = ? AND user_id = ?", [$convId, $internalId])->fetch();
         if (!$conv) {
-            $this->baleClient->sendMessage($chatId, "❌ مکالمه یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_conversation_not_found'));
             return;
         }
 
@@ -303,7 +297,7 @@ class ChatHandler extends BaseHandler
             [$convId]
         )->fetchAll();
 
-        $summary = "📋 ادامه مکالمه قبلی:\n━━━━━━━━━━━━━━\n";
+        $summary = BotTextService::get('chat_resume_header');
         $maxLen = 4096 - 200; // reserve space for header/footer
         $lines = [];
         $totalLen = 0;
@@ -328,7 +322,7 @@ class ChatHandler extends BaseHandler
         }
 
         $summary .= implode('', $lines);
-        $summary .= "━━━━━━━━━━━━━━\n✏️ پیام خود را بنویسید.";
+        $summary .= BotTextService::get('chat_resume_footer');
 
         $this->baleClient->sendMessage($chatId, $summary, $this->getChatActiveKeyboard());
     }
@@ -341,7 +335,7 @@ class ChatHandler extends BaseHandler
         $db = Database::getInstance();
         $db->query("DELETE FROM chat_conversations WHERE id = ? AND user_id = ?", [$convId, $internalId]);
 
-        $this->baleClient->sendMessage($chatId, "🗑️ مکالمه حذف شد.");
+        $this->baleClient->sendMessage($chatId, BotTextService::get('chat_conversation_deleted'));
         $this->showConversationHistory($chatId, $userId);
     }
 
@@ -360,7 +354,7 @@ class ChatHandler extends BaseHandler
             }
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         }
-        $this->baleClient->sendMessage($chatId, "🚪 از مکالمه خارج شدید.\nبرای شروع دوباره از منوی اصلی استفاده کنید.");
+        $this->baleClient->sendMessage($chatId, BotTextService::get('chat_exit_message'));
     }
 
     // ─────────────────────────────────────────────
@@ -372,7 +366,7 @@ class ChatHandler extends BaseHandler
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) {
             \Core\AILogger::error('chat', 'resolveUserId failed', ['bale_user_id' => $userId]);
-            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
             return;
         }
 
@@ -395,7 +389,7 @@ class ChatHandler extends BaseHandler
 
         if (!$convId || !$modelId) {
             \Core\AILogger::error('chat', 'Missing conv_id or model_id', $extra);
-            $this->baleClient->sendMessage($chatId, "❌ خطا در بازیابی مکالمه. دوباره شروع کنید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_state_error'));
             return;
         }
 
@@ -437,12 +431,12 @@ class ChatHandler extends BaseHandler
                         [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
                     ]
                 ];
-                $this->baleClient->sendMessage($chatId, "❌ اعتبار کافی ندارید (نیاز به {$inputCost} اعتبار). لطفاً حساب خود را شارژ کنید.", $buyCreditKeyboard);
+                $this->baleClient->sendMessage($chatId, BotTextService::get('chat_credit_error', ['cost' => $inputCost]), $buyCreditKeyboard);
                 return;
             }
             $refId = 'chat_in_' . $convId . '_' . time();
             if (!CreditService::deduct($internalId, $inputCost, $refId)) {
-                $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('chat_credit_deduct_error'));
                 return;
             }
         }
@@ -462,7 +456,7 @@ class ChatHandler extends BaseHandler
             );
         }
 
-        $loadingMsgId = $this->baleClient->sendMessage($chatId, "⏳ در حال دریافت پاسخ...");
+        $loadingMsgId = $this->baleClient->sendMessage($chatId, BotTextService::get('chat_processing'));
 
         // Build messages for OpenRouter
         $history = $db->query(
@@ -601,7 +595,7 @@ class ChatHandler extends BaseHandler
         }
 
         // Send response
-        $costMsg = $freeModel ? '' : "\n💎 هزینه: {$inputCost} ورودی + {$outputCost} خروجی = " . ($inputCost + $outputCost) . " اعتبار";
+        $costMsg = $freeModel ? '' : BotTextService::get('chat_cost_summary', ['input_cost' => $inputCost, 'output_cost' => $outputCost, 'total_cost' => ($inputCost + $outputCost)]);
         $fullMsg = mb_substr($responseText, 0, 3800) . $costMsg;
         $this->baleClient->sendMessage($chatId, $fullMsg, $this->getChatActiveKeyboard());
 
@@ -620,7 +614,7 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) {
-            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
             return;
         }
 
@@ -637,10 +631,7 @@ class ChatHandler extends BaseHandler
                 // Check for image formats
                 $supportedImage = array_intersect($formats, ['jpg', 'jpeg', 'png', 'gif', 'webp']);
                 if (empty($supportedImage)) {
-                    $msg = "❌ این مدل از تصاویر پشتیبانی نمی‌کند.\n"
-                         . "📁 فرمت‌های مجاز: {$model['supported_formats']}\n"
-                         . "لطفاً فایل با فرمت مجاز ارسال کنید.";
-                    $this->baleClient->sendMessage($chatId, $msg);
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('chat_photo_format_error', ['formats' => $model['supported_formats']]));
                     return;
                 }
             }
@@ -650,13 +641,13 @@ class ChatHandler extends BaseHandler
         $caption = trim($caption ?? '');
 
         if (empty($caption)) {
-            $caption = "توضیحی برای این تصویر بنویسید.";
+            $caption = BotTextService::get('chat_photo_caption');
         }
 
         // Download photo
         $fileContent = $this->downloadPhoto($fileId);
         if ($fileContent === null) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت تصویر.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_photo_error'));
             return;
         }
 
@@ -678,7 +669,7 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) {
-            $this->baleClient->sendMessage($chatId, "❌ کاربر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
             return;
         }
 
@@ -696,10 +687,7 @@ class ChatHandler extends BaseHandler
             if ($model && !empty($model['supported_formats'])) {
                 $formats = explode(',', strtolower($model['supported_formats']));
                 if (!in_array($fileExtension, $formats)) {
-                    $msg = "❌ فرمت «{$fileExtension}» توسط این مدل پشتیبانی نمی‌شود.\n"
-                         . "📁 فرمت‌های مجاز: {$model['supported_formats']}\n"
-                         . "لطفاً فایل با فرمت مجاز ارسال کنید.";
-                    $this->baleClient->sendMessage($chatId, $msg);
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('chat_file_format_error', ['ext' => $fileExtension, 'formats' => $model['supported_formats']]));
                     return;
                 }
             }
@@ -707,14 +695,14 @@ class ChatHandler extends BaseHandler
 
         $caption = trim($caption ?? '');
         if (empty($caption)) {
-            $caption = "لطفاً این فایل را پردازش کن: {$fileName}";
+            $caption = BotTextService::get('chat_file_caption', ['filename' => $fileName]);
         }
 
         // Download file
         $fileId = $update->getDocumentFileId();
         $fileContent = $this->downloadPhoto($fileId); // downloadPhoto works for any file download
         if ($fileContent === null) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت فایل.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_download_error'));
             return;
         }
 
@@ -781,13 +769,13 @@ class ChatHandler extends BaseHandler
 
         if (empty($convs)) {
             $this->baleClient->sendMessage($chatId,
-                "📋 تاریخچه گفتگوهای شما خالی است.\n"
-              . "از منوی اصلی «💬 گفتگوی هوش» را انتخاب کنید."
-            , $this->getChatEntryKeyboard());
+                BotTextService::get('chat_history_empty'),
+                $this->getChatEntryKeyboard()
+            );
             return;
         }
 
-        $msg = "📋 تاریخچه گفتگوهای شما (صفحه " . ($page + 1) . " از {$totalPages}):\n\n";
+        $msg = BotTextService::get('chat_history_title', ['page' => ($page + 1), 'total' => $totalPages]);
         $keyboard = ['inline_keyboard' => []];
 
         foreach ($convs as $c) {

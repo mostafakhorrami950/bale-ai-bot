@@ -5,6 +5,7 @@ namespace Modules\Bot\Handlers;
 use Modules\Bot\BaleClient;
 use Modules\Bot\Models\Channel;
 use Database\Database;
+use Core\BotTextService;
 
 abstract class BaseHandler
 {
@@ -104,7 +105,7 @@ abstract class BaseHandler
             }
 
             if (!empty($nonMembers)) {
-                $msg = "🔒 برای استفاده از ربات باید در کانال‌های زیر عضو شوید:\n\n";
+                $msg = BotTextService::get('membership_required');
                 $keyboard = ['inline_keyboard' => []];
                 foreach ($nonMembers as $ch) {
                     $title = $ch['title'] ?? 'کانال';
@@ -118,9 +119,9 @@ abstract class BaseHandler
                         $msg .= "📢 {$title}\n";
                     }
                 }
-                $msg .= "\n✅ پس از عضویت در تمام کانال‌ها، دکمه زیر را بزنید تا مجدداً بررسی شود.";
+                $msg .= BotTextService::get('membership_check_prompt');
                 $keyboard['inline_keyboard'][] = [
-                    ['text' => '✅ عضو شدم، بررسی کن', 'callback_data' => 'check_membership']
+                    ['text' => BotTextService::get('membership_check_button'), 'callback_data' => 'check_membership']
                 ];
                 // Store the message_id so we can delete it later on confirmation
                 $msgId = $this->baleClient->sendMessage($chatId, $msg, $keyboard);

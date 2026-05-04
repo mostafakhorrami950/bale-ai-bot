@@ -4,6 +4,7 @@ namespace Modules\Bot\Handlers;
 
 use Exception;
 use Database\Database;
+use Core\BotTextService;
 
 class MessageHandler extends BaseHandler
 {
@@ -33,11 +34,11 @@ class MessageHandler extends BaseHandler
             }
 
             // Fallback — show main menu
-            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($chatId, BotTextService::get('fallback_menu'), $this->getMainMenuKeyboard());
 
         } catch (Exception $e) {
             error_log("MessageHandler Exception: " . $e->getMessage());
-            $this->baleClient->sendMessage($update->getChatId(), "متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($update->getChatId(), BotTextService::get('error_general'));
         }
     }
 
@@ -56,10 +57,10 @@ class MessageHandler extends BaseHandler
 
         if ($saved) {
             // Send registration success, then show MAIN MENU (not reply keyboard)
-            $this->baleClient->sendMessage($baleId, "✅ ثبت‌نام شما با موفقیت انجام شد!");
-            $this->baleClient->sendMessage($baleId, "🤖 به ربات خوش آمدید. لطفاً از منوی زیر استفاده کنید:", $this->getMainMenuKeyboard());
+            $this->baleClient->sendMessage($baleId, BotTextService::get('registration_success'));
+            $this->baleClient->sendMessage($baleId, BotTextService::get('registration_welcome'), $this->getMainMenuKeyboard());
         } else {
-            $this->baleClient->sendMessage($baleId, "❌ متأسفانه در ثبت اطلاعات مشکلی پیش آمد.");
+            $this->baleClient->sendMessage($baleId, BotTextService::get('registration_failed'));
         }
     }
 
@@ -76,13 +77,7 @@ class MessageHandler extends BaseHandler
                 $settings[$r['key_name']] = $r['value'];
             }
 
-            $helpText = $settings['help_text'] ?? "🤖 **راهنمای ربات**\n\n"
-                . "🎨 **ساخت تصویر**: با استفاده از هوش مصنوعی تصویر بسازید.\n"
-                . "🖼 **ویرایش عکس**: عکس خود را آپلود کرده و با توضیحات ویرایش کنید.\n"
-                . "💬 **چت با هوش مصنوعی**: با مدل‌های مختلف گفتگو کنید.\n"
-                . "👤 **حساب کاربری**: موجودی و تاریخچه خود را مشاهده کنید.\n"
-                . "💳 **خرید اعتبار**: اعتبار خود را افزایش دهید.\n\n"
-                . "📞 پشتیبانی: @mobix_tube";
+            $helpText = $settings['help_text'] ?? BotTextService::get('help_default_text');
 
             $helpImage = $settings['help_image'] ?? null;
 
@@ -94,7 +89,7 @@ class MessageHandler extends BaseHandler
                 $this->baleClient->sendMessage($chatId, $helpText);
             }
         } catch (\Throwable $e) {
-            $this->baleClient->sendMessage($chatId, "❌ خطا در بارگذاری راهنما.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('help_load_error'));
         }
     }
 

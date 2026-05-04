@@ -7,6 +7,7 @@ use Modules\Bot\Models\User;
 use Database\Database;
 use Database\Logger;
 use Core\Config;
+use Core\BotTextService;
 
 class BuyCreditHandler extends BaseHandler
 {
@@ -71,13 +72,13 @@ class BuyCreditHandler extends BaseHandler
         } catch (\PDOException $e) {
             error_log("BuyCreditHandler SQL ERROR: " . $e->getMessage());
             Logger::error('BuyCreditHandler: payment_plans table error', ['error' => $e->getMessage()]);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در پایگاه داده پلن‌ها. لطفاً به پشتیبانی اطلاع دهید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('plans_load_error'));
             return;
         }
 
         if (empty($plans)) {
             error_log("BuyCreditHandler: NO ACTIVE PLANS IN DB");
-            $this->baleClient->sendMessage($chatId, "⚠️ هیچ پلن فعالی یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('no_active_plans'));
             return;
         }
 
@@ -89,27 +90,27 @@ class BuyCreditHandler extends BaseHandler
             ];
         }
 
-        $this->baleClient->sendMessage($chatId, "💰 **لطفاً یکی از پلن‌های زیر را انتخاب کنید:**\n\n", $keyboard);
+        $this->baleClient->sendMessage($chatId, BotTextService::get('plans_title'), $keyboard);
     }
 
     private function processPlan(int $chatId, int $userId, ?string $callbackId, string $callbackData): void
     {
         $planId = (int) str_replace('plan_', '', $callbackData);
         if ($planId <= 0) {
-            $this->baleClient->sendMessage($chatId, "⚠️ پلن نامعتبر است.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('invalid_plan'));
             return;
         }
 
         $plans = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetchAll();
         if (empty($plans)) {
-            $this->baleClient->sendMessage($chatId, "⚠️ پلن مورد نظر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('plan_not_found'));
             return;
         }
 
         $plan = $plans[0];
         $user = User::findByBaleId($userId);
         if (!$user) {
-            $this->baleClient->sendMessage($chatId, "⚠️ کاربر یافت نشد.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('user_not_found'));
             return;
         }
 
@@ -137,7 +138,7 @@ class BuyCreditHandler extends BaseHandler
                     [['text' => '💰 پرداخت با کیف پول بله', 'callback_data' => 'pay_bale_' . $planId]],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "💳 لطفاً روش پرداخت را انتخاب کنید:", $keyboard);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('payment_method_selection'), $keyboard);
             return;
         }
 
@@ -147,7 +148,7 @@ class BuyCreditHandler extends BaseHandler
         } elseif ($baleActive && !empty($baleProviderToken)) {
             $this->processBalePayment($chatId, $userId, $plan, $user, $baleProviderToken);
         } else {
-            $this->baleClient->sendMessage($chatId, "⚠️ هیچ روش پرداختی فعال نیست. لطفاً با پشتیبانی تماس بگیرید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('no_payment_method'));
         }
     }
 
@@ -156,7 +157,7 @@ class BuyCreditHandler extends BaseHandler
      */
     private function processZibalPayment(int $chatId, int $userId, array $plan, array $user): void
     {
-        $this->baleClient->sendMessage($chatId, "⏳ در حال اتصال به درگاه زیبال...");
+        $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_connecting'));
 
         try {
             $paymentService = new \Modules\Payment\ZibalService();
@@ -173,7 +174,7 @@ class BuyCreditHandler extends BaseHandler
                     'plan'    => $plan['name'],
                     'error'   => $result['error'],
                 ]);
-                $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی در اتصال به درگاه زیبال پیش آمد.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_connection_error'));
                 return;
             }
 
@@ -186,11 +187,12 @@ class BuyCreditHandler extends BaseHandler
                 );
 
                 $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
-                $message = "💳 **پرداخت با زیبال - پلن: {$plan['name']}**\n\n";
-                $message .= "💰 مبلغ: " . number_format($amountRial / 10) . " تومان\n";
-                $message .= "💎 اعتبار: {$plan['credits']} کردیت\n\n";
-                $message .= "🔗 لینک پرداخت:\n{$paymentUrl}\n\n";
-                $message .= "⏳ پس از پرداخت، به صورت خودکار اعتبار به حساب شما اضافه می‌شود.";
+                $message = BotTextService::get('zibal_payment_message', [
+                    'plan_name' => $plan['name'],
+                    'amount' => number_format($amountRial / 10),
+                    'credits' => $plan['credits'],
+                    'payment_url' => $paymentUrl,
+                ]);
 
                 $this->baleClient->sendMessage($chatId, $message);
             }
@@ -200,7 +202,7 @@ class BuyCreditHandler extends BaseHandler
                 'plan_id' => $plan['id'],
                 'error'   => $e->getMessage(),
             ]);
-            $this->baleClient->sendMessage($chatId, "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_general_error'));
         }
     }
 
@@ -234,7 +236,7 @@ class BuyCreditHandler extends BaseHandler
                 'plan'    => $plan['name'],
                 'error'   => $errMsg,
             ]);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال صورتحساب: {$errMsg}");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('bale_invoice_error', ['error' => $errMsg]));
             return;
         }
 

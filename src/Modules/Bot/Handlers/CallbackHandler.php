@@ -4,6 +4,7 @@ namespace Modules\Bot\Handlers;
 
 use Modules\Bot\Models\Channel;
 use Exception;
+use Core\BotTextService;
 
 class CallbackHandler extends BaseHandler
 {
@@ -24,7 +25,7 @@ class CallbackHandler extends BaseHandler
 
             switch ($callbackData) {
                 case 'help':
-                    $this->baleClient->sendMessage($chatId, "❓ راهنما:\nاین ربات به شما کمک می‌کند با هوش مصنوعی تصویر بسازید.");
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('help_callback'));
                     break;
 
                 case 'check_membership':
@@ -35,7 +36,7 @@ class CallbackHandler extends BaseHandler
                     }
                     $passed = $this->checkMembership($userId, $chatId);
                     if ($passed) {
-                        $this->baleClient->sendMessage($chatId, "✅ عضویت شما تأیید شد. از منوی زیر استفاده کنید:", MessageHandler::getMainMenuKeyboard());
+                        $this->baleClient->sendMessage($chatId, BotTextService::get('membership_confirmed'), MessageHandler::getMainMenuKeyboard());
                     }
                     break;
             }

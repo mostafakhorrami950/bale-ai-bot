@@ -7,6 +7,7 @@ use Modules\Bot\CreditService;
 use Modules\Bot\Models\User;
 use Database\Database;
 use Database\Logger;
+use Core\BotTextService;
 
 class ImageHandler extends BaseHandler
 {
@@ -27,10 +28,10 @@ class ImageHandler extends BaseHandler
             // Block user if AI is processing
             if ($state === 'ai_processing') {
                 if ($text === '/cancel') {
-                    $this->baleClient->sendMessage($chatId, "⚠️ درخواست شما در حال پردازش توسط هوش مصنوعی است. در صورت لغو، هزینه عودت داده نمی‌شود و خروجی پس از آماده شدن ارسال خواهد شد.");
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('ai_processing_warning'));
                     return;
                 }
-                $this->baleClient->sendMessage($chatId, "⏳ لطفاً صبور باشید، درخواست قبلی شما در حال پردازش است...");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('ai_processing_wait'));
                 return;
             }
 
@@ -55,11 +56,11 @@ class ImageHandler extends BaseHandler
             }
 
             // Fallback
-            $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر یکی از گزینه‌ها را انتخاب کنید:");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('image_fallback_menu'));
         } catch (\Throwable $e) {
             error_log("ImageHandler FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
             Logger::error('ImageHandler exception', ['user_id' => $update->getUserId(), 'error' => $e->getMessage()]);
-            $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی پیش آمد. لطفاً دوباره تلاش کنید.");
+            $this->baleClient->sendMessage($update->getChatId(), BotTextService::get('error_general'));
         }
     }
 
@@ -79,11 +80,11 @@ class ImageHandler extends BaseHandler
             $db = Database::getInstance();
             $models = $db->query("SELECT id, name, display_name, cost_per_image, description FROM ai_image_models WHERE is_active = 1")->fetchAll();
             if (empty($models)) {
-                $this->baleClient->sendMessage($chatId, "❌ در حال حاضر هیچ مدل فعالی یافت نشد.");
+                $this->baleClient->sendMessage($chatId, BotTextService::get('no_active_models'));
                 return;
             }
             $keyboard = ['inline_keyboard' => []];
-            $msg = "🎯 لطفاً مدل هوش مصنوعی مورد نظر خود را انتخاب کنید:\n\n";
+            $msg = BotTextService::get('model_selection_title');
             foreach ($models as $model) {
                 $displayName = $model['display_name'] ?? $model['name'];
                 $desc = $model['description'] ?? '';
@@ -103,7 +104,7 @@ class ImageHandler extends BaseHandler
             );
             $this->baleClient->sendMessage($chatId, $msg, $keyboard);
         } catch (\Throwable $e) {
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در دریافت لیست مدل‌ها.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('model_list_error'));
         }
     }
 
@@ -116,20 +117,20 @@ class ImageHandler extends BaseHandler
             $model = $db->query("SELECT * FROM ai_edit_models WHERE id = ?", [$modelId])->fetch();
         }
         if (!$model) {
-            $this->baleClient->sendMessage($chatId, "⚠️ مدل انتخاب شده معتبر نیست.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('invalid_model'));
             return;
         }
         $db->query(
             "UPDATE bot_state SET state = 'awaiting_image_prompt', extra_data = ? WHERE user_id = ?",
             [json_encode(['model_id' => $modelId]), $internalId]
         );
-        $this->baleClient->sendMessage($chatId, "🎨 مدل «{$model['name']}» انتخاب شد.\n\nلطفاً متن تصویر مورد نظر خود را بنویسید:");
+        $this->baleClient->sendMessage($chatId, BotTextService::get('model_selected_prompt', ['model_name' => $model['name']]));
     }
 
     private function processPrompt(int $chatId, int $userId, string $prompt): void
     {
         if (empty(trim($prompt))) {
-            $this->baleClient->sendMessage($chatId, "⚠️ لطفاً یک متن معتبر وارد کنید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('invalid_prompt'));
             return;
         }
 
@@ -147,7 +148,7 @@ class ImageHandler extends BaseHandler
 
         if (!$model) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "❌ مدل یافت نشد. لطفاً دوباره انتخاب کنید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('model_not_found'));
             return;
         }
 
@@ -159,7 +160,7 @@ class ImageHandler extends BaseHandler
                     [['text' => "\xF0\x9F\x92\xB3 برای افزایش اعتبار کلیک کن", 'callback_data' => 'buy_credit']],
                 ]
             ];
-            $this->baleClient->sendMessage($chatId, "❌ اعتبار شما کافی نیست (نیاز به {$cost} اعتبار).", $buyCreditKeyboard);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('insufficient_credit', ['cost' => $cost]), $buyCreditKeyboard);
             return;
         }
 
@@ -167,11 +168,11 @@ class ImageHandler extends BaseHandler
 
         if (!CreditService::deduct($internalId, $cost, $referenceId)) {
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در کسر اعتبار. لطفاً با پشتیبانی تماس بگیرید.");
+            $this->baleClient->sendMessage($chatId, BotTextService::get('credit_deduct_error'));
             return;
         }
 
-        $this->baleClient->sendMessage($chatId, "⏳ در حال ساخت تصویر توسط «{$model['name']}»... لطفاً چند لحظه صبر کنید.");
+        $this->baleClient->sendMessage($chatId, BotTextService::get('generating_image', ['model_name' => $model['name']]));
 
         \Core\AILogger::log('IMAGE_GENERATE_START', [
             'user_id' => $internalId,
@@ -193,7 +194,7 @@ class ImageHandler extends BaseHandler
             \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, false, $result['error']);
             $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $model['name'], $prompt, $referenceId]);
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, "⚠️ خطا در تولید تصویر: " . $result['error']);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('image_error', ['error' => $result['error']]));
             return;
         }
 
@@ -243,7 +244,7 @@ class ImageHandler extends BaseHandler
             
             // Send text response (clamped to 4000 chars for Bale API limit)
             $displayText = mb_substr($textResponse, 0, 4000);
-            $caption = "مدل به جای تصویر، متن زیر را تولید کرد:\n\n" . $displayText . "\n———\n💎 هزینه: {$textCost} اعتبار";
+            $caption = BotTextService::get('text_fallback_caption', ['text' => $displayText, 'cost' => $textCost]);
             $this->baleClient->sendMessage($chatId, $caption, $this->getMainMenuInlineKeyboard());
             return;
         }
@@ -273,7 +274,7 @@ class ImageHandler extends BaseHandler
         }
 
         $this->clearUserState($internalId);
-        $this->baleClient->sendMessage($chatId, "✨ عملیات با موفقیت پایان یافت.", $this->getMainMenuInlineKeyboard());
+        $this->baleClient->sendMessage($chatId, BotTextService::get('operation_complete'), $this->getMainMenuInlineKeyboard());
     }
 
     private function getUserState(int $baleUserId): ?string
@@ -310,7 +311,7 @@ class ImageHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
                 file_put_contents($tmpFile, $imageData);
-                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return $sent;
             }
@@ -320,7 +321,7 @@ class ImageHandler extends BaseHandler
         // Case 2: HTTP URL → try direct send first, if fails download and send multipart
         if (str_starts_with($urlOrData, 'http')) {
             // Try direct URL send first (Bale downloads it)
-            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, BotTextService::get('image_caption', ['cost' => $cost]));
             if (isset($resp['ok']) && $resp['ok'] === true) {
                 return true;
             }
@@ -349,7 +350,7 @@ class ImageHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
                 file_put_contents($tmpFile, $imgData);
-                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return $sent;
             }
@@ -360,7 +361,7 @@ class ImageHandler extends BaseHandler
 
         // Case 3: local file path → send as multipart
         if (file_exists($urlOrData)) {
-            $sent = $this->baleClient->sendPhotoFile($chatId, $urlOrData, "✅ خروجی هوش مصنوعی\n💎 هزینه کسر شده: {$cost} اعتبار");
+            $sent = $this->baleClient->sendPhotoFile($chatId, $urlOrData, BotTextService::get('image_caption', ['cost' => $cost]));
             @unlink($urlOrData);
             return $sent;
         }

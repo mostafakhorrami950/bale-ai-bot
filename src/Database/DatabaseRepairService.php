@@ -54,6 +54,7 @@ class DatabaseRepairService
         $this->ensureChatMessagesActualCostColumn();
         $this->ensureImageModelCharCostColumns();
         $this->ensureAiRequestsFinanceColumns();
+        $this->ensureBotTextsTable();
 
         return $this->messages;
     }
@@ -986,6 +987,28 @@ class DatabaseRepairService
                 $this->exec("ALTER TABLE ai_edit_models ADD COLUMN cost_per_output_char DECIMAL(10,6) DEFAULT 0.000002 AFTER cost_per_input_char");
                 $this->log('✅ ستون cost_per_output_char به ai_edit_models اضافه شد.');
             }
+        }
+    }
+
+    private function ensureBotTextsTable(): void
+    {
+        if (!$this->tableExists('bot_texts')) {
+            $this->exec("
+                CREATE TABLE bot_texts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    text_key VARCHAR(100) UNIQUE NOT NULL,
+                    text_value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول bot_texts ایجاد شد.');
+        }
+        // Seed default values (idempotent — INSERT IGNORE)
+        try {
+            \Core\BotTextService::seedDefaults();
+            $this->log('✅ مقادیر پیش‌فرض متن‌ها در bot_texts درج شد.');
+        } catch (\Throwable $e) {
+            $this->log("⚠️ خطا در seed متن‌ها: " . $e->getMessage());
         }
     }
 
