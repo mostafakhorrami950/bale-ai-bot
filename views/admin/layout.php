@@ -242,6 +242,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'bot_texts' ? 'active' : ''; ?>" href="bot_texts.php">
             <i class="bi bi-file-text"></i> 📝 مدیریت متن‌ها
         </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'ai_logs' ? 'active' : ''; ?>" href="ai_logs.php">
+            <i class="bi bi-journal-code"></i> 📋 لاگ‌های هوش مصنوعی
+        </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'repair' ? 'active' : ''; ?>" href="repair_db.php">
             <i class="bi bi-tools"></i> 🔧 تعمیر دیتابیس
         </a>

@@ -333,7 +333,10 @@ class AIService
             }
         }
 
-        return ['images' => $downloadedImages];
+        return [
+            'images' => $downloadedImages,
+            'usage' => $r['usage'] ?? null,
+        ];
     }
 
     // ═══════════════════════════════════════════════

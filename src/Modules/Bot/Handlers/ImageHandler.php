@@ -273,12 +273,25 @@ class ImageHandler extends BaseHandler
             }
         }
 
+        $this->clearUserState($internalId);
+
         if (empty($images)) {
-            // CRITICAL: API returned success but no images! Refund and alert user
-            $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد. هزینه عودت داده شد.");
-            \Core\AILogger::error('image_empty', 'API returned success but no images', ['user_id' => $internalId, 'model' => $model['name']]);
+            // CRITICAL: API returned success but no images! 
+            // Only refund if OpenRouter charged $0 (no actual cost)
+            if ((float)$actualUsd <= 0) {
+                CreditService::creditBack($internalId, $cost, $referenceId . '_norefund');
+                $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد. هزینه عودت داده شد.");
+            } else {
+                // OpenRouter already charged us, we can't refund
+                $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد اما هزینه آن توسط OpenRouter کسر شده است.\nلطفاً با پشتیبانی تماس بگیرید.");
+            }
+            \Core\AILogger::error('image_empty', 'API returned success but no images', [
+                'user_id' => $internalId,
+                'model' => $model['name'],
+                'actual_cost_usd' => $actualUsd,
+                'prev_cost_charged' => $cost,
+            ]);
         } else {
-            $this->clearUserState($internalId);
             $this->baleClient->sendMessage($chatId, BotTextService::get('operation_complete'), $this->getMainMenuInlineKeyboard());
         }
     }
