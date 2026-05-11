@@ -2,42 +2,31 @@
 
 namespace Core;
 
+use Database\Database;
 use Database\Logger;
 
 /**
- * AILogger — writes all AI requests/responses to a dedicated log file.
- * Uses Config-driven path with fallback.
+ * AILogger — writes ALL AI requests/responses to the database.
+ * No file-based logging! File logs slow down the server.
+ * Old logs are purged weekly via repair_db or cron.
  */
 class AILogger
 {
-    private static ?string $logFile = null;
-
-    public static function getLogFile(): string
-    {
-        if (self::$logFile === null) {
-            $path = defined('BASE_PATH') ? BASE_PATH . '/ai_debug.log' : __DIR__ . '/../../ai_debug.log';
-            self::$logFile = \Core\Config::get('AI_LOG_FILE', $path);
-            $dir = dirname(self::$logFile);
-            if (!is_dir($dir)) {
-                @mkdir($dir, 0755, true);
-            }
-        }
-        return self::$logFile;
-    }
-
-    public static function setLogFile(string $path): void
-    {
-        self::$logFile = $path;
-    }
-
     /**
      * Log an AI event with full context.
+     * Writes to ai_logs database table (not file!).
      */
     public static function log(string $event, array $data = []): void
     {
-        $ts = date('Y-m-d H:i:s');
-        $line = "[{$ts}] [{$event}] " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
-        @file_put_contents(self::getLogFile(), $line, FILE_APPEND | LOCK_EX);
+        try {
+            $db = Database::getInstance();
+            $db->query(
+                "INSERT INTO ai_logs (event, data, created_at) VALUES (?, ?, NOW())",
+                [$event, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]
+            );
+        } catch (\Throwable $e) {
+            // Silent fail — DB logging should never crash the bot
+        }
     }
 
     /**
@@ -133,6 +122,35 @@ class AILogger
             'params' => $params,
             'error'  => $error,
         ]);
+    }
+
+    /**
+     * PURGE old logs from ai_logs table (keep only 7 days).
+     * Called weekly via DatabaseRepairService or cron.
+     */
+    public static function purgeOldLogs(): int
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("DELETE FROM ai_logs WHERE created_at < NOW() - INTERVAL 7 DAY");
+            return $stmt->rowCount();
+        } catch (\Throwable $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Also purge old bot_logs table entries.
+     */
+    public static function purgeBotLogs(): int
+    {
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("DELETE FROM bot_logs WHERE created_at < NOW() - INTERVAL 30 DAY");
+            return $stmt->rowCount();
+        } catch (\Throwable $e) {
+            return 0;
+        }
     }
 
     /**

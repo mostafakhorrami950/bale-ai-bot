@@ -427,9 +427,13 @@ class Img2ImgHandler extends BaseHandler
             );
 
             // Send only the first image
-            $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
+            $sent = $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, BotTextService::get('edit_complete'), $this->getMainMenuInlineKeyboard());
+            if ($sent === false) {
+                $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید کرد اما امکان ارسال وجود نداشت.");
+            } else {
+                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_complete'), $this->getMainMenuInlineKeyboard());
+            }
         } else {
             // Failure
             $errMsg = $result['error'] ?? 'خطای نامشخص';

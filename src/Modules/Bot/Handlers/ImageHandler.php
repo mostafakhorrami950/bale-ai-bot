@@ -273,8 +273,14 @@ class ImageHandler extends BaseHandler
             }
         }
 
-        $this->clearUserState($internalId);
-        $this->baleClient->sendMessage($chatId, BotTextService::get('operation_complete'), $this->getMainMenuInlineKeyboard());
+        if (empty($images)) {
+            // CRITICAL: API returned success but no images! Refund and alert user
+            $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد. هزینه عودت داده شد.");
+            \Core\AILogger::error('image_empty', 'API returned success but no images', ['user_id' => $internalId, 'model' => $model['name']]);
+        } else {
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('operation_complete'), $this->getMainMenuInlineKeyboard());
+        }
     }
 
     private function getUserState(int $baleUserId): ?string

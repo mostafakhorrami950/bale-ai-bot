@@ -55,6 +55,8 @@ class DatabaseRepairService
         $this->ensureImageModelCharCostColumns();
         $this->ensureAiRequestsFinanceColumns();
         $this->ensureBotTextsTable();
+        $this->ensureAiLogsTable();
+        $this->purgeOldLogs();
 
         return $this->messages;
     }
@@ -1057,6 +1059,39 @@ class DatabaseRepairService
         if (!$this->indexExists('ai_requests', 'idx_created_at')) {
             $this->exec("CREATE INDEX idx_created_at ON ai_requests (created_at)");
             $this->log('✅ ایندکس idx_created_at روی ai_requests ایجاد شد.');
+        }
+    }
+
+    private function ensureAiLogsTable(): void
+    {
+        if (!$this->tableExists('ai_logs')) {
+            $this->exec("
+                CREATE TABLE ai_logs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    event VARCHAR(50) NOT NULL,
+                    data JSON DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_event (event),
+                    INDEX idx_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول ai_logs ایجاد شد.');
+        }
+    }
+
+    /**
+     * Purge old logs to keep DB size small.
+     * ai_logs: keep 7 days, bot_logs: keep 30 days.
+     */
+    private function purgeOldLogs(): void
+    {
+        if ($this->tableExists('ai_logs')) {
+            $deleted = \Core\AILogger::purgeOldLogs();
+            $this->log("🧹 {$deleted} رکورد از ai_logs (قدیمی‌تر از ۷ روز) پاک شد.");
+        }
+        if ($this->tableExists('bot_logs')) {
+            $deleted = \Core\AILogger::purgeBotLogs();
+            $this->log("🧹 {$deleted} رکورد از bot_logs (قدیمی‌تر از ۳۰ روز) پاک شد.");
         }
     }
 
