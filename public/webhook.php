@@ -57,6 +57,29 @@ if (!$update || (!$update->getChatId() && !$isPaymentQuery && !$isPaymentSuccess
     exit('Parse error');
 }
 
+// CRITICAL: Ignore ALL channel messages — bot must NEVER reply in channels
+// Bale sends updates for channel messages too, and replying would interfere with channel management.
+$chatType = $updateData['message']['chat']['type'] ?? $updateData['callback_query']['message']['chat']['type'] ?? null;
+if ($chatType === 'channel' || $chatType === 'supergroup') {
+    // For supergroups, only ignore if bot is not mentioned (to prevent spam)
+    // For channels, ALWAYS ignore — bot should never post in channels
+    if ($chatType === 'channel') {
+        bot_log('INFO', 'Channel message ignored (bot never replies in channels)', ['chat_id' => $update->getChatId()]);
+        exit;
+    }
+    // For supergroups: ignore unless the bot is directly mentioned or it's a command
+    if ($chatType === 'supergroup' && $update->isMessage()) {
+        $text = $update->getText() ?? '';
+        $isMentioned = str_contains($text, '@' . ($_ENV['BOT_USERNAME'] ?? 'bot'))
+            || str_starts_with($text, '/')
+            || ($updateData['message']['entities'] ?? []);
+        if (!$isMentioned) {
+            bot_log('INFO', 'Supergroup message ignored (no direct mention)', ['chat_id' => $update->getChatId()]);
+            exit;
+        }
+    }
+}
+
 // 4. Update last_active_at for any user action
 $baleUserId = $update->getUserId();
 if ($baleUserId) {
