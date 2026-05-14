@@ -413,17 +413,15 @@ class ChatHandler extends BaseHandler
         $freeModel = (int)($model['free_model'] ?? 0);
         $modelProvider = $model['provider'] ?? 'openrouter';
 
-        // Calculate file chars
+        // Calculate cost estimate for initial credit check (will be adjusted after we get actual tokens from API)
         $fileChars = 0;
         if ($fileContent !== null && $fileType !== null) {
             $fileChars = ChatService::estimateFileChars($fileType, $fileContent);
         }
-
-        // Calculate input cost
         $inputChars = mb_strlen($text) + $fileChars;
         $inputCost = $freeModel ? 0 : ChatService::calcCreditCost($inputChars, $costPerInput);
 
-        // Check & deduct input credits
+        // Deduct estimated input credits (refund/adjust after actual token count from OpenRouter)
         if (!$freeModel && $inputCost > 0) {
             if (!CreditService::hasEnoughCredit($internalId, $inputCost)) {
                 $buyCreditKeyboard = [
@@ -548,7 +546,8 @@ class ChatHandler extends BaseHandler
         }
 
         // ─── MEMORY MODULE: Process after AI response ───
-        if ($memoryManager && $memoryManager->isEnabled()) {
+        // Skip memory summarization when user sent a file (no useful info to extract from file name)
+        if ($memoryManager && $memoryManager->isEnabled() && $fileContent === null) {
             try {
                 $memoryHooks->onAfterChatResponse($internalId, $text);
             } catch (\Throwable $e) {

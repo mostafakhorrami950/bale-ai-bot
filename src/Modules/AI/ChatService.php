@@ -85,13 +85,31 @@ class ChatService
             return ['error' => $msg];
         }
 
-        $inputChars = $this->countMessageChars($messages);
-
         $payload = [
             'model'      => $model,
             'messages'   => $messages,
             'stream'     => false,
         ];
+
+        // Add plugins for PDF processing (OpenRouter only)
+        if ($provider === 'openrouter') {
+            $hasPdf = false;
+            foreach ($messages as $msg) {
+                if (is_array($msg['content'] ?? null)) {
+                    foreach ($msg['content'] as $part) {
+                        if (($part['type'] ?? '') === 'file' && isset($part['file']['file_data']) && str_contains($part['file']['file_data'], 'application/pdf')) {
+                            $hasPdf = true;
+                            break 2;
+                        }
+                    }
+                }
+            }
+            if ($hasPdf) {
+                $payload['plugins'] = [
+                    ['id' => 'file-parser', 'pdf' => ['engine' => 'cloudflare-ai']]
+                ];
+            }
+        }
 
         $extraHeaders = [];
         if ($provider === 'openrouter') {
@@ -130,23 +148,24 @@ class ChatService
         $responseText = $result['response'] ?? '';
         $outputChars = mb_strlen($responseText);
         $actualCostUsd = $result['cost_usd'] ?? 0.0;
+        $inputTokens = $result['input_tokens'] ?? 0;
+        $outputTokens = $result['output_tokens'] ?? 0;
 
         \Core\AILogger::log('CHATSERVICE_DONE', [
             'provider' => $provider,
             'model' => $model,
-            'input_chars' => $inputChars,
-            'output_chars' => $outputChars,
             'actual_cost_usd' => $actualCostUsd,
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
             'duration' => round($duration, 2) . 's',
         ]);
 
         return [
             'response'       => $responseText,
-            'input_chars'    => $inputChars,
             'output_chars'   => $outputChars,
             'cost_usd'       => $actualCostUsd,
-            'input_tokens'   => $result['input_tokens'] ?? 0,
-            'output_tokens'  => $result['output_tokens'] ?? 0,
+            'input_tokens'   => $inputTokens,
+            'output_tokens'  => $outputTokens,
             'error'          => null,
         ];
     }
@@ -162,31 +181,12 @@ class ChatService
     }
 
     /**
-     * Count total characters in an array of messages.
-     */
-    private function countMessageChars(array $messages): int
-    {
-        $total = 0;
-        foreach ($messages as $msg) {
-            $content = $msg['content'] ?? '';
-            if (is_string($content)) {
-                $total += mb_strlen($content);
-            } elseif (is_array($content)) {
-                foreach ($content as $part) {
-                    if (($part['type'] ?? '') === 'text') {
-                        $total += mb_strlen($part['text'] ?? '');
-                    }
-                    if (($part['type'] ?? '') === 'image_url') {
-                        $total += 1000;
-                    }
-                }
-            }
-        }
-        return $total;
-    }
-
-    /**
      * Build OpenRouter-compatible messages from DB chat_messages rows.
+     * 
+     * IMPORTANT: According to OpenRouter multimodal docs:
+     * - Images: use type 'image_url' with base64 data URI
+     * - PDFs: use type 'file' with filename + file_data (base64 data:application/pdf;base64,...)
+     * - Other files (doc, txt, etc.): use type 'file' 
      */
     public static function buildMessagesFromHistory(array $rows, string $newUserText = null, string $fileContent = null, string $fileType = null): array
     {
@@ -202,12 +202,55 @@ class ChatService
             if ($role === 'system') continue;
 
             if (!empty($row['file_type']) && !empty($row['file_content'])) {
-                $parts = [['type' => 'text', 'text' => $row['content']]];
-                if ($row['file_type'] === 'image') {
-                    $parts[] = ['type' => 'image_url', 'image_url' => ['url' => $row['file_content']]];
-                } else {
-                    $parts[0]['text'] .= "\n\n[فایل ضمیمه: {$row['file_type']}]\n{$row['file_content']}";
+                $parts = [];
+                
+                // Always add text caption first (even if empty, provide context)
+                $caption = trim($row['content'] ?? '');
+                if (!empty($caption)) {
+                    $parts[] = ['type' => 'text', 'text' => $caption];
                 }
+                
+                $fileTypeVal = $row['file_type'];
+                $fileContentVal = $row['file_content'];
+                
+                if ($fileTypeVal === 'image') {
+                    // Image: use image_url content type with data URI
+                    $parts[] = [
+                        'type' => 'image_url',
+                        'image_url' => ['url' => $fileContentVal]
+                    ];
+                } elseif (in_array($fileTypeVal, ['pdf', 'PDF'])) {
+                    // PDF: use file content type with filename + base64 data URI
+                    $parts[] = [
+                        'type' => 'file',
+                        'file' => [
+                            'filename' => 'document.pdf',
+                            'file_data' => $fileContentVal // should be data:application/pdf;base64,...
+                        ]
+                    ];
+                } else {
+                    // Other files (doc, txt, etc.): use file content type
+                    // Ensure it has proper data URI prefix
+                    $fileData = $fileContentVal;
+                    if (!str_starts_with($fileData, 'data:')) {
+                        $mimeMap = [
+                            'txt' => 'text/plain',
+                            'doc' => 'application/msword',
+                            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'pdf' => 'application/pdf',
+                        ];
+                        $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
+                        $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
+                    }
+                    $parts[] = [
+                        'type' => 'file',
+                        'file' => [
+                            'filename' => 'file.' . $fileTypeVal,
+                            'file_data' => $fileData
+                        ]
+                    ];
+                }
+                
                 $messages[] = ['role' => $role, 'content' => $parts];
             } else {
                 $messages[] = ['role' => $role, 'content' => $row['content']];
@@ -216,12 +259,50 @@ class ChatService
 
         if ($newUserText !== null) {
             if ($fileContent !== null && $fileType !== null) {
-                $parts = [['type' => 'text', 'text' => $newUserText]];
-                if ($fileType === 'image') {
-                    $parts[] = ['type' => 'image_url', 'image_url' => ['url' => $fileContent]];
-                } else {
-                    $parts[0]['text'] .= "\n\n[فایل ضمیمه]\n{$fileContent}";
+                $parts = [];
+                
+                // Caption/text always goes first as text part
+                if (!empty(trim($newUserText))) {
+                    $parts[] = ['type' => 'text', 'text' => $newUserText];
                 }
+                
+                if ($fileType === 'image') {
+                    // Image: use image_url
+                    $parts[] = [
+                        'type' => 'image_url',
+                        'image_url' => ['url' => $fileContent]
+                    ];
+                } elseif (in_array($fileType, ['pdf', 'PDF'])) {
+                    // PDF: use file type with proper data URI
+                    $parts[] = [
+                        'type' => 'file',
+                        'file' => [
+                            'filename' => 'document.pdf',
+                            'file_data' => $fileContent
+                        ]
+                    ];
+                } else {
+                    // Other files: use file type
+                    $fileData = $fileContent;
+                    if (!str_starts_with($fileData, 'data:')) {
+                        $mimeMap = [
+                            'txt' => 'text/plain',
+                            'doc' => 'application/msword',
+                            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'pdf' => 'application/pdf',
+                        ];
+                        $mime = $mimeMap[$fileType] ?? 'application/octet-stream';
+                        $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
+                    }
+                    $parts[] = [
+                        'type' => 'file',
+                        'file' => [
+                            'filename' => 'file.' . $fileType,
+                            'file_data' => $fileData
+                        ]
+                    ];
+                }
+                
                 $messages[] = ['role' => 'user', 'content' => $parts];
             } else {
                 $messages[] = ['role' => 'user', 'content' => $newUserText];
@@ -232,11 +313,13 @@ class ChatService
     }
 
     /**
-     * Estimate file character cost for billing.
+     * Estimate file character cost for billing (used only as fallback).
+     * Primary billing uses actual tokens from OpenRouter API response.
      */
     public static function estimateFileChars(string $fileType, string $fileContent): int
     {
         if ($fileType === 'image') return 1000;
+        if (in_array($fileType, ['pdf', 'PDF'])) return 2000;
         return mb_strlen($fileContent);
     }
 
@@ -293,9 +376,11 @@ class ChatService
         $costUsd = 0.0;
         if (isset($r['usage']['cost'])) {
             $costUsd = (float)$r['usage']['cost'];
+        } elseif (isset($r['usage']['cost_details']['upstream_inference_cost'])) {
+            $costUsd = (float)$r['usage']['cost_details']['upstream_inference_cost'];
         }
 
-        // Extract token counts from API response
+        // Extract ACTUAL token counts from API response (not estimated!)
         $inputTokens = 0;
         $outputTokens = 0;
         if (isset($r['usage']['prompt_tokens'])) {
