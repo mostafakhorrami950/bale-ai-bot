@@ -606,15 +606,24 @@ class ChatHandler extends BaseHandler
         $localPath = $localDir . $safeFilename;
         file_put_contents($localPath, $rawFileContent);
 
-        // Generate public URL for OpenRouter to download the file directly
+        // Generate public URL for OpenRouter to fetch directly
         $baseUrl = \Core\Config::get('SITE_BASE_URL', 'https://mobixai.ir');
         $publicUrl = $baseUrl . '/uploads/tmp/' . $safeFilename;
 
+        // IMPORTANT: If the file is an image (jpg, jpeg, png, gif, webp),
+        // use 'image' type so buildMessagesFromHistory sends as 'image_url' not 'file'.
+        // Sending images as 'file' type causes Google Gemini "The document has no pages" error.
+        $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        $actualFileType = in_array($fileExtension, $imageExts) ? 'image' : $fileExtension;
+
         // Pass public URL as fileContent. buildMessagesFromHistory sends URL directly.
-        // Local file will be deleted after AI response completes.
-        $this->processChatMessage($chatId, $userId, $caption, $publicUrl, $fileExtension, $localPath);
+        $this->processChatMessage($chatId, $userId, $caption, $publicUrl, $actualFileType, $localPath);
     }
 
+    /**
+     * Download a file from Bale API by file_id.
+     * Returns null on failure or if file exceeds max_file_size_mb setting.
+     */
     private function downloadPhoto(string $fileId): ?string
     {
         $token = \Core\Config::get('BALE_BOT_TOKEN');
@@ -631,6 +640,25 @@ class ChatHandler extends BaseHandler
         curl_close($ch);
 
         if ($httpCode !== 200 || strlen($data ?? '') < 100) return null;
+
+        // Enforce max file size from settings
+        try {
+            $db = Database::getInstance();
+            $row = $db->query("SELECT value FROM settings WHERE key_name = 'max_file_size_mb'")->fetch();
+            $maxMb = (int)($row['value'] ?? 20);
+            if ($maxMb < 1) $maxMb = 20;
+            $maxBytes = $maxMb * 1024 * 1024;
+            if (strlen($data) > $maxBytes) {
+                \Core\AILogger::error('chat', 'File too large', ['size' => strlen($data), 'max' => $maxBytes]);
+                return null;
+            }
+        } catch (\Throwable $e) {
+            // Fallback: 20MB
+            if (strlen($data) > 20 * 1024 * 1024) {
+                return null;
+            }
+        }
+
         return $data;
     }
 

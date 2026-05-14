@@ -11,7 +11,7 @@ use Core\BotTextService;
 class Img2ImgHandler extends BaseHandler
 {
     private string $uploadDir;
-    private int $maxPhotos = 3;
+    private int $maxPhotos;
 
     public function __construct($baleClient)
     {
@@ -19,6 +19,16 @@ class Img2ImgHandler extends BaseHandler
         $this->uploadDir = BASE_PATH . '/uploads/tmp/';
         if (!is_dir($this->uploadDir)) {
             @mkdir($this->uploadDir, 0755, true);
+        }
+        // Read max_edit_photos from settings (default 3)
+        try {
+            $db = Database::getInstance();
+            $row = $db->query("SELECT value FROM settings WHERE key_name = 'max_edit_photos'")->fetch();
+            $this->maxPhotos = (int)($row['value'] ?? 3);
+            if ($this->maxPhotos < 1) $this->maxPhotos = 1;
+            if ($this->maxPhotos > 20) $this->maxPhotos = 20;
+        } catch (\Throwable $e) {
+            $this->maxPhotos = 3;
         }
     }
 

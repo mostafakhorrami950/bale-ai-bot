@@ -206,6 +206,23 @@ ob_start();
 
                 <hr>
 
+                <h6>📎 تنظیمات فایل و آپلود</h6>
+                <div class="mb-3">
+                    <label class="form-label">تعداد مجاز تصاویر در ویرایش عکس (max_edit_photos):</label>
+                    <input type="number" name="settings[max_edit_photos]" class="form-control" min="1" max="20"
+                           value="<?php echo htmlspecialchars($currentSettings['max_edit_photos'] ?? '3'); ?>">
+                    <div class="form-text">حداکثر تعداد تصاویری که کاربر می‌تواند برای ویرایش ارسال کند.</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">حداکثر حجم فایل بر حسب مگابایت (max_file_size_mb):</label>
+                    <input type="number" name="settings[max_file_size_mb]" class="form-control" min="1" max="50"
+                           value="<?php echo htmlspecialchars($currentSettings['max_file_size_mb'] ?? '20'); ?>">
+                    <div class="form-text">حداکثر حجم مجاز برای هر فایل آپلودی (PDF, تصویر و ...).</div>
+                </div>
+
+                <hr>
+
                 <h6>💰 روش‌های پرداخت</h6>
 
                 <div class="mb-3">
