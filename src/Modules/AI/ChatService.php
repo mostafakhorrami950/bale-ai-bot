@@ -189,7 +189,12 @@ class ChatService
                 $fileTypeVal = $row['file_type'];
                 $fileContentVal = $row['file_content'];
 
-                if ($fileTypeVal === 'image') {
+                // Detect if the file content is an image URL (http/https ending in image extension)
+                $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+                $isImageUrl = $fileTypeVal === 'image' ||
+                    (str_starts_with($fileContentVal, 'http') && in_array(strtolower(pathinfo(parse_url($fileContentVal, PHP_URL_PATH), PATHINFO_EXTENSION)), $imageExts));
+
+                if ($isImageUrl) {
                     // Image as URL (data URI or public HTTP URL)
                     $parts[] = [
                         'type' => 'image_url',
