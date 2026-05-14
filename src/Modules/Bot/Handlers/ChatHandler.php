@@ -699,11 +699,31 @@ class ChatHandler extends BaseHandler
 
         // Download file
         $fileId = $update->getDocumentFileId();
-        $fileContent = $this->downloadPhoto($fileId); // downloadPhoto works for any file download
-        if ($fileContent === null) {
+        $rawFileContent = $this->downloadPhoto($fileId); // downloadPhoto works for any file download
+        if ($rawFileContent === null) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_download_error'));
             return;
         }
+
+        // CRITICAL: Encode file as proper data URI for OpenRouter API
+        // OpenRouter requires PDFs and other files as data:application/pdf;base64,<base64> format
+        // (see: https://openrouter.ai/docs/inputs/pdf)
+        $mimeMap = [
+            'pdf' => 'application/pdf',
+            'txt' => 'text/plain',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            'csv' => 'text/csv',
+            'json' => 'application/json',
+            'xml' => 'application/xml',
+        ];
+        $mime = $mimeMap[$fileExtension] ?? 'application/octet-stream';
+        $fileContent = 'data:' . $mime . ';base64,' . base64_encode($rawFileContent);
 
         $this->processChatMessage($chatId, $userId, $caption, $fileContent, $fileExtension);
     }

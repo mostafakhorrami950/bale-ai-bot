@@ -213,11 +213,38 @@ class ChatService
                 $fileTypeVal = $row['file_type'];
                 $fileContentVal = $row['file_content'];
                 
+                $fileTypeVal = $row['file_type'];
+                $fileContentVal = $row['file_content'];
+                
+                // Build proper file data URI for OpenRouter
+                $fileData = $fileContentVal;
+                // If it's not already a data URI, convert raw binary to base64 data URI
+                if (!str_starts_with($fileData, 'data:')) {
+                    $mimeMap = [
+                        'image' => 'image/jpeg',
+                        'jpg' => 'image/jpeg',
+                        'jpeg' => 'image/jpeg',
+                        'png' => 'image/png',
+                        'gif' => 'image/gif',
+                        'webp' => 'image/webp',
+                        'pdf' => 'application/pdf',
+                        'PDF' => 'application/pdf',
+                        'txt' => 'text/plain',
+                        'doc' => 'application/msword',
+                        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'csv' => 'text/csv',
+                        'json' => 'application/json',
+                        'xml' => 'application/xml',
+                    ];
+                    $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
+                    $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
+                }
+                
                 if ($fileTypeVal === 'image') {
                     // Image: use image_url content type with data URI
                     $parts[] = [
                         'type' => 'image_url',
-                        'image_url' => ['url' => $fileContentVal]
+                        'image_url' => ['url' => $fileData]
                     ];
                 } elseif (in_array($fileTypeVal, ['pdf', 'PDF'])) {
                     // PDF: use file content type with filename + base64 data URI
@@ -225,23 +252,11 @@ class ChatService
                         'type' => 'file',
                         'file' => [
                             'filename' => 'document.pdf',
-                            'file_data' => $fileContentVal // should be data:application/pdf;base64,...
+                            'file_data' => $fileData
                         ]
                     ];
                 } else {
                     // Other files (doc, txt, etc.): use file content type
-                    // Ensure it has proper data URI prefix
-                    $fileData = $fileContentVal;
-                    if (!str_starts_with($fileData, 'data:')) {
-                        $mimeMap = [
-                            'txt' => 'text/plain',
-                            'doc' => 'application/msword',
-                            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'pdf' => 'application/pdf',
-                        ];
-                        $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
-                        $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
-                    }
                     $parts[] = [
                         'type' => 'file',
                         'file' => [
