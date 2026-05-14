@@ -34,19 +34,16 @@ class ChatHandler extends BaseHandler
 
             $state = $this->getUserState($userId);
 
-            // ─── PRIORITY COMMANDS ───
             if ($text === '/exit' || $text === '🚪 خروج') {
                 $this->exitChat($chatId, $userId);
                 return;
             }
 
-            // ─── ENTRY ───
             if ($callbackData === 'start_chat' || $text === '💬 گفتگوی هوش') {
                 $this->showChatMenu($chatId, $userId);
                 return;
             }
 
-            // ─── CALLBACK HANDLING ───
             if ($update->isCallback() && is_string($callbackData)) {
                 if ($callbackData === 'chat_use_default') {
                     if (!$this->checkMembership($userId, $chatId)) return;
@@ -87,16 +84,13 @@ class ChatHandler extends BaseHandler
                 }
             }
 
-            // ─── STATE: viewing history → re-show (safety) ───
             if ($state === 'chat_viewing_history') {
                 $this->showConversationHistory($chatId, $userId);
                 return;
             }
 
-            // ─── STATE: in active conversation ───
             if ($state === 'chat_active') {
                 if (!$this->checkMembership($userId, $chatId)) return;
-                // File upload (photo or document)
                 if ($update->hasPhoto()) {
                     $this->handlePhotoInChat($chatId, $userId, $update, $text);
                     return;
@@ -113,13 +107,11 @@ class ChatHandler extends BaseHandler
                 return;
             }
 
-            // ─── STATE: selecting model → re-show list ───
             if ($state === 'chat_selecting_model') {
                 $this->showChatModelList($chatId, $userId);
                 return;
             }
 
-            // ─── FALLBACK ───
             $this->baleClient->sendMessage($chatId, "🤖 لطفاً از منوی زیر انتخاب کنید:", $this->getChatEntryKeyboard());
 
         } catch (\Throwable $e) {
@@ -129,10 +121,6 @@ class ChatHandler extends BaseHandler
             }
         }
     }
-
-    // ─────────────────────────────────────────────
-    //   ENTRY POINTS
-    // ─────────────────────────────────────────────
 
     private function showChatMenu(int $chatId, int $userId): void
     {
@@ -167,38 +155,29 @@ class ChatHandler extends BaseHandler
         try {
             $db = Database::getInstance();
             $models = $db->query("SELECT id, name, display_name, description, provider, cost_per_input_char, cost_per_output_char, free_model FROM ai_text_models WHERE is_active = 1 ORDER BY sort_order ASC, free_model DESC, id ASC")->fetchAll();
-
             if (empty($models)) {
                 $this->baleClient->sendMessage($chatId, BotTextService::get('chat_model_list_error'));
                 return;
             }
-
             $msg = BotTextService::get('chat_model_list_title');
             $keyboard = ['inline_keyboard' => []];
-
             foreach ($models as $m) {
                 $displayName = $m['display_name'] ?? $m['name'];
                 $desc = $m['description'] ?? '';
                 $free = $m['free_model'] ? '🆓 رایگان' : '';
                 $inCost = $m['cost_per_input_char'] ?? 0;
                 $outCost = $m['cost_per_output_char'] ?? 0;
-                
-                // Show description + cost in message body
                 $msg .= "• {$displayName}";
                 if ($free) $msg .= " ({$free})";
                 $msg .= "\n  💰 ورودی: {$inCost}/char | خروجی: {$outCost}/char";
                 if ($desc) $msg .= "\n  📌 {$desc}";
                 $msg .= "\n\n";
-                
-                // Button: only display_name
                 $keyboard['inline_keyboard'][] = [[
                     'text' => $displayName,
                     'callback_data' => "chat_pick_model_{$m['id']}"
                 ]];
             }
-
             $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'start_chat']];
-
             $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'chat_selecting_model')", [$internalId]);
             $this->baleClient->sendMessage($chatId, $msg, $keyboard);
         } catch (\Throwable $e) {
@@ -210,37 +189,23 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
-
         $db = Database::getInstance();
         $model = $db->query("SELECT * FROM ai_text_models WHERE id = ? AND is_active = 1", [$modelId])->fetch();
-
         if (!$model) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_model_not_found'));
             return;
         }
-
         $this->createAndStartConversation($chatId, $internalId, $userId, $model);
     }
-
-    // ─────────────────────────────────────────────
-    //   CONVERSATION MANAGEMENT
-    // ─────────────────────────────────────────────
 
     private function createAndStartConversation(int $chatId, int $internalId, int $baleUserId, array $model): void
     {
         $db = Database::getInstance();
         $modelName = $model['name'];
         $provider = $model['provider'] ?? 'openrouter';
-
-        // Create conversation
         $title = 'مکالمه ' . date('Y-m-d H:i');
-        $db->query(
-            "INSERT INTO chat_conversations (user_id, model, title) VALUES (?, ?, ?)",
-            [$internalId, $modelName, $title]
-        );
+        $db->query("INSERT INTO chat_conversations (user_id, model, title) VALUES (?, ?, ?)", [$internalId, $modelName, $title]);
         $convId = $db->lastInsertId();
-
-        // Set bot state
         $extra = json_encode([
             'conv_id' => $convId,
             'model_id' => (int)$model['id'],
@@ -248,15 +213,12 @@ class ChatHandler extends BaseHandler
             'provider' => $provider,
         ]);
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'chat_active', ?)", [$internalId, $extra]);
-
         $free = $model['free_model'] ? '🆓 رایگان' : '';
         $inCost = $model['cost_per_input_char'] ?? 0;
         $outCost = $model['cost_per_output_char'] ?? 0;
         $formats = $model['supported_formats'] ?? 'txt,doc,pdf,jpg,jpeg,png,gif,webp';
         $displayName = $model['display_name'] ?? $modelName;
-
         $freeText = $free ? "  🆓 این مدل رایگان است\n" : '';
-
         $msg = BotTextService::get('chat_conversation_started', [
             'display_name' => $displayName,
             'in_cost' => $inCost,
@@ -264,7 +226,6 @@ class ChatHandler extends BaseHandler
             'free_text' => $freeText,
             'formats' => $formats,
         ]);
-
         $this->baleClient->sendMessage($chatId, $msg, $this->getChatActiveKeyboard());
     }
 
@@ -272,17 +233,14 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
-
         $db = Database::getInstance();
         $conv = $db->query("SELECT * FROM chat_conversations WHERE id = ? AND user_id = ?", [$convId, $internalId])->fetch();
         if (!$conv) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_conversation_not_found'));
             return;
         }
-
         $modelName = $conv['model'];
         $model = $db->query("SELECT * FROM ai_text_models WHERE name = ? AND is_active = 1", [$modelName])->fetch();
-
         $extra = json_encode([
             'conv_id' => $convId,
             'model_id' => $model ? (int)$model['id'] : 0,
@@ -290,40 +248,25 @@ class ChatHandler extends BaseHandler
             'provider' => $model['provider'] ?? 'openrouter',
         ]);
         $db->query("REPLACE INTO bot_state (user_id, state, extra_data) VALUES (?, 'chat_active', ?)", [$internalId, $extra]);
-
-        // Get ALL messages, build a 4096-char summary from the end
-        $allMsgs = $db->query(
-            "SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC",
-            [$convId]
-        )->fetchAll();
-
+        $allMsgs = $db->query("SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC", [$convId])->fetchAll();
         $summary = BotTextService::get('chat_resume_header');
-        $maxLen = 4096 - 200; // reserve space for header/footer
+        $maxLen = 4096 - 200;
         $lines = [];
         $totalLen = 0;
-
-        // Process from newest to oldest
         foreach (array_reverse($allMsgs) as $m) {
             $label = $m['role'] === 'user' ? '(شما)' : '(AI)';
             $content = trim($m['content'] ?? '');
-            // Truncate very long individual messages
             if (mb_strlen($content) > 500) {
                 $content = mb_substr($content, 0, 500) . '...';
             }
             $line = "{$label}: {$content}\n";
             $lineLen = mb_strlen($line);
-
-            if ($totalLen + $lineLen > $maxLen) {
-                break; // stop adding older messages
-            }
-
-            array_unshift($lines, $line); // prepend so oldest-first order
+            if ($totalLen + $lineLen > $maxLen) break;
+            array_unshift($lines, $line);
             $totalLen += $lineLen;
         }
-
         $summary .= implode('', $lines);
         $summary .= BotTextService::get('chat_resume_footer');
-
         $this->baleClient->sendMessage($chatId, $summary, $this->getChatActiveKeyboard());
     }
 
@@ -331,10 +274,8 @@ class ChatHandler extends BaseHandler
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
-
         $db = Database::getInstance();
         $db->query("DELETE FROM chat_conversations WHERE id = ? AND user_id = ?", [$convId, $internalId]);
-
         $this->baleClient->sendMessage($chatId, BotTextService::get('chat_conversation_deleted'));
         $this->showConversationHistory($chatId, $userId);
     }
@@ -357,12 +298,9 @@ class ChatHandler extends BaseHandler
         $this->baleClient->sendMessage($chatId, BotTextService::get('chat_exit_message'));
     }
 
-    // ─────────────────────────────────────────────
-    //   PROCESS MESSAGES
-    // ─────────────────────────────────────────────
-
-    private function processChatMessage(int $chatId, int $userId, string $text, ?string $fileContent, ?string $fileType): void
+    private function processChatMessage(int $chatId, int $userId, string $text, ?string $fileContent, ?string $fileType, ?string $localFilePath = null): void
     {
+
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) {
             \Core\AILogger::error('chat', 'resolveUserId failed', ['bale_user_id' => $userId]);
@@ -378,26 +316,14 @@ class ChatHandler extends BaseHandler
         $modelName = $extra['model_name'] ?? '';
         $provider = $extra['provider'] ?? 'openrouter';
 
-        \Core\AILogger::log('CHAT_PROCESS', [
-            'internal_id' => $internalId,
-            'conv_id' => $convId,
-            'model_id' => $modelId,
-            'model_name' => $modelName,
-            'provider' => $provider,
-            'text_len' => mb_strlen($text),
-        ]);
-
         if (!$convId || !$modelId) {
             \Core\AILogger::error('chat', 'Missing conv_id or model_id', $extra);
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_state_error'));
             return;
         }
 
-        // Get model cost settings from text models table
         $model = $db->query("SELECT * FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
         if (!$model) {
-            \Core\AILogger::error('chat', 'Model not found in ai_text_models', ['model_id' => $modelId, 'model_name' => $modelName]);
-            // Fallback: use state data
             $model = [
                 'id' => $modelId,
                 'name' => $modelName,
@@ -411,9 +337,7 @@ class ChatHandler extends BaseHandler
         $costPerInput = (float)($model['cost_per_input_char'] ?? 0);
         $costPerOutput = (float)($model['cost_per_output_char'] ?? 0);
         $freeModel = (int)($model['free_model'] ?? 0);
-        $modelProvider = $model['provider'] ?? 'openrouter';
 
-        // Calculate cost estimate for initial credit check (will be adjusted after we get actual tokens from API)
         $fileChars = 0;
         if ($fileContent !== null && $fileType !== null) {
             $fileChars = ChatService::estimateFileChars($fileType, $fileContent);
@@ -421,7 +345,6 @@ class ChatHandler extends BaseHandler
         $inputChars = mb_strlen($text) + $fileChars;
         $inputCost = $freeModel ? 0 : ChatService::calcCreditCost($inputChars, $costPerInput);
 
-        // Deduct estimated input credits (refund/adjust after actual token count from OpenRouter)
         if (!$freeModel && $inputCost > 0) {
             if (!CreditService::hasEnoughCredit($internalId, $inputCost)) {
                 $buyCreditKeyboard = [
@@ -439,15 +362,12 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save user message with model_name (backward-compatible with/without model_name column)
         try {
             $db->query(
                 "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits, model_name) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0, ?)",
                 [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost, $modelName]
             );
         } catch (\Throwable $e) {
-            error_log("ChatHandler INSERT user msg failed (model_name): " . $e->getMessage() . " | modelName=" . var_export($modelName, true) . " | convId=$convId");
-            // Fallback: table may not have model_name column yet
             $db->query(
                 "INSERT INTO chat_messages (conversation_id, role, content, file_type, file_content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'user', ?, ?, ?, ?, 0, ?, 0)",
                 [$convId, $text, $fileType, $fileContent, $inputChars, $inputCost]
@@ -456,36 +376,26 @@ class ChatHandler extends BaseHandler
 
         $loadingMsgId = $this->baleClient->sendMessage($chatId, BotTextService::get('chat_processing'));
 
-        // Build messages for OpenRouter
         $history = $db->query(
             "SELECT role, content, file_type, file_content FROM chat_messages WHERE conversation_id = ? ORDER BY id ASC",
             [$convId]
         )->fetchAll();
 
-        // ─── MEMORY MODULE: Inject memory context before AI call ───
         $memoryManager = null;
         try {
             $memoryManager = new MemoryManager();
             $memoryHooks = new MemoryHooks($memoryManager);
-            
-            // Build messages from history first
             $orMessages = ChatService::buildMessagesFromHistory($history);
-            
-            // Get or create system prompt for memory context
             $systemPrompt = '';
             $filteredHistory = array_filter($history, fn($h) => $h['role'] === 'system');
             if (!empty($filteredHistory)) {
                 $firstSystem = reset($filteredHistory);
                 $systemPrompt = $firstSystem['content'] ?? '';
             }
-            
-            // Inject memory context ONLY ONCE per conversation (convKey tracks it)
             if (!empty($text)) {
                 $convKey = 'conv_' . ($convId ?? 0);
                 $memoryHooks->onBeforeChatRequest($internalId, $systemPrompt, $convKey);
             }
-            
-            // If system prompt was modified (memory added), prepend it
             if (!empty($systemPrompt)) {
                 $orMessages = array_merge(
                     [['role' => 'system', 'content' => $systemPrompt]],
@@ -497,13 +407,16 @@ class ChatHandler extends BaseHandler
             $orMessages = ChatService::buildMessagesFromHistory($history);
         }
 
-        // Send to OpenRouter
         $chatService = new ChatService();
         $result = $chatService->chat($orMessages, $modelName, $model);
 
+        // Delete temp file after use (cleanup)
+        if ($localFilePath && file_exists($localFilePath)) {
+            @unlink($localFilePath);
+        }
+
         if (isset($result['error'])) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $result['error']);
-            // Refund input cost
             if (!$freeModel && $inputCost > 0) {
                 CreditService::addCredits($internalId, $inputCost, 'chat_refund_' . $convId . '_' . time());
             }
@@ -512,41 +425,28 @@ class ChatHandler extends BaseHandler
 
         $responseText = $result['response'];
         $outputChars = $result['output_chars'];
-
-        // Use actual cost from OpenRouter API response (usage.cost in USD)
-        // Convert USD to Toman using dollar_rate + profit_margin from settings
         $actualCostUsd = (float)($result['cost_usd'] ?? 0);
         $outputCost = 0;
 
         if ($freeModel) {
-            // Free model — no charge
             $outputCost = 0;
         } elseif ($actualCostUsd > 0) {
-            // API returned actual cost — use it for precise billing
-            // Get dollar_rate and profit_margin from settings
             $settingsRow = $db->query("SELECT value FROM settings WHERE key_name = 'dollar_rate'")->fetch();
             $dollarRate = (float)($settingsRow['value'] ?? 231000);
             $settingsRow = $db->query("SELECT value FROM settings WHERE key_name = 'profit_margin_percent'")->fetch();
             $profitPercent = (float)($settingsRow['value'] ?? 25);
-
-            // Convert USD to Toman: cost_usd * dollar_rate * (1 + profit_margin/100)
-            // Then convert Toman to credits (1 credit = 1000 Toman)
             $costToman = $actualCostUsd * $dollarRate * (1 + $profitPercent / 100);
             $outputCost = round($costToman / 1000, 6);
         } else {
-            // Fallback: API did not return cost (e.g. GapGPT, MetisAI)
-            // Use char-based calculation as before
             $outputCost = $freeModel ? 0 : ChatService::calcCreditCost($outputChars, $costPerOutput);
         }
 
-        // Deduct output cost
         if (!$freeModel && $outputCost > 0) {
             $refOut = 'chat_out_' . $convId . '_' . time();
             CreditService::deduct($internalId, $outputCost, $refOut);
         }
 
-        // ─── MEMORY MODULE: Process after AI response ───
-        // Skip memory summarization when user sent a file (no useful info to extract from file name)
+        // Skip memory summarization when user sent a file
         if ($memoryManager && $memoryManager->isEnabled() && $fileContent === null) {
             try {
                 $memoryHooks->onAfterChatResponse($internalId, $text);
@@ -555,7 +455,6 @@ class ChatHandler extends BaseHandler
             }
         }
 
-        // Save assistant message with model_name, actual_cost_usd, and token counts (backward-compatible)
         $inputTokens = (int)($result['input_tokens'] ?? 0);
         $outputTokens = (int)($result['output_tokens'] ?? 0);
         try {
@@ -564,50 +463,36 @@ class ChatHandler extends BaseHandler
                 [$convId, $responseText, $outputChars, $outputCost, $modelName, $actualCostUsd, $inputTokens, $outputTokens]
             );
         } catch (\Throwable $e) {
-            // Fallback: table may not have new columns yet
             $db->query(
                 "INSERT INTO chat_messages (conversation_id, role, content, input_chars, output_chars, cost_input_credits, cost_output_credits) VALUES (?, 'assistant', ?, 0, ?, 0, ?)",
                 [$convId, $responseText, $outputChars, $outputCost]
             );
         }
 
-        // Update conversation totals
         $db->query(
-            "UPDATE chat_conversations SET 
-                total_input_chars = total_input_chars + ?,
-                total_output_chars = total_output_chars + ?,
-                total_cost_credits = total_cost_credits + ? + ?
-             WHERE id = ?",
+            "UPDATE chat_conversations SET total_input_chars = total_input_chars + ?, total_output_chars = total_output_chars + ?, total_cost_credits = total_cost_credits + ? + ? WHERE id = ?",
             [$inputChars, $outputChars, $inputCost, $outputCost, $convId]
         );
 
-        // Auto-title on first exchange
         $msgCount = $db->query("SELECT COUNT(*) as c FROM chat_messages WHERE conversation_id = ?", [$convId])->fetch()['c'] ?? 0;
         if ($msgCount <= 2) {
             $shortTitle = mb_substr($text, 0, 50) . (mb_strlen($text) > 50 ? '...' : '');
             $db->query("UPDATE chat_conversations SET title = ? WHERE id = ?", [$shortTitle, $convId]);
         }
 
-        // Delete loading message
         if ($loadingMsgId !== false) {
             $this->baleClient->deleteMessage($chatId, $loadingMsgId);
         }
 
-        // Send response
         $costMsg = $freeModel ? '' : BotTextService::get('chat_cost_summary', ['input_cost' => $inputCost, 'output_cost' => $outputCost, 'total_cost' => ($inputCost + $outputCost)]);
         $fullMsg = mb_substr($responseText, 0, 3800) . $costMsg;
         $this->baleClient->sendMessage($chatId, $fullMsg, $this->getChatActiveKeyboard());
 
-        // If response is long, send remaining
         if (mb_strlen($responseText) > 3800) {
             $remaining = mb_substr($responseText, 3800);
             $this->baleClient->sendMessage($chatId, $remaining);
         }
     }
-
-    // ─────────────────────────────────────────────
-    //   FILE HANDLING
-    // ─────────────────────────────────────────────
 
     private function handlePhotoInChat(int $chatId, int $userId, $update, ?string $caption): void
     {
@@ -616,18 +501,15 @@ class ChatHandler extends BaseHandler
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
             return;
         }
-
         $db = Database::getInstance();
         $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
         $extra = json_decode($stateData['extra_data'] ?? '{}', true);
         $modelId = (int)($extra['model_id'] ?? 0);
 
-        // Validate file format against model's supported_formats
         if ($modelId > 0) {
             $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
             if ($model && !empty($model['supported_formats'])) {
                 $formats = explode(',', strtolower($model['supported_formats']));
-                // Check for image formats
                 $supportedImage = array_intersect($formats, ['jpg', 'jpeg', 'png', 'gif', 'webp']);
                 if (empty($supportedImage)) {
                     $this->baleClient->sendMessage($chatId, BotTextService::get('chat_photo_format_error', ['formats' => $model['supported_formats']]));
@@ -638,31 +520,27 @@ class ChatHandler extends BaseHandler
 
         $fileId = $update->getPhotoFileId();
         $caption = trim($caption ?? '');
-
         if (empty($caption)) {
             $caption = BotTextService::get('chat_photo_caption');
         }
 
-        // Download photo
         $fileContent = $this->downloadPhoto($fileId);
         if ($fileContent === null) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_photo_error'));
             return;
         }
 
-        // Detect mime
         $mime = 'image/jpeg';
         $first = substr($fileContent, 0, 4);
         if (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
         elseif (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
 
         $dataUri = 'data:' . $mime . ';base64,' . base64_encode($fileContent);
-
         $this->processChatMessage($chatId, $userId, $caption, $dataUri, 'image');
     }
 
     /**
-     * Handle document/file upload in chat — validates extension against model's supported_formats.
+     * Handle document/file upload — save to server, send public URL to OpenRouter, delete after response.
      */
     private function handleDocumentInChat(int $chatId, int $userId, $update, ?string $caption): void
     {
@@ -680,7 +558,6 @@ class ChatHandler extends BaseHandler
         $fileName = $update->getDocumentFileName() ?? '';
         $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
 
-        // Validate file extension against model's supported_formats
         if ($modelId > 0 && !empty($fileExtension)) {
             $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
             if ($model && !empty($model['supported_formats'])) {
@@ -697,35 +574,29 @@ class ChatHandler extends BaseHandler
             $caption = BotTextService::get('chat_file_caption', ['filename' => $fileName]);
         }
 
-        // Download file
         $fileId = $update->getDocumentFileId();
-        $rawFileContent = $this->downloadPhoto($fileId); // downloadPhoto works for any file download
+        $rawFileContent = $this->downloadPhoto($fileId);
         if ($rawFileContent === null) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_download_error'));
             return;
         }
 
-        // CRITICAL: Encode file as proper data URI for OpenRouter API
-        // OpenRouter requires PDFs and other files as data:application/pdf;base64,<base64> format
-        // (see: https://openrouter.ai/docs/inputs/pdf)
-        $mimeMap = [
-            'pdf' => 'application/pdf',
-            'txt' => 'text/plain',
-            'doc' => 'application/msword',
-            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'jpg' => 'image/jpeg',
-            'jpeg' => 'image/jpeg',
-            'png' => 'image/png',
-            'gif' => 'image/gif',
-            'webp' => 'image/webp',
-            'csv' => 'text/csv',
-            'json' => 'application/json',
-            'xml' => 'application/xml',
-        ];
-        $mime = $mimeMap[$fileExtension] ?? 'application/octet-stream';
-        $fileContent = 'data:' . $mime . ';base64,' . base64_encode($rawFileContent);
+        // Save to temp public directory with unique name
+        $safeFilename = uniqid('file_', true) . '.' . $fileExtension;
+        $localDir = BASE_PATH . '/uploads/tmp/';
+        if (!is_dir($localDir)) {
+            @mkdir($localDir, 0755, true);
+        }
+        $localPath = $localDir . $safeFilename;
+        file_put_contents($localPath, $rawFileContent);
 
-        $this->processChatMessage($chatId, $userId, $caption, $fileContent, $fileExtension);
+        // Generate public URL for OpenRouter to download the file directly
+        $baseUrl = \Core\Config::get('SITE_BASE_URL', 'https://mobixai.ir');
+        $publicUrl = $baseUrl . '/uploads/tmp/' . $safeFilename;
+
+        // Pass public URL as fileContent. buildMessagesFromHistory sends URL directly.
+        // Local file will be deleted after AI response completes.
+        $this->processChatMessage($chatId, $userId, $caption, $publicUrl, $fileExtension, $localPath);
     }
 
     private function downloadPhoto(string $fileId): ?string
@@ -747,25 +618,17 @@ class ChatHandler extends BaseHandler
         return $data;
     }
 
-    // ─────────────────────────────────────────────
-    //   HISTORY
-    // ─────────────────────────────────────────────
-
     private function showConversationHistory(int $chatId, int $userId, int $page = 0): void
     {
         $internalId = $this->resolveUserId($userId);
         if (!$internalId) return;
 
         $db = Database::getInstance();
-
-        // Get per-page limit from settings (default 10)
         $limitRow = $db->query("SELECT value FROM settings WHERE key_name = 'chat_history_per_page'")->fetch();
         $perPage = (int)($limitRow['value'] ?? 10);
         if ($perPage < 1) $perPage = 10;
 
         $offset = $page * $perPage;
-
-        // Count total
         $countRow = $db->query("SELECT COUNT(*) as c FROM chat_conversations WHERE user_id = ?", [$internalId])->fetch();
         $total = (int)($countRow['c'] ?? 0);
         $totalPages = max(1, (int)ceil($total / $perPage));
@@ -777,20 +640,13 @@ class ChatHandler extends BaseHandler
 
         $convs = $db->query(
             "SELECT id, model, title, total_input_chars, total_output_chars, total_cost_credits, status, 
-                    (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = chat_conversations.id) as msg_count,
-                    created_at 
-             FROM chat_conversations 
-             WHERE user_id = ? 
-             ORDER BY updated_at DESC 
-             LIMIT ? OFFSET ?",
+                    (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = chat_conversations.id) as msg_count, created_at 
+             FROM chat_conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             [$internalId, $perPage, $offset]
         )->fetchAll();
 
         if (empty($convs)) {
-            $this->baleClient->sendMessage($chatId,
-                BotTextService::get('chat_history_empty'),
-                $this->getChatEntryKeyboard()
-            );
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_history_empty'), $this->getChatEntryKeyboard());
             return;
         }
 
@@ -804,36 +660,28 @@ class ChatHandler extends BaseHandler
             $msgCount = $c['msg_count'];
             $cost = $c['total_cost_credits'];
             $created = substr($c['created_at'], 0, 16);
-
             $msg .= "{$icon} **{$title}**\n  مدل: {$model} | {$msgCount} پیام | {$cost} اعتبار\n  {$created}\n\n";
-
             $keyboard['inline_keyboard'][] = [
                 ['text' => "▶️ {$title}", 'callback_data' => "chat_resume_{$c['id']}"]
             ];
         }
 
-        // Pagination row
         $navRow = [];
         if ($page > 0) {
             $navRow[] = ['text' => '◀️ قبلی', 'callback_data' => 'chat_history_page_' . ($page - 1)];
         }
-        $navRow[] = ['text' => "📄 {$page}/{$totalPages}", 'callback_data' => 'chat_history'];
+        $navRow[] = ['text' => "📄 " . ($page + 1) . "/{$totalPages}", 'callback_data' => 'chat_history'];
         if ($page + 1 < $totalPages) {
             $navRow[] = ['text' => 'بعدی ▶️', 'callback_data' => 'chat_history_page_' . ($page + 1)];
         }
         if (!empty($navRow)) {
             $keyboard['inline_keyboard'][] = $navRow;
         }
-
         $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'start_chat']];
 
         $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'chat_viewing_history')", [$internalId]);
         $this->baleClient->sendMessage($chatId, $msg, $keyboard);
     }
-
-    // ─────────────────────────────────────────────
-    //   KEYBOARDS
-    // ─────────────────────────────────────────────
 
     private function getChatEntryKeyboard(): array
     {
@@ -854,10 +702,6 @@ class ChatHandler extends BaseHandler
         ];
     }
 
-    // ─────────────────────────────────────────────
-    //   HELPERS
-    // ─────────────────────────────────────────────
-
     private function resolveUserId(int $baleUserId): ?int
     {
         try {
@@ -872,12 +716,7 @@ class ChatHandler extends BaseHandler
     {
         try {
             $db = Database::getInstance();
-            $stmt = $db->query(
-                "SELECT bs.state FROM bot_state bs 
-                 JOIN users u ON bs.user_id = u.id 
-                 WHERE u.bale_user_id = ?",
-                [$baleUserId]
-            );
+            $stmt = $db->query("SELECT bs.state FROM bot_state bs JOIN users u ON bs.user_id = u.id WHERE u.bale_user_id = ?", [$baleUserId]);
             $row = $stmt->fetch();
             return $row['state'] ?? null;
         } catch (\Throwable $e) { return null; }

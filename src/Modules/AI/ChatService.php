@@ -6,13 +6,6 @@ use Core\Config;
 use Database\Database;
 use Database\Logger;
 
-/**
- * ChatService — handles multi-provider chat completions (text models only).
- * Supports: OpenRouter, GapGPT (OpenAI-compatible), MetisAI Wrapper.
- *
- * Provider is determined from ai_models.provider, not hardcoded.
- * API keys come from .env (OPENROUTER_API_KEY, GAPGPT_API_KEY, METISAI_API_KEY).
- */
 class ChatService
 {
     private const PROVIDERS = [
@@ -29,13 +22,10 @@ class ChatService
         'metisai' => [
             'base_url' => 'https://api.metisai.ir/api/v1',
             'key_env'  => 'METISAI_API_KEY',
-            'endpoint' => '/wrapper/',  // + {provider_name}/chat/completions
+            'endpoint' => '/wrapper/',
         ],
     ];
 
-    /**
-     * Build the appropriate API endpoint URL based on provider.
-     */
     private function buildEndpoint(string $provider, array $modelData): string
     {
         $provider = strtolower($provider);
@@ -50,9 +40,6 @@ class ChatService
         return $cfg['base_url'] . $cfg['endpoint'];
     }
 
-    /**
-     * Get the API key for a given provider.
-     */
     private function getApiKey(string $provider): string
     {
         $provider = strtolower($provider);
@@ -64,9 +51,6 @@ class ChatService
         return $key;
     }
 
-    /**
-     * Send a chat prompt and get the AI response.
-     */
     public function chat(array $messages, string $model, array $modelData): array
     {
         $provider = strtolower($modelData['provider'] ?? 'openrouter');
@@ -91,7 +75,7 @@ class ChatService
             'stream'     => false,
         ];
 
-        // Add plugins for PDF processing (OpenRouter only)
+        // Add plugins for PDF file processing (OpenRouter only — let OpenRouter handle the URL)
         if ($provider === 'openrouter') {
             $hasPdf = false;
             foreach ($messages as $msg) {
@@ -106,7 +90,7 @@ class ChatService
             }
             if ($hasPdf) {
                 $payload['plugins'] = [
-                    ['id' => 'file-parser', 'pdf' => ['engine' => 'cloudflare-ai']]
+                    ['id' => 'file-parser', 'pdf' => ['engine' => 'mistral-ocr']]
                 ];
             }
         }
@@ -170,10 +154,6 @@ class ChatService
         ];
     }
 
-    /**
-     * Calculate credit cost for input/output chars based on model settings.
-     * Returns float for sub-credit precision (per-character billing).
-     */
     public static function calcCreditCost(int $chars, float $costPerChar): float
     {
         if ($costPerChar <= 0 || $chars <= 0) return 0.0;
@@ -181,12 +161,10 @@ class ChatService
     }
 
     /**
-     * Build OpenRouter-compatible messages from DB chat_messages rows.
+     * Build messages for OpenRouter.
      * 
-     * IMPORTANT: According to OpenRouter multimodal docs:
-     * - Images: use type 'image_url' with base64 data URI
-     * - PDFs: use type 'file' with filename + file_data (base64 data:application/pdf;base64,...)
-     * - Other files (doc, txt, etc.): use type 'file' 
+     * Files (PDF, doc, txt, etc.) are sent as public URLs if they start with 'http'.
+     * Images are sent as data:image URIs.
      */
     public static function buildMessagesFromHistory(array $rows, string $newUserText = null, string $fileContent = null, string $fileType = null): array
     {
@@ -203,69 +181,47 @@ class ChatService
 
             if (!empty($row['file_type']) && !empty($row['file_content'])) {
                 $parts = [];
-                
-                // Always add text caption first (even if empty, provide context)
                 $caption = trim($row['content'] ?? '');
                 if (!empty($caption)) {
                     $parts[] = ['type' => 'text', 'text' => $caption];
                 }
-                
+
                 $fileTypeVal = $row['file_type'];
                 $fileContentVal = $row['file_content'];
-                
-                $fileTypeVal = $row['file_type'];
-                $fileContentVal = $row['file_content'];
-                
-                // Build proper file data URI for OpenRouter
-                $fileData = $fileContentVal;
-                // If it's not already a data URI, convert raw binary to base64 data URI
-                if (!str_starts_with($fileData, 'data:')) {
+
+                if ($fileTypeVal === 'image') {
+                    // Image as data URI
+                    $parts[] = [
+                        'type' => 'image_url',
+                        'image_url' => ['url' => $fileContentVal]
+                    ];
+                } elseif (str_starts_with($fileContentVal, 'http')) {
+                    // File as public URL - use file type with URL
                     $mimeMap = [
-                        'image' => 'image/jpeg',
-                        'jpg' => 'image/jpeg',
-                        'jpeg' => 'image/jpeg',
-                        'png' => 'image/png',
-                        'gif' => 'image/gif',
-                        'webp' => 'image/webp',
                         'pdf' => 'application/pdf',
-                        'PDF' => 'application/pdf',
                         'txt' => 'text/plain',
                         'doc' => 'application/msword',
                         'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                        'csv' => 'text/csv',
-                        'json' => 'application/json',
-                        'xml' => 'application/xml',
                     ];
                     $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
-                    $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
-                }
-                
-                if ($fileTypeVal === 'image') {
-                    // Image: use image_url content type with data URI
-                    $parts[] = [
-                        'type' => 'image_url',
-                        'image_url' => ['url' => $fileData]
-                    ];
-                } elseif (in_array($fileTypeVal, ['pdf', 'PDF'])) {
-                    // PDF: use file content type with filename + base64 data URI
                     $parts[] = [
                         'type' => 'file',
                         'file' => [
-                            'filename' => 'document.pdf',
-                            'file_data' => $fileData
+                            'filename' => 'document.' . $fileTypeVal,
+                            'file_data' => $fileContentVal
                         ]
                     ];
                 } else {
-                    // Other files (doc, txt, etc.): use file content type
+                    // Data URI file
                     $parts[] = [
                         'type' => 'file',
                         'file' => [
-                            'filename' => 'file.' . $fileTypeVal,
-                            'file_data' => $fileData
+                            'filename' => 'document.' . $fileTypeVal,
+                            'file_data' => $fileContentVal
                         ]
                     ];
                 }
-                
+
                 $messages[] = ['role' => $role, 'content' => $parts];
             } else {
                 $messages[] = ['role' => $role, 'content' => $row['content']];
@@ -275,49 +231,41 @@ class ChatService
         if ($newUserText !== null) {
             if ($fileContent !== null && $fileType !== null) {
                 $parts = [];
-                
-                // Caption/text always goes first as text part
                 if (!empty(trim($newUserText))) {
                     $parts[] = ['type' => 'text', 'text' => $newUserText];
                 }
-                
+
                 if ($fileType === 'image') {
-                    // Image: use image_url
                     $parts[] = [
                         'type' => 'image_url',
                         'image_url' => ['url' => $fileContent]
                     ];
-                } elseif (in_array($fileType, ['pdf', 'PDF'])) {
-                    // PDF: use file type with proper data URI
+                } elseif (str_starts_with($fileContent, 'http')) {
+                    // Public URL file
+                    $mimeMap = [
+                        'pdf' => 'application/pdf',
+                        'txt' => 'text/plain',
+                        'doc' => 'application/msword',
+                        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    ];
+                    $mime = $mimeMap[$fileType] ?? 'application/octet-stream';
                     $parts[] = [
                         'type' => 'file',
                         'file' => [
-                            'filename' => 'document.pdf',
+                            'filename' => 'document.' . $fileType,
                             'file_data' => $fileContent
                         ]
                     ];
                 } else {
-                    // Other files: use file type
-                    $fileData = $fileContent;
-                    if (!str_starts_with($fileData, 'data:')) {
-                        $mimeMap = [
-                            'txt' => 'text/plain',
-                            'doc' => 'application/msword',
-                            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'pdf' => 'application/pdf',
-                        ];
-                        $mime = $mimeMap[$fileType] ?? 'application/octet-stream';
-                        $fileData = 'data:' . $mime . ';base64,' . base64_encode($fileData);
-                    }
                     $parts[] = [
                         'type' => 'file',
                         'file' => [
-                            'filename' => 'file.' . $fileType,
-                            'file_data' => $fileData
+                            'filename' => 'document.' . $fileType,
+                            'file_data' => $fileContent
                         ]
                     ];
                 }
-                
+
                 $messages[] = ['role' => 'user', 'content' => $parts];
             } else {
                 $messages[] = ['role' => 'user', 'content' => $newUserText];
@@ -327,10 +275,6 @@ class ChatService
         return $messages;
     }
 
-    /**
-     * Estimate file character cost for billing (used only as fallback).
-     * Primary billing uses actual tokens from OpenRouter API response.
-     */
     public static function estimateFileChars(string $fileType, string $fileContent): int
     {
         if ($fileType === 'image') return 1000;
@@ -338,9 +282,6 @@ class ChatService
         return mb_strlen($fileContent);
     }
 
-    /**
-     * Make the actual cURL call to the provider's API.
-     */
     private function providerCall(string $endpoint, array $payload, string $apiKey, array $extraHeaders = []): array
     {
         $headers = [
@@ -387,7 +328,6 @@ class ChatService
 
         if (empty(trim($text))) return ['error' => 'پاسخ خالی از API دریافت شد', 'http_code' => $httpCode, 'raw_body' => $body];
 
-        // Extract actual cost from OpenRouter's usage.cost field
         $costUsd = 0.0;
         if (isset($r['usage']['cost'])) {
             $costUsd = (float)$r['usage']['cost'];
@@ -395,7 +335,6 @@ class ChatService
             $costUsd = (float)$r['usage']['cost_details']['upstream_inference_cost'];
         }
 
-        // Extract ACTUAL token counts from API response (not estimated!)
         $inputTokens = 0;
         $outputTokens = 0;
         if (isset($r['usage']['prompt_tokens'])) {
