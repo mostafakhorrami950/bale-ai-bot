@@ -190,7 +190,7 @@ class ChatService
                 $fileContentVal = $row['file_content'];
 
                 if ($fileTypeVal === 'image') {
-                    // Image as data URI
+                    // Image as URL (data URI or public HTTP URL)
                     $parts[] = [
                         'type' => 'image_url',
                         'image_url' => ['url' => $fileContentVal]

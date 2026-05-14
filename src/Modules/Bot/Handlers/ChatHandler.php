@@ -523,19 +523,36 @@ class ChatHandler extends BaseHandler
             $caption = BotTextService::get('chat_photo_caption');
         }
 
-        $fileContent = $this->downloadPhoto($fileId);
-        if ($fileContent === null) {
+        $rawFileContent = $this->downloadPhoto($fileId);
+        if ($rawFileContent === null) {
             $this->baleClient->sendMessage($chatId, BotTextService::get('chat_photo_error'));
             return;
         }
 
+        // Detect MIME type from file header
         $mime = 'image/jpeg';
-        $first = substr($fileContent, 0, 4);
-        if (str_starts_with($first, "\x89PNG")) $mime = 'image/png';
-        elseif (str_starts_with($first, "\xff\xd8")) $mime = 'image/jpeg';
+        $ext = 'jpg';
+        $first = substr($rawFileContent, 0, 4);
+        if (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+        elseif (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+        elseif (str_starts_with($first, "GIF8")) { $mime = 'image/gif'; $ext = 'gif'; }
+        elseif (str_starts_with($first, "\x00\x00\x00\x1cftyp")) { $mime = 'image/mp4'; $ext = 'mp4'; }
 
-        $dataUri = 'data:' . $mime . ';base64,' . base64_encode($fileContent);
-        $this->processChatMessage($chatId, $userId, $caption, $dataUri, 'image');
+        // Save to temp public directory with unique name (same as documents)
+        $safeFilename = uniqid('img_', true) . '.' . $ext;
+        $localDir = $this->tempDir;
+        if (!is_dir($localDir)) {
+            @mkdir($localDir, 0755, true);
+        }
+        $localPath = $localDir . $safeFilename;
+        file_put_contents($localPath, $rawFileContent);
+
+        // Generate public URL for OpenRouter to fetch the image directly
+        $baseUrl = \Core\Config::get('SITE_BASE_URL', 'https://mobixai.ir');
+        $publicUrl = $baseUrl . '/uploads/tmp/' . $safeFilename;
+
+        // Pass public URL as fileContent (same logic as handleDocumentInChat)
+        $this->processChatMessage($chatId, $userId, $caption, $publicUrl, 'image', $localPath);
     }
 
     /**
