@@ -34,6 +34,8 @@
     Header always set X-Frame-Options "DENY"
     Header always set X-XSS-Protection "1; mode=block"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # Prevent search engines from indexing admin pages
+    Header always set X-Robots-Tag "noindex, nofollow"
 </IfModule>
 
 # 4. Deny access to hidden files (starting with .)

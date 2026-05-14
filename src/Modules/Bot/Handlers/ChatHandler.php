@@ -410,10 +410,9 @@ class ChatHandler extends BaseHandler
         $chatService = new ChatService();
         $result = $chatService->chat($orMessages, $modelName, $model);
 
-        // Delete temp file after use (cleanup)
-        if ($localFilePath && file_exists($localFilePath)) {
-            @unlink($localFilePath);
-        }
+        // NOTE: Temp files (PDFs, docs etc.) are kept on disk for history references.
+        // They're cleaned up periodically via the existing temp directory cleanup in repair_db.
+        // DO NOT delete here — the URL is stored in chat_messages and may be referenced again.
 
         if (isset($result['error'])) {
             $this->baleClient->sendMessage($chatId, "⚠️ خطا: " . $result['error']);
