@@ -194,7 +194,27 @@ class ChatService
                 $isImageUrl = $fileTypeVal === 'image' ||
                     (str_starts_with($fileContentVal, 'http') && in_array(strtolower(pathinfo(parse_url($fileContentVal, PHP_URL_PATH), PATHINFO_EXTENSION)), $imageExts));
 
-                if ($isImageUrl) {
+                if ($fileTypeVal === 'input_audio') {
+                    // Audio as base64 data URI with format specification
+                    // Extract format from data URI (e.g. data:audio/wav;base64,...)
+                    $format = 'wav';
+                    if (preg_match('/^data:audio\/(\w+);base64,/', $fileContentVal, $m)) {
+                        $format = $m[1];
+                    }
+                    $parts[] = [
+                        'type' => 'input_audio',
+                        'input_audio' => [
+                            'data' => $fileContentVal,
+                            'format' => $format
+                        ]
+                    ];
+                } elseif ($fileTypeVal === 'video_url') {
+                    // Video as URL (public HTTP URL or base64 data URI)
+                    $parts[] = [
+                        'type' => 'video_url',
+                        'video_url' => ['url' => $fileContentVal]
+                    ];
+                } elseif ($isImageUrl) {
                     // Image as URL (data URI or public HTTP URL)
                     $parts[] = [
                         'type' => 'image_url',

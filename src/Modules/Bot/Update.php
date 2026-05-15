@@ -146,6 +146,87 @@ class Update
         return $this->data['message']['document']['file_name'] ?? null;
     }
 
+    /**
+     * Check if the update contains a voice message.
+     */
+    public function hasVoice(): bool
+    {
+        if (!$this->isMessage()) return false;
+        return isset($this->data['message']['voice']) && !empty($this->data['message']['voice']);
+    }
+
+    /**
+     * Get the voice file_id.
+     */
+    public function getVoiceFileId(): ?string
+    {
+        if (!$this->hasVoice()) return null;
+        return $this->data['message']['voice']['file_id'] ?? null;
+    }
+
+    /**
+     * Get the voice MIME type (e.g. audio/ogg).
+     */
+    public function getVoiceMimeType(): ?string
+    {
+        if (!$this->hasVoice()) return null;
+        return $this->data['message']['voice']['mime_type'] ?? 'audio/ogg';
+    }
+
+    /**
+     * Check if the update contains an audio file (music, podcast, etc.).
+     */
+    public function hasAudio(): bool
+    {
+        if (!$this->isMessage()) return false;
+        return isset($this->data['message']['audio']) && !empty($this->data['message']['audio']);
+    }
+
+    /**
+     * Get the audio file_id.
+     */
+    public function getAudioFileId(): ?string
+    {
+        if (!$this->hasAudio()) return null;
+        return $this->data['message']['audio']['file_id'] ?? null;
+    }
+
+    /**
+     * Get the audio MIME type.
+     */
+    public function getAudioMimeType(): ?string
+    {
+        if (!$this->hasAudio()) return null;
+        return $this->data['message']['audio']['mime_type'] ?? 'audio/mpeg';
+    }
+
+    /**
+     * Check if the update contains a video message.
+     */
+    public function hasVideo(): bool
+    {
+        if (!$this->isMessage()) return false;
+        return isset($this->data['message']['video']) && !empty($this->data['message']['video']);
+    }
+
+    /**
+     * Get the video file_id.
+     */
+    public function getVideoFileId(): ?string
+    {
+        if (!$this->hasVideo()) return null;
+        return $this->data['message']['video']['file_id'] ?? null;
+    }
+
+    /**
+     * Get the video MIME type.
+     */
+    public function getVideoMimeType(): ?string
+    {
+        if (!$this->hasVideo()) return null;
+        return $this->data['message']['video']['mime_type'] ?? 'video/mp4';
+    }
+
     public function getMediaGroupId(): ?string
     {
         return $this->data['message']['media_group_id'] ?? null;

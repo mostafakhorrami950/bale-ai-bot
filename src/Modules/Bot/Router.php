@@ -198,6 +198,36 @@ class Router
             return new MessageHandler($this->baleClient);
         }
 
+        // 5c. Voice messages — route to ChatHandler if in chat_active state
+        if ($update->hasVoice()) {
+            if ($state === 'chat_active') {
+                error_log("DEBUG ROUTER: voice in chat -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
+            error_log("DEBUG ROUTER: voice -> MessageHandler");
+            return new MessageHandler($this->baleClient);
+        }
+
+        // 5d. Audio messages — route to ChatHandler if in chat_active state
+        if ($update->hasAudio()) {
+            if ($state === 'chat_active') {
+                error_log("DEBUG ROUTER: audio in chat -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
+            error_log("DEBUG ROUTER: audio -> MessageHandler");
+            return new MessageHandler($this->baleClient);
+        }
+
+        // 5e. Video messages — route to ChatHandler if in chat_active state
+        if ($update->hasVideo()) {
+            if ($state === 'chat_active') {
+                error_log("DEBUG ROUTER: video in chat -> ChatHandler");
+                return new ChatHandler($this->baleClient);
+            }
+            error_log("DEBUG ROUTER: video -> MessageHandler");
+            return new MessageHandler($this->baleClient);
+        }
+
         // 7. Regular message — route by text content
         if ($update->isMessage() && $text !== '') {
             // Ensure $userId is defined for memory checks

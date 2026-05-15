@@ -99,6 +99,18 @@ class ChatHandler extends BaseHandler
                     $this->handleDocumentInChat($chatId, $userId, $update, $text);
                     return;
                 }
+                if ($update->hasVoice()) {
+                    $this->handleAudioInChat($chatId, $userId, $update, $text, 'voice');
+                    return;
+                }
+                if ($update->hasAudio()) {
+                    $this->handleAudioInChat($chatId, $userId, $update, $text, 'audio');
+                    return;
+                }
+                if ($update->hasVideo()) {
+                    $this->handleVideoInChat($chatId, $userId, $update, $text);
+                    return;
+                }
                 if (!empty(trim($text ?? ''))) {
                     $this->processChatMessage($chatId, $userId, trim($text), null, null);
                     return;
@@ -618,6 +630,152 @@ class ChatHandler extends BaseHandler
 
         // Pass public URL as fileContent. buildMessagesFromHistory sends URL directly.
         $this->processChatMessage($chatId, $userId, $caption, $publicUrl, $actualFileType, $localPath);
+    }
+
+    /**
+     * Handle voice/audio message in chat — download, save as base64 data URI, send to AI.
+     * OpenRouter requires audio as base64-encoded data URI with format specification.
+     */
+    private function handleAudioInChat(int $chatId, int $userId, $update, ?string $caption, string $type): void
+    {
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) {
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
+            return;
+        }
+
+        $db = Database::getInstance();
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $modelId = (int)($extra['model_id'] ?? 0);
+
+        // Check model supports audio
+        if ($modelId > 0) {
+            $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
+            if ($model && !empty($model['supported_formats'])) {
+                $formats = explode(',', strtolower($model['supported_formats']));
+                $supportedAudio = array_intersect($formats, ['wav', 'mp3', 'ogg', 'aac', 'flac', 'm4a', 'pcm16', 'pcm24', 'aiff']);
+                if (empty($supportedAudio)) {
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('chat_audio_format_error', ['formats' => $model['supported_formats']]));
+                    return;
+                }
+            }
+        }
+
+        // Get file_id based on type
+        $fileId = ($type === 'voice') ? $update->getVoiceFileId() : $update->getAudioFileId();
+        $mimeType = ($type === 'voice') ? $update->getVoiceMimeType() : $update->getAudioMimeType();
+
+        $caption = trim($caption ?? '');
+        if (empty($caption)) {
+            $caption = BotTextService::get('chat_audio_caption', ['type' => $type === 'voice' ? 'صوتی' : 'صوت']);
+        }
+
+        // Download audio file
+        $rawFileContent = $this->downloadPhoto($fileId);
+        if ($rawFileContent === null) {
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_audio_download_error'));
+            return;
+        }
+
+        // Determine format from MIME type
+        $formatMap = [
+            'audio/wav' => 'wav',
+            'audio/wave' => 'wav',
+            'audio/mpeg' => 'mp3',
+            'audio/mp3' => 'mp3',
+            'audio/ogg' => 'ogg',
+            'audio/opus' => 'ogg',
+            'audio/aac' => 'aac',
+            'audio/x-aac' => 'aac',
+            'audio/flac' => 'flac',
+            'audio/x-flac' => 'flac',
+            'audio/mp4' => 'm4a',
+            'audio/x-m4a' => 'm4a',
+            'audio/aiff' => 'aiff',
+            'audio/x-aiff' => 'aiff',
+        ];
+        $format = $formatMap[$mimeType] ?? 'wav';
+
+        // Convert to base64 data URI
+        $base64Data = base64_encode($rawFileContent);
+        $dataUri = 'data:' . $mimeType . ';base64,' . $base64Data;
+
+        // Save to temp for potential cleanup
+        $ext = $format;
+        $safeFilename = uniqid('audio_', true) . '.' . $ext;
+        $localPath = $this->tempDir . $safeFilename;
+        file_put_contents($localPath, $rawFileContent);
+
+        // Pass as input_audio type — buildMessagesFromHistory will handle it
+        $this->processChatMessage($chatId, $userId, $caption, $dataUri, 'input_audio', $localPath);
+    }
+
+    /**
+     * Handle video message in chat — download, save as base64 data URI, send to AI.
+     * OpenRouter supports video as base64 data URI or public URL.
+     */
+    private function handleVideoInChat(int $chatId, int $userId, $update, ?string $caption): void
+    {
+        $internalId = $this->resolveUserId($userId);
+        if (!$internalId) {
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_user_not_found'));
+            return;
+        }
+
+        $db = Database::getInstance();
+        $stateData = $db->query("SELECT extra_data FROM bot_state WHERE user_id = ?", [$internalId])->fetch();
+        $extra = json_decode($stateData['extra_data'] ?? '{}', true);
+        $modelId = (int)($extra['model_id'] ?? 0);
+
+        // Check model supports video
+        if ($modelId > 0) {
+            $model = $db->query("SELECT supported_formats FROM ai_text_models WHERE id = ?", [$modelId])->fetch();
+            if ($model && !empty($model['supported_formats'])) {
+                $formats = explode(',', strtolower($model['supported_formats']));
+                $supportedVideo = array_intersect($formats, ['mp4', 'mpeg', 'mov', 'webm']);
+                if (empty($supportedVideo)) {
+                    $this->baleClient->sendMessage($chatId, BotTextService::get('chat_video_format_error', ['formats' => $model['supported_formats']]));
+                    return;
+                }
+            }
+        }
+
+        $fileId = $update->getVideoFileId();
+        $mimeType = $update->getVideoMimeType();
+
+        $caption = trim($caption ?? '');
+        if (empty($caption)) {
+            $caption = BotTextService::get('chat_video_caption');
+        }
+
+        // Download video file
+        $rawFileContent = $this->downloadPhoto($fileId);
+        if ($rawFileContent === null) {
+            $this->baleClient->sendMessage($chatId, BotTextService::get('chat_video_download_error'));
+            return;
+        }
+
+        // Determine extension from MIME type
+        $extMap = [
+            'video/mp4' => 'mp4',
+            'video/mpeg' => 'mpeg',
+            'video/quicktime' => 'mov',
+            'video/webm' => 'webm',
+        ];
+        $ext = $extMap[$mimeType] ?? 'mp4';
+
+        // Save to temp public directory for URL-based access
+        $safeFilename = uniqid('video_', true) . '.' . $ext;
+        $localPath = $this->tempDir . $safeFilename;
+        file_put_contents($localPath, $rawFileContent);
+
+        // Generate public URL for OpenRouter to fetch directly
+        $baseUrl = \Core\Config::get('SITE_BASE_URL', 'https://mobixai.ir');
+        $publicUrl = $baseUrl . '/uploads/tmp/' . $safeFilename;
+
+        // Pass as video_url type — buildMessagesFromHistory will handle it
+        $this->processChatMessage($chatId, $userId, $caption, $publicUrl, 'video_url', $localPath);
     }
 
     /**
