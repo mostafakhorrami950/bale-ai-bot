@@ -306,6 +306,14 @@ class ChatService
     {
         if ($fileType === 'image') return 1000;
         if (in_array($fileType, ['pdf', 'PDF'])) return 2000;
+        // Audio files are sent as base64 data URI — the string length is NOT the content length
+        // OpenRouter charges by token, not by byte. Use a fixed estimate: ~30 chars per second for 30 sec = 900
+        if ($fileType === 'input_audio') return 900;
+        // Video files are sent as URL — no content to measure, charge for duration
+        if ($fileType === 'video_url') return 1000;
+        if (str_starts_with($fileType, 'audio/')) return 900;
+        // Fallback: if the content is a URL or data URI, don't charge for it
+        if (str_starts_with($fileContent, 'http') || str_starts_with($fileContent, 'data:')) return 1000;
         return mb_strlen($fileContent);
     }
 
