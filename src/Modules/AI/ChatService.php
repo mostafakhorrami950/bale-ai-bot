@@ -195,16 +195,18 @@ class ChatService
                     (str_starts_with($fileContentVal, 'http') && in_array(strtolower(pathinfo(parse_url($fileContentVal, PHP_URL_PATH), PATHINFO_EXTENSION)), $imageExts));
 
                 if ($fileTypeVal === 'input_audio') {
-                    // Audio as base64 data URI with format specification
-                    // Extract format from data URI (e.g. data:audio/wav;base64,...)
+                    // Audio as base64 data — OpenRouter expects raw base64, NOT data URI
+                    // Extract format and raw base64 from data URI (e.g. data:audio/wav;base64,SUQz...)
                     $format = 'wav';
-                    if (preg_match('/^data:audio\/(\w+);base64,/', $fileContentVal, $m)) {
+                    $rawBase64 = $fileContentVal;
+                    if (preg_match('/^data:audio\/(\w+);base64,(.+)$/s', $fileContentVal, $m)) {
                         $format = $m[1];
+                        $rawBase64 = $m[2];
                     }
                     $parts[] = [
                         'type' => 'input_audio',
                         'input_audio' => [
-                            'data' => $fileContentVal,
+                            'data' => $rawBase64,
                             'format' => $format
                         ]
                     ];
