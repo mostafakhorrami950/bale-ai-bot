@@ -622,11 +622,32 @@ class ChatHandler extends BaseHandler
         $baseUrl = \Core\Config::get('SITE_BASE_URL', 'https://mobixai.ir');
         $publicUrl = $baseUrl . '/uploads/tmp/' . $safeFilename;
 
-        // IMPORTANT: If the file is an image (jpg, jpeg, png, gif, webp),
-        // use 'image' type so buildMessagesFromHistory sends as 'image_url' not 'file'.
-        // Sending images as 'file' type causes Google Gemini "The document has no pages" error.
+        // IMPORTANT: Detect media type from file extension and route accordingly.
+        // Sending images/audio/video as 'file' type causes Google Gemini errors.
         $imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-        $actualFileType = in_array($fileExtension, $imageExts) ? 'image' : $fileExtension;
+        $audioExts = ['mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a', 'aiff', 'opus', 'wma'];
+        $videoExts = ['mp4', 'mpeg', 'mov', 'webm', 'avi', 'mkv'];
+
+        if (in_array($fileExtension, $imageExts)) {
+            $actualFileType = 'image';
+        } elseif (in_array($fileExtension, $audioExts)) {
+            // Audio files sent as document: convert to base64 data URI for input_audio
+            // OpenRouter requires audio as base64, not URL
+            $mimeMap = [
+                'mp3' => 'audio/mpeg', 'wav' => 'audio/wav', 'ogg' => 'audio/ogg',
+                'aac' => 'audio/aac', 'flac' => 'audio/flac', 'm4a' => 'audio/mp4',
+                'aiff' => 'audio/aiff', 'opus' => 'audio/ogg', 'wma' => 'audio/x-ms-wma',
+            ];
+            $mime = $mimeMap[$fileExtension] ?? 'audio/mpeg';
+            $rawContent = file_get_contents($localPath);
+            $dataUri = 'data:' . $mime . ';base64,' . base64_encode($rawContent);
+            $actualFileType = 'input_audio';
+            $publicUrl = $dataUri; // Override URL with data URI
+        } elseif (in_array($fileExtension, $videoExts)) {
+            $actualFileType = 'video_url';
+        } else {
+            $actualFileType = $fileExtension;
+        }
 
         // Pass public URL as fileContent. buildMessagesFromHistory sends URL directly.
         $this->processChatMessage($chatId, $userId, $caption, $publicUrl, $actualFileType, $localPath);
