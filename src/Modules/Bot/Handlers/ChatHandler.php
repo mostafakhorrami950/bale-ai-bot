@@ -496,12 +496,35 @@ class ChatHandler extends BaseHandler
         }
 
         $costMsg = $freeModel ? '' : BotTextService::get('chat_cost_summary', ['input_cost' => $inputCost, 'output_cost' => $outputCost, 'total_cost' => ($inputCost + $outputCost)]);
-        $fullMsg = mb_substr($responseText, 0, 3800) . $costMsg;
-        $this->baleClient->sendMessage($chatId, $fullMsg, $this->getChatActiveKeyboard());
-
-        if (mb_strlen($responseText) > 3800) {
-            $remaining = mb_substr($responseText, 3800);
-            $this->baleClient->sendMessage($chatId, $remaining);
+        
+        // Split long responses into multiple messages (Bale API limit: ~4000 chars per message)
+        $maxMsgLen = 3800;
+        $msgWithCost = $responseText . $costMsg;
+        
+        if (mb_strlen($msgWithCost) <= $maxMsgLen) {
+            // Single message fits entirely
+            $this->baleClient->sendMessage($chatId, $msgWithCost, $this->getChatActiveKeyboard());
+        } else {
+            // Need to split into multiple messages
+            $remaining = $responseText;
+            $isFirst = true;
+            while (mb_strlen($remaining) > 0) {
+                $chunk = mb_substr($remaining, 0, $maxMsgLen);
+                $remaining = mb_substr($remaining, $maxMsgLen);
+                
+                if ($isFirst) {
+                    // First message: include cost summary and keyboard
+                    $firstMsg = $chunk;
+                    if (!empty($costMsg)) {
+                        $firstMsg = $chunk . $costMsg;
+                    }
+                    $this->baleClient->sendMessage($chatId, $firstMsg, $this->getChatActiveKeyboard());
+                    $isFirst = false;
+                } else {
+                    // Subsequent messages: no keyboard, just content
+                    $this->baleClient->sendMessage($chatId, $chunk);
+                }
+            }
         }
     }
 

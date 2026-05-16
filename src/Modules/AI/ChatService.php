@@ -223,21 +223,53 @@ class ChatService
                         'image_url' => ['url' => $fileContentVal]
                     ];
                 } elseif (str_starts_with($fileContentVal, 'http')) {
-                    // File as public URL - use file type with URL
-                    $mimeMap = [
-                        'pdf' => 'application/pdf',
-                        'txt' => 'text/plain',
-                        'doc' => 'application/msword',
-                        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    ];
-                    $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
-                    $parts[] = [
-                        'type' => 'file',
-                        'file' => [
-                            'filename' => 'document.' . $fileTypeVal,
-                            'file_data' => $fileContentVal
-                        ]
-                    ];
+                    // Determine if this is a text-based file type that Google Gemini can't handle as 'file'
+                    // Gemini returns "The document has no pages" for txt, md, csv, json files sent as 'file'
+                    $textExts = ['txt', 'md', 'csv', 'json', 'xml', 'html', 'css', 'js', 'php', 'py', 'java', 'c', 'cpp', 'h', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'log', 'env', 'gitignore'];
+                    if (in_array($fileTypeVal, $textExts, true)) {
+                        // Download the text file content and include it directly as text
+                        $textContent = @file_get_contents($fileContentVal);
+                        if ($textContent !== false && !empty(trim($textContent))) {
+                            // Truncate very long text files to avoid huge token usage
+                            $maxTextLen = 50000;
+                            if (mb_strlen($textContent) > $maxTextLen) {
+                                $textContent = mb_substr($textContent, 0, $maxTextLen) . "\n\n[...فایل بسیار طولانی است، ابتدا نمایش داده شد]";
+                            }
+                            $parts[] = ['type' => 'text', 'text' => "محتوای فایل {$fileTypeVal}:\n```\n{$textContent}\n```"];
+                        } else {
+                            // Fallback: include as file with URL
+                            $mimeMap = [
+                                'pdf' => 'application/pdf',
+                                'txt' => 'text/plain',
+                                'doc' => 'application/msword',
+                                'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            ];
+                            $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
+                            $parts[] = [
+                                'type' => 'file',
+                                'file' => [
+                                    'filename' => 'document.' . $fileTypeVal,
+                                    'file_data' => $fileContentVal
+                                ]
+                            ];
+                        }
+                    } else {
+                        // Non-text files: use file type with URL
+                        $mimeMap = [
+                            'pdf' => 'application/pdf',
+                            'txt' => 'text/plain',
+                            'doc' => 'application/msword',
+                            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        ];
+                        $mime = $mimeMap[$fileTypeVal] ?? 'application/octet-stream';
+                        $parts[] = [
+                            'type' => 'file',
+                            'file' => [
+                                'filename' => 'document.' . $fileTypeVal,
+                                'file_data' => $fileContentVal
+                            ]
+                        ];
+                    }
                 } else {
                     // Data URI file
                     $parts[] = [
