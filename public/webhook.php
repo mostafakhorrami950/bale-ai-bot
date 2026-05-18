@@ -15,7 +15,19 @@ $inputLen = strlen($rawInput ?? '');
 $logFile = __DIR__ . '/debug.txt';
 @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " WEBHOOK_HIT: {$inputLen} bytes | METHOD: {$_SERVER['REQUEST_METHOD']} | CT: {$_SERVER['CONTENT_TYPE']}\n", FILE_APPEND);
 
-// 3. HTTP 200 ALWAYS — Bale needs this to stop retrying
+// 3. Load app — BEFORE any output, so session_start() can work
+require_once __DIR__ . '/error_handler.php';
+require_once __DIR__ . '/../init.php';
+
+// 4. Close session immediately — webhook doesn't need write access
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
+use Modules\Bot\UpdateFactory;
+use Modules\Bot\Dispatcher;
+
+// 5. HTTP 200 ALWAYS — Bale needs this to stop retrying
 if (!headers_sent()) {
     http_response_code(200);
     header('Content-Type: text/plain; charset=utf-8');
@@ -24,26 +36,13 @@ echo "OK";
 flush();
 if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
 
-// 4. If empty input — Bale health ping, just exit
+// 6. If empty input — Bale health ping, just exit
 if (empty($rawInput)) {
     @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " EMPTY_INPUT — health ping\n", FILE_APPEND);
     exit;
 }
 
-// 5. Now load the app (after php://input is already saved)
-require_once __DIR__ . '/error_handler.php';
-require_once __DIR__ . '/../init.php';
-
-// Close session immediately — we don't need session for webhook processing
-// This prevents session locking when Bale sends multiple requests
-if (session_status() === PHP_SESSION_ACTIVE) {
-    session_write_close();
-}
-
-use Modules\Bot\UpdateFactory;
-use Modules\Bot\Dispatcher;
-
-// 6. Silent logger
+// 7. Silent logger
 function bot_log($level, $message, $context = array()) {
     try {
         $db = \Database\Database::getInstance();
@@ -54,7 +53,7 @@ function bot_log($level, $message, $context = array()) {
     }
 }
 
-// 7. Parse JSON
+// 8. Parse JSON
 $updateData = @json_decode($rawInput, true);
 if (!is_array($updateData)) {
     @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " INVALID_JSON: " . mb_substr($rawInput, 0, 500) . "\n", FILE_APPEND);
@@ -63,7 +62,7 @@ if (!is_array($updateData)) {
 
 @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " JSON_OK: update_id=" . ($updateData['update_id'] ?? 'none') . " text=" . ($updateData['message']['text'] ?? 'none') . "\n", FILE_APPEND);
 
-// 8. Create Update
+// 9. Create Update
 try {
     $update = UpdateFactory::create($updateData);
 } catch (\Throwable $e) {
@@ -81,7 +80,7 @@ if (!$update || (!$update->getChatId() && !$isPaymentQuery && !$isPaymentSuccess
     exit;
 }
 
-// 9. Ignore channel messages
+// 10. Ignore channel messages
 $chatType = $updateData['message']['chat']['type'] ?? $updateData['callback_query']['message']['chat']['type'] ?? null;
 if ($chatType === 'channel') { exit; }
 if ($chatType === 'supergroup' && $update->isMessage()) {
@@ -90,7 +89,7 @@ if ($chatType === 'supergroup' && $update->isMessage()) {
     if (!$isMentioned) { exit; }
 }
 
-// 10. Update last_active_at
+// 11. Update last_active_at
 $baleUserId = $update->getUserId();
 if ($baleUserId) {
     try {
@@ -99,12 +98,12 @@ if ($baleUserId) {
     } catch (\Throwable $e) {}
 }
 
-// 11. Early callback answer
+// 12. Early callback answer
 if ($update->isCallback() && $update->getCallbackId()) {
     try { (new \Modules\Bot\BaleClient())->answerCallbackQuery($update->getCallbackId()); } catch (\Throwable $e) {}
 }
 
-// 12. PreCheckoutQuery
+// 13. PreCheckoutQuery
 if ($update->isPreCheckoutQuery()) {
     try {
         $data = $update->getPreCheckoutQuery();
@@ -128,7 +127,7 @@ if ($update->isPreCheckoutQuery()) {
     exit;
 }
 
-// 13. SuccessfulPayment
+// 14. SuccessfulPayment
 if ($update->isSuccessfulPayment()) {
     try {
         $payment = $update->getSuccessfulPayment();
@@ -161,10 +160,10 @@ if ($update->isSuccessfulPayment()) {
     exit;
 }
 
-// 14. Duplicate check
+// 15. Duplicate check
 if ($update->isDuplicate()) { exit; }
 
-// 15. Route & Dispatch
+// 16. Route & Dispatch
 try {
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($update);
