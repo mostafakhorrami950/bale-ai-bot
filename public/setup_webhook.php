@@ -7,15 +7,10 @@ use Modules\Bot\BaleClient;
 
 header('Content-Type: application/json');
 
-// Security: Basic check to prevent accidental usage in production if not explicitly allowed
-if (Config::get('APP_ENV') === 'production' && !isset($_GET['force'])) {
-    die(json_encode(['ok' => false, 'error' => 'Use ?force=1 to run in production']));
-}
-
 $client = new BaleClient();
-$baseUrl = Config::get('PUBLIC_BASE_URL');
-$webhookPath = Config::get('BALE_WEBHOOK_PATH');
-$fullUrl = $baseUrl . $webhookPath;
+// Always use the hardcoded public URL + /public/webhook.php
+// to avoid .env misconfiguration issues
+$fullUrl = 'https://mobixai.ir/public/webhook.php';
 
 $action = $_GET['action'] ?? 'set';
 
