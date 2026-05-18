@@ -14,7 +14,8 @@ class BaleClient
     public function __construct()
     {
         $this->token = Config::get('BALE_BOT_TOKEN');
-        $this->apiUrl = "https://tapi.bale.ai/bot{$this->token}/";
+        // Ensure NO trailing slash in apiUrl to avoid //METHOD double-slash 404 errors
+        $this->apiUrl = "https://tapi.bale.ai/bot{$this->token}";
     }
 
     public function getLastError(): ?string
@@ -424,7 +425,7 @@ class BaleClient
     private function request(string $method, array $params = []): array
     {
         $this->lastError = null;
-        $url = $this->apiUrl . $method;
+        $url = $this->apiUrl . '/' . $method;
         $ch = curl_init();
 
         curl_setopt_array($ch, [
