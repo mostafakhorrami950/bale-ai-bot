@@ -9,81 +9,80 @@ require_once __DIR__ . '/../init.php';
 use Modules\Bot\UpdateFactory;
 use Modules\Bot\Dispatcher;
 
-// 3. Read input
-$rawInput = file_get_contents('php://input');
+// 3. Read input — MUST be done first before any output
+$rawInput = @file_get_contents('php://input');
+$inputLen = strlen($rawInput ?? '');
 
-// 4. Send HTTP 200 ALWAYS — even for empty pings from Bale
+// 4. Log immediately to debug.txt
+$logFile = __DIR__ . '/debug.txt';
+@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " WEBHOOK_HIT: {$inputLen} bytes | SERVER_METHOD: {$_SERVER['REQUEST_METHOD']} | CONTENT_TYPE: {$_SERVER['CONTENT_TYPE']}\n", FILE_APPEND);
+
+// 5. HTTP 200 ALWAYS
 if (!headers_sent()) {
     http_response_code(200);
     header('Content-Type: text/plain; charset=utf-8');
-} else {
-    // Fallback: headers already sent, can't set Content-Type
 }
+echo "OK";
 
-// Debug: log to file since DB might fail
-file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " WEBHOOK_HIT: " . strlen($rawInput ?? '') . " bytes\n", FILE_APPEND);
-
-// 5. For empty POST (Bale health ping), just exit quickly
 if (empty($rawInput)) {
-    echo "EMPTY";
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " EMPTY INPUT — probably Bale health ping\n", FILE_APPEND);
     flush();
     if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
     exit;
 }
 
-// 6. Echo OK and flush
-echo "OK";
+// Flush and continue
 flush();
 if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
 
-// 7. Silent logger
+// 6. Silent logger
 function bot_log($level, $message, $context = array()) {
     try {
         $db = \Database\Database::getInstance();
         $db->query("INSERT INTO bot_logs (level, message, context) VALUES (?, ?, ?)",
             array((string)$level, (string)$message, json_encode($context, JSON_UNESCAPED_UNICODE)));
     } catch (\Throwable $e) {
-        file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " BOT_LOG_FAILED: " . $e->getMessage() . "\n", FILE_APPEND);
+        @file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " BOT_LOG_FAILED: " . $e->getMessage() . "\n", FILE_APPEND);
     }
 }
 
-// 8. Parse JSON
-$updateData = @json_decode($rawInput, true);
-if (!is_array($updateData)) {
-    file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " INVALID_JSON\n", FILE_APPEND);
+// 7. Parse JSON
+$rawInputDecoded = @json_decode($rawInput, true);
+if (!is_array($rawInputDecoded)) {
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " INVALID_JSON: " . mb_substr($rawInput, 0, 500) . "\n", FILE_APPEND);
     exit;
 }
 
-file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " JSON_OK: " . (isset($updateData['message']['text']) ? $updateData['message']['text'] : 'no text') . "\n", FILE_APPEND);
+@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " JSON_OK: update_id=" . ($rawInputDecoded['update_id'] ?? 'none') . " text=" . ($rawInputDecoded['message']['text'] ?? 'none') . "\n", FILE_APPEND);
 
-// 9. Create Update
+// 8. Create Update
 try {
-    $update = UpdateFactory::create($updateData);
+    $update = UpdateFactory::create($rawInputDecoded);
 } catch (\Throwable $e) {
-    file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " CREATE_UPDATE_FAILED: " . $e->getMessage() . "\n", FILE_APPEND);
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " CREATE_UPDATE_FAILED: " . $e->getMessage() . "\n", FILE_APPEND);
     exit;
 }
 
-file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " UPDATE_CREATED: chatId=" . $update->getChatId() . " userId=" . $update->getUserId() . "\n", FILE_APPEND);
+@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " UPDATE_CREATED: chatId=" . $update->getChatId() . " userId=" . $update->getUserId() . " text=" . $update->getText() . "\n", FILE_APPEND);
 
 $isPaymentQuery = $update->isPreCheckoutQuery();
 $isPaymentSuccess = $update->isSuccessfulPayment();
 
 if (!$update || (!$update->getChatId() && !$isPaymentQuery && !$isPaymentSuccess)) {
-    file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " NO_VALID_UPDATE\n", FILE_APPEND);
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " NO_VALID_UPDATE\n", FILE_APPEND);
     exit;
 }
 
-// 10. Ignore channel messages
-$chatType = $updateData['message']['chat']['type'] ?? $updateData['callback_query']['message']['chat']['type'] ?? null;
+// 9. Ignore channel messages
+$chatType = $rawInputDecoded['message']['chat']['type'] ?? $rawInputDecoded['callback_query']['message']['chat']['type'] ?? null;
 if ($chatType === 'channel') { exit; }
 if ($chatType === 'supergroup' && $update->isMessage()) {
     $text = $update->getText() ?? '';
-    $isMentioned = str_contains($text, '@' . ($_ENV['BOT_USERNAME'] ?? 'bot')) || str_starts_with($text, '/') || !empty($updateData['message']['entities']);
+    $isMentioned = str_contains($text, '@' . ($_ENV['BOT_USERNAME'] ?? 'bot')) || str_starts_with($text, '/') || !empty($rawInputDecoded['message']['entities']);
     if (!$isMentioned) { exit; }
 }
 
-// 11. Update last_active_at
+// 10. Update last_active_at
 $baleUserId = $update->getUserId();
 if ($baleUserId) {
     try {
@@ -92,12 +91,12 @@ if ($baleUserId) {
     } catch (\Throwable $e) {}
 }
 
-// 12. Early callback answer
+// 11. Early callback answer
 if ($update->isCallback() && $update->getCallbackId()) {
     try { (new \Modules\Bot\BaleClient())->answerCallbackQuery($update->getCallbackId()); } catch (\Throwable $e) {}
 }
 
-// 13. PreCheckoutQuery
+// 12. PreCheckoutQuery
 if ($update->isPreCheckoutQuery()) {
     try {
         $data = $update->getPreCheckoutQuery();
@@ -116,12 +115,12 @@ if ($update->isPreCheckoutQuery()) {
         }
         $cli->answerPreCheckoutQuery($qid, false, 'خطا');
     } catch (\Throwable $e) {
-        file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " PRECHECKOUT_ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
+        @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " PRECHECKOUT_ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
     }
     exit;
 }
 
-// 14. SuccessfulPayment
+// 13. SuccessfulPayment
 if ($update->isSuccessfulPayment()) {
     try {
         $payment = $update->getSuccessfulPayment();
@@ -149,18 +148,18 @@ if ($update->isSuccessfulPayment()) {
             }
         }
     } catch (\Throwable $e) {
-        file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " PAYMENT_ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
+        @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " PAYMENT_ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
     }
     exit;
 }
 
-// 15. Duplicate check
+// 14. Duplicate check
 if ($update->isDuplicate()) { exit; }
 
-// 16. Route & Dispatch
+// 15. Route & Dispatch
 try {
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($update);
 } catch (\Throwable $e) {
-    file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " DISPATCH_ERROR: " . $e->getMessage() . "\n", FILE_APPEND);
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " DISPATCH_ERROR: " . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n", FILE_APPEND);
 }
