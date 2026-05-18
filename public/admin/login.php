@@ -1,4 +1,9 @@
 <?php
+// CRITICAL: Reopen session for writing (init.php calls session_write_close())
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_start(); // reopen for writing
+}
+
 require_once '../../init.php';
 
 use Database\Database;
@@ -11,6 +16,7 @@ $error = '';
 // N8: Generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    session_write_close(); // close again after setting token
 }
 
 // Check if database needs bootstrap

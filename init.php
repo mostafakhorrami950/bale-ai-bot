@@ -13,9 +13,7 @@ spl_autoload_register(function ($class) {
 // Load Config
 Core\Config::load(BASE_PATH . '/.env');
 
-// Start Session (read-only by default — prevents session locking in webhooks)
+// Start Session
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
-    // Immediately close the session so parallel requests don't block
-    session_write_close();
 }

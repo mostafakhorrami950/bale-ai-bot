@@ -34,6 +34,12 @@ if (empty($rawInput)) {
 require_once __DIR__ . '/error_handler.php';
 require_once __DIR__ . '/../init.php';
 
+// Close session immediately — we don't need session for webhook processing
+// This prevents session locking when Bale sends multiple requests
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 use Modules\Bot\UpdateFactory;
 use Modules\Bot\Dispatcher;
 
