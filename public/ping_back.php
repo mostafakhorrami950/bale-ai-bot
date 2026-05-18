@@ -1,31 +1,25 @@
 <?php
 /**
- * PING BACK — تست ارسال پیام از سرور به بله (خروجی)
+ * PING BACK v2 — تست واقعی با استفاده از کدهای خود ربات
  */
-$env = parse_ini_file(__DIR__ . '/../.env');
-$token = $env['BALE_BOT_TOKEN'];
+require_once __DIR__ . '/../init.php';
+use Modules\Bot\BaleClient;
 
-$chatId = $_GET['id'] ?? '123456789'; // ID خودتان را وارد کنید
+$chatId = $_GET['id'] ?? null;
 
-$url = "https://tapi.bale.ai/bot{$token}/sendMessage";
-$ch = curl_init($url);
-curl_setopt_array($ch, [
-    CURLOPT_POST => true,
-    CURLOPT_POSTFIELDS => json_encode([
-        'chat_id' => $chatId,
-        'text' => "🔔 تست خروجی از سرور: " . date('Y-m-d H:i:s')
-    ]),
-    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_SSL_VERIFYPEER => true
-]);
-$resp = curl_exec($ch);
-$http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+if (!$chatId) {
+    header('Content-Type: text/plain; charset=utf-8');
+    die("لطفاً آیدی عددی خود را در انتهای آدرس وارد کنید. مثال:\n?id=123456789");
+}
 
-header('Content-Type: application/json');
+$client = new BaleClient();
+// ارسال پیام با استفاده از متد اصلی ربات
+$result = $client->sendMessage((int)$chatId, "✅ تست نهایی از مبدأ سرور\n\nاگر این پیام را در بله دریافت کردید، یعنی کدهای اصلی ربات (BaleClient) کاملاً سالم هستند و به درستی با API بله ارتباط برقرار می‌کنند.\n\n⏱ زمان: " . date('H:i:s'));
+
+header('Content-Type: application/json; charset=utf-8');
 echo json_encode([
-    'http_code' => $http,
-    'bale_response' => json_decode($resp, true),
-    'server_time' => date('Y-m-d H:i:s')
-], JSON_PRETTY_PRINT);
+    'is_success' => ($result !== false),
+    'message_id' => $result,
+    'error_from_bale' => $client->getLastError(),
+    'note' => 'If is_success is true, the outgoing connection is OK.'
+], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
