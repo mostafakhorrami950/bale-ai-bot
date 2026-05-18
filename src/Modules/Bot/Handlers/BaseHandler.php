@@ -81,18 +81,16 @@ abstract class BaseHandler
                         error_log("checkMembership: Channel $title result=" . json_encode($result));
 
                         // If result is null, API returned ok:false (bot not admin, wrong channel_id, etc.)
-                        // In this case, fail CLOSED — block user since we cannot verify membership.
+                        // In this case, fail OPEN — allow user through since we cannot verify
                         if ($result === null) {
-                            error_log("checkMembership: API returned null for channel $title — fail closed, blocking user");
-                            $nonMembers[] = $ch;
+                            error_log("checkMembership: API returned null for channel $title — cannot verify, allowing user through");
                             continue;
                         }
 
                         $status = $result['status'] ?? 'left';
                     } catch (\Throwable $e) {
-                        // Per-channel failure: log it and fail CLOSED (block user)
+                        // Per-channel failure: log it and fail OPEN (allow user through)
                         error_log("checkMembership: ERROR checking channel $title: " . $e->getMessage());
-                        $nonMembers[] = $ch;
                         continue;
                     }
 
