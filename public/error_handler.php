@@ -11,16 +11,15 @@ if (!file_exists($debugFile)) {
     @chmod($debugFile, 0666);
 }
 
-// Redirect all PHP errors to debug.txt
+// Redirect all PHP errors
 @ini_set('display_errors', 0);
 @ini_set('log_errors', 1);
 @ini_set('error_log', $debugFile);
 
-// Catch all uncaught exceptions — never let Bale see an error
+// Catch all uncaught exceptions
 set_exception_handler(function (Throwable $e) {
     $msg = date('[Y-m-d H:i:s]') . " FATAL: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine() . "\n";
     @file_put_contents(__DIR__ . '/debug.txt', $msg, FILE_APPEND);
-    // ALWAYS return 200 so Bale doesn't retry
     if (!headers_sent()) {
         http_response_code(200);
     }
