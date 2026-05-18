@@ -1,23 +1,56 @@
 <?php
-// SUPER MINIMAL WEBHOOK — FOR TRACING
-$raw = @file_get_contents('php://input');
-$len = strlen($raw ?? '');
+/**
+ * Bale AI Bot — Webhook Entry Point
+ * 
+ * CRITICAL: php://input MUST be read BEFORE any other code runs.
+ */
 
-// Log to file
-@file_put_contents(__DIR__ . '/debug.txt', date('[Y-m-d H:i:s]') . " RAW_HIT: {$len} bytes\n", FILE_APPEND);
+// 1. Read raw input IMMEDIATELY
+$rawInput = @file_get_contents('php://input');
+$inputLen = strlen($rawInput ?? '');
 
-// Response 200
-http_response_code(200);
+// 2. Load error handler & app
+require_once __DIR__ . '/error_handler.php';
+require_once __DIR__ . '/../init.php';
+
+// 3. Response 200 to Bale (to stop retries)
+if (!headers_sent()) {
+    http_response_code(200);
+    header('Content-Type: text/plain; charset=utf-8');
+}
 echo "OK";
+flush();
+if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
 
-if ($len > 0) {
-    // Try to log to DB without any classes
-    try {
-        $env = parse_ini_file(__DIR__ . '/../.env');
-        $db = new PDO("mysql:host={$env['DB_HOST']};dbname={$env['DB_NAME']};charset=utf8", $env['DB_USER'], $env['DB_PASS']);
-        $stmt = $db->prepare("INSERT INTO bot_logs (level, message, context) VALUES ('INFO', 'WEBHOOK_HIT_MINIMAL', ?)");
-        $stmt->execute([$raw]);
-    } catch (Exception $e) {
-        @file_put_contents(__DIR__ . '/debug.txt', "DB_ERR: " . $e->getMessage() . "\n", FILE_APPEND);
-    }
+// 4. Trace hit in debug.txt
+$logFile = __DIR__ . '/debug.txt';
+if ($inputLen > 0) {
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " HIT: {$inputLen} bytes\n", FILE_APPEND);
+}
+
+if (empty($rawInput)) { exit; }
+
+// 5. Build app components
+use Modules\Bot\UpdateFactory;
+use Modules\Bot\Dispatcher;
+
+// 6. Process Update
+$updateData = @json_decode($rawInput, true);
+if (!is_array($updateData)) { exit; }
+
+try {
+    $update = UpdateFactory::create($updateData);
+    
+    // Ignore duplicates
+    if ($update->isDuplicate()) { exit; }
+    
+    // Dispatch to handlers
+    $dispatcher = new Dispatcher($update);
+    $dispatcher->dispatch($update);
+    
+    // Mark as finished
+    $update->markAsProcessed();
+    
+} catch (\Throwable $e) {
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " FATAL: " . $e->getMessage() . "\n", FILE_APPEND);
 }
