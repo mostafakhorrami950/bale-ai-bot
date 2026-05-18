@@ -32,8 +32,8 @@ if (!headers_sent()) {
 function bot_log($level, $message, $context = array()) {
     try {
         $db = \Database\Database::getInstance();
-        $stmt = $db->prepare("INSERT INTO bot_logs (level, message, context) VALUES (?, ?, ?)");
-        $stmt->execute(array($level, $message, json_encode($context, JSON_UNESCAPED_UNICODE)));
+        $db->query("INSERT INTO bot_logs (level, message, context) VALUES (?, ?, ?)",
+            array((string)$level, (string)$message, json_encode($context, JSON_UNESCAPED_UNICODE)));
     } catch (\Throwable $e) {}
 }
 
