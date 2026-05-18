@@ -44,6 +44,9 @@ try {
     // Ignore duplicates
     if ($update->isDuplicate()) { exit; }
     
+    // Ignore group/channel messages (bot should not respond in groups/channels)
+    if ($update->isGroupOrChannel()) { exit; }
+    
     // Dispatch to handlers
     $dispatcher = new Dispatcher($update);
     $dispatcher->dispatch($update);

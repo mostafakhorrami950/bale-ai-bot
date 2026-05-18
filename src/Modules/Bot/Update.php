@@ -41,6 +41,33 @@ class Update
         return $this->data['message']['chat']['id'] ?? $this->data['callback_query']['message']['chat']['id'] ?? null;
     }
 
+    /**
+     * Get the chat type: 'private', 'group', 'channel', or null.
+     */
+    public function getChatType(): ?string
+    {
+        return $this->data['message']['chat']['type'] 
+            ?? $this->data['callback_query']['message']['chat']['type'] 
+            ?? null;
+    }
+
+    /**
+     * Check if the update is from a private chat (direct message to bot).
+     */
+    public function isPrivate(): bool
+    {
+        return $this->getChatType() === 'private';
+    }
+
+    /**
+     * Check if the update is from a group or channel (should be ignored).
+     */
+    public function isGroupOrChannel(): bool
+    {
+        $type = $this->getChatType();
+        return $type === 'group' || $type === 'channel' || $type === 'supergroup';
+    }
+
     public function getUserId(): ?int
     {
         return $this->data['message']['from']['id'] 
