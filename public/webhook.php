@@ -1,39 +1,41 @@
 <?php
 
-// 1. Load error handler FIRST
-require_once __DIR__ . '/error_handler.php';
+/**
+ * Bale AI Bot — Webhook Entry Point
+ * 
+ * CRITICAL: php://input MUST be read BEFORE any other code runs.
+ * Some hosting environments close php://input after ini_set or session_start.
+ */
 
-// 2. Load app
-require_once __DIR__ . '/../init.php';
-
-use Modules\Bot\UpdateFactory;
-use Modules\Bot\Dispatcher;
-
-// 3. Read input — MUST be done first before any output
+// 1. Read raw input IMMEDIATELY — before anything else
 $rawInput = @file_get_contents('php://input');
 $inputLen = strlen($rawInput ?? '');
 
-// 4. Log immediately to debug.txt
+// 2. Log to debug.txt right away
 $logFile = __DIR__ . '/debug.txt';
-@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " WEBHOOK_HIT: {$inputLen} bytes | SERVER_METHOD: {$_SERVER['REQUEST_METHOD']} | CONTENT_TYPE: {$_SERVER['CONTENT_TYPE']}\n", FILE_APPEND);
+@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " WEBHOOK_HIT: {$inputLen} bytes | METHOD: {$_SERVER['REQUEST_METHOD']} | CT: {$_SERVER['CONTENT_TYPE']}\n", FILE_APPEND);
 
-// 5. HTTP 200 ALWAYS
+// 3. HTTP 200 ALWAYS — Bale needs this to stop retrying
 if (!headers_sent()) {
     http_response_code(200);
     header('Content-Type: text/plain; charset=utf-8');
 }
 echo "OK";
+flush();
+if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
 
+// 4. If empty input — Bale health ping, just exit
 if (empty($rawInput)) {
-    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " EMPTY INPUT — probably Bale health ping\n", FILE_APPEND);
-    flush();
-    if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
+    @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " EMPTY_INPUT — health ping\n", FILE_APPEND);
     exit;
 }
 
-// Flush and continue
-flush();
-if (function_exists('fastcgi_finish_request')) { fastcgi_finish_request(); }
+// 5. Now load the app (after php://input is already saved)
+require_once __DIR__ . '/error_handler.php';
+require_once __DIR__ . '/../init.php';
+
+use Modules\Bot\UpdateFactory;
+use Modules\Bot\Dispatcher;
 
 // 6. Silent logger
 function bot_log($level, $message, $context = array()) {
@@ -47,17 +49,17 @@ function bot_log($level, $message, $context = array()) {
 }
 
 // 7. Parse JSON
-$rawInputDecoded = @json_decode($rawInput, true);
-if (!is_array($rawInputDecoded)) {
+$updateData = @json_decode($rawInput, true);
+if (!is_array($updateData)) {
     @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " INVALID_JSON: " . mb_substr($rawInput, 0, 500) . "\n", FILE_APPEND);
     exit;
 }
 
-@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " JSON_OK: update_id=" . ($rawInputDecoded['update_id'] ?? 'none') . " text=" . ($rawInputDecoded['message']['text'] ?? 'none') . "\n", FILE_APPEND);
+@file_put_contents($logFile, date('[Y-m-d H:i:s]') . " JSON_OK: update_id=" . ($updateData['update_id'] ?? 'none') . " text=" . ($updateData['message']['text'] ?? 'none') . "\n", FILE_APPEND);
 
 // 8. Create Update
 try {
-    $update = UpdateFactory::create($rawInputDecoded);
+    $update = UpdateFactory::create($updateData);
 } catch (\Throwable $e) {
     @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " CREATE_UPDATE_FAILED: " . $e->getMessage() . "\n", FILE_APPEND);
     exit;
@@ -74,11 +76,11 @@ if (!$update || (!$update->getChatId() && !$isPaymentQuery && !$isPaymentSuccess
 }
 
 // 9. Ignore channel messages
-$chatType = $rawInputDecoded['message']['chat']['type'] ?? $rawInputDecoded['callback_query']['message']['chat']['type'] ?? null;
+$chatType = $updateData['message']['chat']['type'] ?? $updateData['callback_query']['message']['chat']['type'] ?? null;
 if ($chatType === 'channel') { exit; }
 if ($chatType === 'supergroup' && $update->isMessage()) {
     $text = $update->getText() ?? '';
-    $isMentioned = str_contains($text, '@' . ($_ENV['BOT_USERNAME'] ?? 'bot')) || str_starts_with($text, '/') || !empty($rawInputDecoded['message']['entities']);
+    $isMentioned = str_contains($text, '@' . ($_ENV['BOT_USERNAME'] ?? 'bot')) || str_starts_with($text, '/') || !empty($updateData['message']['entities']);
     if (!$isMentioned) { exit; }
 }
 
