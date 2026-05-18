@@ -193,8 +193,17 @@ class ImageHandler extends BaseHandler
         if (isset($result['error'])) {
             \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, false, $result['error']);
             $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'text2img', 'failed', ?)", [$internalId, $modelId, $model['name'], $prompt, $referenceId]);
+            
+            // REFUND: Return the deducted credits immediately on any error
+            CreditService::creditBack($internalId, $cost, $referenceId . '_refund');
+            \Core\AILogger::log('IMAGE_REFUND', [
+                'user_id' => $internalId,
+                'cost' => $cost,
+                'reason' => $result['error'],
+            ]);
+            
             $this->clearUserState($internalId);
-            $this->baleClient->sendMessage($chatId, BotTextService::get('image_error', ['error' => $result['error']]));
+            $this->baleClient->sendMessage($chatId, BotTextService::get('image_error_refund', ['error' => $result['error'], 'cost' => $cost]));
             return;
         }
 

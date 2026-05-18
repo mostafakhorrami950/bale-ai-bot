@@ -370,6 +370,26 @@ class Img2ImgHandler extends BaseHandler
 
         $imageType = 'img2img';
 
+        // Handle API error with immediate refund
+        if (isset($result['error'])) {
+            \Core\AILogger::imageResult($internalId, 'img2img', $model['name'], $cost, false, $result['error']);
+            $db->query(
+                "INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id) VALUES (?, ?, ?, ?, 'img2img', 'failed', ?)",
+                [$internalId, $modelId, $model['name'], $prompt, $referenceId]
+            );
+            // REFUND: Return the deducted credits immediately
+            CreditService::creditBack($internalId, $cost, $referenceId . '_refund');
+            \Core\AILogger::log('IMAGE_REFUND', [
+                'user_id' => $internalId,
+                'cost' => $cost,
+                'reason' => $result['error'],
+                'handler' => 'img2img',
+            ]);
+            $this->clearUserState($internalId);
+            $this->baleClient->sendMessage($chatId, BotTextService::get('image_error_refund', ['error' => $result['error'], 'cost' => $cost]));
+            return;
+        }
+
         // Check if model returned text instead of image
         if (!empty($result['text'])) {
             $textResponse = $result['text'];

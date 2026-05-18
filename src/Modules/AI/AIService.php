@@ -18,7 +18,7 @@ class AIService
         $this->openrouterApiKey = Config::get('OPENROUTER_API_KEY', '');
         $this->openrouterBaseUrl = 'https://openrouter.ai/api/v1';
 
-        $this->timeout = (int) Config::get('AI_TIMEOUT', 300);
+        $this->timeout = (int) Config::get('AI_TIMEOUT', 600);
     }
 
     /**
