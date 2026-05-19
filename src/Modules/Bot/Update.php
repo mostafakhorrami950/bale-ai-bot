@@ -94,6 +94,25 @@ class Update
         return (string) $text;
     }
 
+    /**
+     * Extract deep link payload from /start <payload> command.
+     * Example: "/start instagram" returns "instagram".
+     * Returns null if no payload or not a /start command.
+     */
+    public function getDeepLinkPayload(): ?string
+    {
+        $text = $this->data['message']['text'] ?? '';
+        if (strpos($text, '/start ') !== 0) {
+            return null;
+        }
+        $parts = explode(' ', $text, 2);
+        if (count($parts) < 2) {
+            return null;
+        }
+        $payload = trim($parts[1]);
+        return $payload !== '' ? $payload : null;
+    }
+
     public function getCallbackId(): ?string
     {
         return $this->data['callback_query']['id'] ?? null;

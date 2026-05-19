@@ -21,167 +21,163 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
     <!-- Bootstrap 5 RTL CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Vazir Font (modern Persian font) -->
+    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
     <style>
+        :root {
+            --sidebar-bg: #1a1a2e;
+            --sidebar-hover: #16213e;
+            --sidebar-active: #0f3460;
+            --accent: #e94560;
+            --radius: 12px;
+        }
         body {
-            font-family: Tahoma, Arial, sans-serif;
-            background: #f4f6f9;
+            font-family: 'Vazirmatn', Tahoma, Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
             overflow-x: hidden;
         }
+        /* ─── Sidebar ─── */
         .sidebar {
             position: fixed;
             top: 0;
             right: 0;
-            width: 250px;
+            width: 260px;
             height: 100vh;
-            background: #2d3436;
-            color: #fff;
+            background: var(--sidebar-bg);
+            color: #e0e0e0;
             z-index: 1000;
             overflow-y: auto;
-            transition: all 0.3s;
+            transition: all 0.35s cubic-bezier(.4,.25,.3,1);
+            box-shadow: -4px 0 15px rgba(0,0,0,0.15);
+            scrollbar-width: thin;
         }
+        .sidebar::-webkit-scrollbar { width: 5px; }
+        .sidebar::-webkit-scrollbar-track { background: transparent; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 10px; }
         .sidebar-brand {
-            padding: 20px;
-            font-size: 1.2rem;
+            padding: 25px 20px 20px;
+            font-size: 1.3rem;
             font-weight: bold;
-            border-bottom: 1px solid #404b4d;
             text-align: center;
-            background: #1e272e;
+            background: linear-gradient(135deg, var(--sidebar-bg), var(--sidebar-active));
+            border-bottom: 2px solid var(--accent);
+            color: #fff;
         }
         .sidebar-brand small {
             display: block;
-            font-size: 0.75rem;
-            color: #adb5bd;
-            font-weight: normal;
-            margin-top: 4px;
+            font-size: 0.7rem;
+            color: #8899aa;
+            margin-top: 6px;
         }
         .sidebar .nav-link {
-            color: #b2bec3;
-            padding: 12px 20px;
-            border-bottom: 1px solid #404b4d;
-            transition: all 0.2s;
+            color: #b0b8c8;
+            padding: 13px 22px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            transition: all 0.25s;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
+            font-size: 0.9rem;
         }
         .sidebar .nav-link:hover {
-            background: #404b4d;
+            background: var(--sidebar-hover);
             color: #fff;
+            padding-right: 28px;
         }
         .sidebar .nav-link.active {
-            background: #0984e3;
+            background: var(--sidebar-active);
             color: #fff;
-            border-color: #0984e3;
+            border-right: 4px solid var(--accent);
         }
-        .sidebar .nav-link i {
-            width: 20px;
-            text-align: center;
-        }
+        /* ─── Main ─── */
         .main-content {
-            margin-right: 250px;
-            padding: 20px;
+            margin-right: 260px;
+            padding: 25px;
             min-height: 100vh;
+            transition: margin 0.35s;
         }
+        /* ─── Topbar ─── */
         .topbar {
-            background: #fff;
+            background: rgba(255,255,255,0.9);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             padding: 15px 25px;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+            border-radius: var(--radius);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.06);
             margin-bottom: 25px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            border: 1px solid rgba(255,255,255,0.8);
         }
-        .topbar h4 {
-            margin: 0;
-            color: #2d3436;
-        }
+        .topbar h4 { margin: 0; color: var(--sidebar-bg); font-weight: 700; font-size: 1.2rem; }
         .topbar .admin-info {
-            color: #636e72;
-            font-size: 0.9rem;
-        }
-        .stat-card {
-            background: #fff;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: transform 0.2s;
-            height: 100%;
-            border-right: 4px solid #0984e3;
-        }
-        .stat-card:hover {
-            transform: translateY(-3px);
-        }
-        .stat-card .stat-icon {
-            font-size: 2rem;
-            margin-bottom: 10px;
-        }
-        .stat-card .stat-number {
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: #2d3436;
-        }
-        .stat-card .stat-label {
-            color: #636e72;
-            font-size: 0.9rem;
-        }
-        .table-container {
-            background: #fff;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
-        }
-        .table-container h5 {
-            margin-bottom: 15px;
-            color: #2d3436;
-            border-bottom: 2px solid #f1f2f6;
-            padding-bottom: 10px;
-        }
-        .badge-active {
-            background: #00b894;
-            color: #fff;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-        }
-        .badge-inactive {
-            background: #d63031;
-            color: #fff;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-        }
-        .page-title {
-            margin-bottom: 20px;
-            color: #2d3436;
-        }
-        .page-title h3 {
-            margin: 0;
-        }
-        .page-title .breadcrumb {
-            background: none;
-            padding: 0;
-            margin: 5px 0 0;
-        }
-        .btn-sm-icon {
-            padding: 2px 8px;
-            font-size: 0.8rem;
-        }
-        .footer-note {
-            text-align: center;
-            color: #b2bec3;
-            padding: 20px 0;
+            color: #666;
+            background: rgba(0,0,0,0.03);
+            padding: 6px 15px;
+            border-radius: 30px;
             font-size: 0.85rem;
         }
+        /* ─── Stat Card ─── */
+        .stat-card {
+            background: #fff;
+            border-radius: var(--radius);
+            padding: 22px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            transition: all 0.3s;
+            height: 100%;
+            border-right: 4px solid var(--accent);
+        }
+        .stat-card:hover { transform:translateY(-5px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+        .stat-card .stat-icon { font-size: 2rem; margin-bottom: 10px; }
+        .stat-card .stat-number { font-size: 2rem; font-weight: 800; color: var(--sidebar-bg); }
+        .stat-card .stat-label { color: #888; font-size: 0.85rem; }
+        /* ─── Table Container ─── */
+        .table-container {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(6px);
+            border-radius: var(--radius);
+            padding: 22px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            margin-bottom: 20px;
+        }
+        .table-container h5 { margin-bottom: 15px; color: var(--sidebar-bg); border-bottom: 2px solid #f1f2f6; padding-bottom: 12px; font-weight: 700; }
+        .table { margin-bottom: 0; }
+        .table thead.table-dark { background: var(--sidebar-bg) !important; }
+        .table thead.table-dark th { border: none; font-weight: 600; font-size: 0.85rem; }
+        .badge-active { background: #00b894; color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; }
+        .badge-inactive { background: #d63031; color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; }
+        .page-title { margin-bottom: 20px; color: var(--sidebar-bg); }
+        .page-title h3 { margin: 0; font-weight: 800; }
+        .btn { border-radius: 8px; font-weight: 600; }
+        .btn-primary { background: var(--sidebar-active); border: none; }
+        .btn-primary:hover { background: var(--accent); transform: translateY(-1px); }
+        .btn-outline-danger { border-color: #d63031; color: #d63031; }
+        .btn-outline-danger:hover { background: #d63031; color: #fff; }
+        .btn-sm-icon { padding: 4px 10px; font-size: 0.75rem; }
+        .footer-note { text-align: center; color: #999; padding: 25px 0 10px; font-size: 0.8rem; border-top: 1px solid rgba(0,0,0,0.05); }
+        .form-control, .form-select { border-radius: 8px; border: 1px solid #dfe6e9; padding: 10px 14px; }
+        .form-control:focus, .form-select:focus { border-color: var(--sidebar-active); box-shadow: 0 0 0 3px rgba(15,52,96,0.1); }
+        .progress { border-radius: 10px; }
+        .progress-bar { border-radius: 10px; }
+        .alert { border-radius: var(--radius); border: none; }
+
+        /* ─── Responsive ─── */
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
                 height: auto;
+                max-height: 60px;
+                overflow: hidden;
                 position: relative;
+                transition: max-height 0.4s;
             }
-            .main-content {
-                margin-right: 0;
-            }
+            .sidebar:hover, .sidebar:focus-within { max-height: 100vh; overflow-y: auto; }
+            .sidebar-brand { padding: 15px; }
+            .sidebar-brand::after { content:' ☰ منو'; display: block; font-size: 0.8rem; color: var(--accent); }
+            .main-content { margin-right: 0; padding: 15px; }
         }
     </style>
 </head>
@@ -239,6 +235,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'settings' ? 'active' : ''; ?>" href="settings.php">
             <i class="bi bi-gear"></i> ⚙️ تنظیمات
         </a>
+        <a class="nav-link <?php echo ($activeMenu ?? '') === 'deep_links' ? 'active' : ''; ?>" href="deep_links.php">
+            <i class="bi bi-link-45deg"></i> 🔗 دیپ لینک‌ها
+        </a>
         <a class="nav-link <?php echo ($activeMenu ?? '') === 'bot_texts' ? 'active' : ''; ?>" href="bot_texts.php">
             <i class="bi bi-file-text"></i> 📝 مدیریت متن‌ها
         </a>
@@ -274,11 +273,9 @@ if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== tru
 
     <!-- Footer -->
     <div class="footer-note">
-        <i class="bi bi-robot"></i> ربات هوش مصنوعی بله &mdash; پنل مدیریت
-    </div>
+        <i class="bi bi-robot"></i> ربات هوش مصنوعی    </div>
 </div>
 
-<!-- Bootstrap JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

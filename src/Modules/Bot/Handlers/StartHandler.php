@@ -8,6 +8,9 @@ use Core\BotTextService;
 
 class StartHandler extends BaseHandler
 {
+    /**
+     * Handle the /start command, including deep link payloads.
+     */
     public function handle($update): void
     {
         $chatId = $update->getChatId();
@@ -18,12 +21,39 @@ class StartHandler extends BaseHandler
         if (!$chatId) return;
 
         try {
-            // Save/update user profile info (first_name, username) on every /start
+            // ─── Extract deep link payload ───
+            $deepLinkPayload = $update->getDeepLinkPayload();
+            $db = Database::getInstance();
+            $campaignRow = null;
+            $entryId = null;
+
+            if ($deepLinkPayload) {
+                error_log("DEBUG: Deep link payload detected: " . $deepLinkPayload);
+
+                // Find campaign
+                $stmt = $db->query("SELECT id, payload, title, welcome_text FROM deep_link_campaigns WHERE payload = ? AND is_active = 1", [$deepLinkPayload]);
+                $campaignRow = $stmt->fetch();
+
+                // Log entry
+                $entryStmt = $db->prepare(
+                    "INSERT INTO deep_link_entries (campaign_id, payload, bale_user_id, first_name, username) VALUES (?, ?, ?, ?, ?)"
+                );
+                $entryStmt->execute([
+                    $campaignRow ? (int)$campaignRow['id'] : null,
+                    $deepLinkPayload,
+                    $userId,
+                    $update->getFirstName() ?? '',
+                    $update->getUsername() ?? ''
+                ]);
+                $entryId = (int)$db->lastInsertId();
+                error_log("DEBUG: Deep link entry logged. entry_id={$entryId}");
+            }
+
+            // ─── Save/update user profile ───
             $firstName = $update->getFirstName();
             $username = $update->getUsername();
             if ($firstName || $username) {
                 try {
-                    $db = Database::getInstance();
                     $user = User::findByBaleId($userId);
                     if ($user) {
                         $db->query(
@@ -32,6 +62,14 @@ class StartHandler extends BaseHandler
                              ON DUPLICATE KEY UPDATE first_name = COALESCE(NULLIF(?, ''), first_name), username = COALESCE(NULLIF(?, ''), username)",
                             [$user['id'], $firstName ?? '', $username ?? '', $firstName ?? '', $username ?? '']
                         );
+
+                        // Link deep link entry to registered user if user exists
+                        if ($entryId) {
+                            $db->query(
+                                "UPDATE deep_link_entries SET registered_user_id = ? WHERE id = ?",
+                                [$user['id'], $entryId]
+                            );
+                        }
                     }
                 } catch (\Throwable $e) {
                     error_log("StartHandler: profile save error: " . $e->getMessage());
@@ -39,6 +77,25 @@ class StartHandler extends BaseHandler
             }
 
             $isRegistered = User::isRegistered($userId);
+
+            // ─── Determine welcome text ───
+            $welcomeText = null;
+            if (!$isRegistered) {
+                if ($campaignRow && !empty($campaignRow['welcome_text'])) {
+                    $welcomeText = $campaignRow['welcome_text'];
+                } else {
+                    $welcomeText = BotTextService::get('welcome_unregistered');
+                    if ($deepLinkPayload) {
+                        $welcomeText = str_replace('{payload}', $deepLinkPayload, BotTextService::get('welcome_deeplink_unregistered', ['payload' => $deepLinkPayload]));
+                    }
+                }
+            } else {
+                if ($campaignRow && !empty($campaignRow['welcome_text'])) {
+                    $welcomeText = $campaignRow['welcome_text'];
+                } else {
+                    $welcomeText = BotTextService::get('welcome_registered');
+                }
+            }
 
             if (!$isRegistered) {
                 $keyboard = [
@@ -49,12 +106,13 @@ class StartHandler extends BaseHandler
                     'one_time_keyboard' => true
                 ];
 
-                $this->baleClient->sendMessage(
-                    $chatId,
-                    BotTextService::get('welcome_unregistered'),
-                    $keyboard
-                );
+                $this->baleClient->sendMessage($chatId, $welcomeText, $keyboard);
             } else {
+                // Show campaign welcome even for registered users (once)
+                if ($campaignRow && !empty($campaignRow['welcome_text'])) {
+                    $this->baleClient->sendMessage($chatId, $welcomeText);
+                }
+
                 // Check membership before showing main menu
                 if (!$this->checkMembership($userId, $chatId)) return;
                 $this->showMainMenu($chatId);
