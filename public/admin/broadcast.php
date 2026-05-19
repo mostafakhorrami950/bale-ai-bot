@@ -41,12 +41,18 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
 if (isset($_GET['delete_user'])) {
     $userId = (int)$_GET['delete_user'];
     try {
-        // Note: chat_sessions doesn't exist, use chat_conversations + chat_messages instead
-        // memory_entries doesn't exist — use user_memories
-        foreach (['user_profiles', 'ai_requests', 'user_memories', 'transactions', 'bot_state', 'broadcast_log', 'payment_requests'] as $t) {
+        // Delete ALL user-related data from ALL relevant tables
+        // Note: 'transactions' doesn't exist — use actual table names
+        foreach (['user_profiles', 'ai_requests', 'user_memories', 'user_memory_settings', 'bot_state', 'broadcast_log', 'conversation_summaries'] as $t) {
             $db->query("DELETE FROM {$t} WHERE user_id = ?", [$userId]);
         }
-        // Delete chat conversations and messages
+        // payments uses user_id (Bale user ID, not internal ID)
+        $db->query("DELETE FROM payments WHERE user_id = ?", [$userId]);
+        // credit_ledger uses user_id (internal ID)
+        $db->query("DELETE FROM credit_ledger WHERE user_id = ?", [$userId]);
+        // uploaded_files uses user_id
+        $db->query("DELETE FROM uploaded_files WHERE user_id = ?", [$userId]);
+        // Delete chat conversations and their messages
         $convIds = $db->query("SELECT id FROM chat_conversations WHERE user_id = ?", [$userId])->fetchAll();
         foreach ($convIds as $conv) {
             $db->query("DELETE FROM chat_messages WHERE conversation_id = ?", [(int)$conv['id']]);
