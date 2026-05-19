@@ -925,6 +925,7 @@ class VideoHandler extends BaseHandler
 
                 // Download each video and send as file
                 $sentCount = 0;
+                $generationId = $result['generation_id'] ?? ('video_' . $internalId . '_' . time());
                 foreach ($urls as $index => $contentUrl) {
                     $this->aiLog('INFO', 'Downloading video', ['index' => $index, 'url' => $contentUrl]);
                     $videoData = $videoService->download($contentUrl);
@@ -941,18 +942,22 @@ class VideoHandler extends BaseHandler
 
                     $this->aiLog('INFO', 'Video saved to temp file', ['path' => $tempFile, 'size' => strlen($videoData)]);
 
+                    // Save to permanent storage + insert into generated_files
+                    $savedPath = $this->saveGeneratedFile($internalId, $generationId, $modelName, $prompt, 'video', 'text2video', $videoData, $ext, $tempFile);
+
                     // Send as DOCUMENT (file), not as video content
-                    $caption = ($index === 0) ? "🎬 **ویدئو ساخته شد!**\n🤖 مدل: {$modelName}" : '';
-                    $success = $this->baleClient->sendDocument($chatId, $tempFile, $caption);
+                    $caption = ($index === 0) ? "🎬 **ویدئو ساخته شد!**\n🤖 مدل: {$modelName}\n🆔 Gen: {$generationId}" : '';
+                    $sendPath = $savedPath ?: $tempFile;
+                    $success = $this->baleClient->sendDocument($chatId, $sendPath, $caption);
                     if ($success) {
                         $sentCount++;
-                        $this->aiLog('INFO', 'Video sent to user', ['index' => $index, 'file' => $tempFile]);
+                        $this->aiLog('INFO', 'Video sent to user', ['index' => $index, 'file' => $sendPath]);
                     } else {
                         $this->aiLog('ERROR', 'Failed to send video to user', ['index' => $index, 'error' => $this->baleClient->getLastError()]);
                         $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال ویدئو. لینک مستقیم:\n{$contentUrl}");
                     }
 
-                    // Clean up temp file
+                    // Clean up temp file (permanent storage file stays)
                     @unlink($tempFile);
                 }
 
@@ -961,16 +966,23 @@ class VideoHandler extends BaseHandler
                     $refId = 'video_' . $internalId . '_' . time();
                     CreditService::deduct($internalId, $cost, $refId);
 
+                    $keyboard = [
+                        'inline_keyboard' => [
+                            [['text' => "🔍 پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']],
+                        ]
+                    ];
                     $msg = "✅ **{$sentCount} ویدئو ارسال شد!**\n"
                          . "💰 هزینه کسر شده: {$cost} اعتبار\n"
-                         . "🔖 reference: {$refId}";
-                    $this->baleClient->sendMessage($chatId, $msg);
+                         . "🆔 **Generation ID:** `{$generationId}`\n\n"
+                         . "📌 اگر ویدئو را دریافت نکرده‌اید، روی دکمه زیر کلیک کنید و **Generation ID** را ارسال کنید.";
+                    $this->baleClient->sendMessage($chatId, $msg, $keyboard);
 
                     $this->aiLog('INFO', 'Video generation completed', [
                         'user_id' => $internalId,
                         'model' => $modelName,
                         'cost' => $cost,
                         'ref_id' => $refId,
+                        'generation_id' => $generationId,
                         'sent_count' => $sentCount,
                     ]);
                 }
@@ -1086,6 +1098,46 @@ class VideoHandler extends BaseHandler
             $row = $stmt->fetch();
             return $row ? (int) $row['id'] : null;
         } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Save a generated file locally and insert a record into generated_files table.
+     */
+    private function saveGeneratedFile(int $internalId, string $generationId, string $modelName, string $prompt, string $fileType, string $mediaType, string $fileData, string $ext, string $sourceFile): ?string
+    {
+        try {
+            $storageDir = Config::get('BASE_PATH', __DIR__ . '/../../..') . '/uploads/ai_generated/';
+            if (!is_dir($storageDir)) @mkdir($storageDir, 0755, true);
+            
+            $filename = 'vid_' . $internalId . '_' . time() . '_' . bin2hex(random_bytes(4)) . $ext;
+            $filePath = $storageDir . $filename;
+            
+            // Copy from source file or write data
+            if (file_exists($sourceFile)) {
+                copy($sourceFile, $filePath);
+            } else {
+                file_put_contents($filePath, $fileData);
+            }
+            
+            if (!file_exists($filePath)) {
+                $this->aiLog('ERROR', 'saveGeneratedFile: failed to create file', ['path' => $filePath]);
+                return null;
+            }
+            
+            $fileSize = filesize($filePath);
+            $mime = 'video/mp4';
+            
+            $db = Database::getInstance();
+            $db->query("INSERT INTO generated_files (user_id, generation_id, model_name, prompt, file_type, media_type, file_path, file_size, mime_type, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+                [$internalId, $generationId, $modelName, $prompt, $fileType, $mediaType, $filePath, $fileSize, $mime]
+            );
+            
+            $this->aiLog('INFO', 'saveGeneratedFile: file saved', ['path' => $filePath, 'size' => $fileSize]);
+            return $filePath;
+        } catch (\Throwable $e) {
+            $this->aiLog('ERROR', 'saveGeneratedFile exception', ['error' => $e->getMessage()]);
             return null;
         }
     }

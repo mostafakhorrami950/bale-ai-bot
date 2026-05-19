@@ -458,13 +458,24 @@ class Img2ImgHandler extends BaseHandler
                 [$internalId, $modelId, $model['name'], $prompt, $imageType, $referenceId, $actualUsd, $cost]
             );
 
-            // Send only the first image
-            $sent = $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
+            // Save file locally and send
+            $generationId = $result['generation_id'] ?? $referenceId;
+            $savedPath = $this->saveGeneratedFile($internalId, $generationId, $model['name'], $prompt, 'image', 'img2img', $result['images'][0]);
+            if ($savedPath) {
+                $sent = $this->baleClient->sendDocument($chatId, $savedPath, "🖼 تصویر ویرایش شده\n🆔 Gen: {$generationId}");
+            } else {
+                $sent = $this->sendEditImageToUser($chatId, $result['images'][0], $cost);
+            }
             $this->clearUserState($internalId);
             if ($sent === false) {
                 $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید کرد اما امکان ارسال وجود نداشت.");
             } else {
-                $this->baleClient->sendMessage($chatId, BotTextService::get('edit_complete'), $this->getMainMenuInlineKeyboard());
+                $keyboard = $this->getMainMenuInlineKeyboard();
+                $keyboard['inline_keyboard'][] = [['text' => "🔍 پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']];
+                $msg = BotTextService::get('edit_complete')
+                    . "\n\n🆔 **Generation ID:** `{$generationId}`\n\n"
+                    . "📌 اگر تصویر را دریافت نکرده‌اید، روی دکمه «🔍 پیگیری ساخت تصویر و ویدئو» کلیک کنید و **Generation ID** را ارسال کنید.";
+                $this->baleClient->sendMessage($chatId, $msg, $keyboard);
             }
         } else {
             // Failure
@@ -574,6 +585,62 @@ class Img2ImgHandler extends BaseHandler
             }
             $db->query("DELETE FROM bot_state WHERE user_id = ?", [$internalId]);
         } catch (\Throwable $e) {
+        }
+    }
+
+    /**
+     * Save a generated file locally and insert a record into generated_files table.
+     */
+    private function saveGeneratedFile(int $internalId, string $generationId, string $modelName, string $prompt, string $fileType, string $mediaType, string $urlOrData): ?string
+    {
+        try {
+            $imageData = null;
+            $mime = 'image/png';
+            $ext = 'png';
+            
+            if (str_starts_with($urlOrData, 'data:')) {
+                $parts = explode('base64,', $urlOrData, 2);
+                $b64Data = $parts[1] ?? $parts[0] ?? '';
+                $imageData = base64_decode($b64Data, true);
+                if (str_contains($urlOrData, 'image/jpeg')) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_contains($urlOrData, 'image/gif')) { $mime = 'image/gif'; $ext = 'gif'; }
+            } elseif (str_starts_with($urlOrData, 'http')) {
+                $ch = curl_init($urlOrData);
+                curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_FOLLOWLOCATION => true]);
+                $imageData = curl_exec($ch);
+                curl_close($ch);
+                $first = substr($imageData ?? '', 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+            } elseif (file_exists($urlOrData)) {
+                $imageData = file_get_contents($urlOrData);
+                $first = substr($imageData ?? '', 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+            }
+            
+            if (empty($imageData) || strlen($imageData) < 500) {
+                Logger::error('saveGeneratedFile', 'Empty or too small image data', ['generation_id' => $generationId]);
+                return null;
+            }
+            
+            $storageDir = BASE_PATH . '/uploads/ai_generated/';
+            if (!is_dir($storageDir)) @mkdir($storageDir, 0755, true);
+            
+            $filename = 'img_' . $internalId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+            $filePath = $storageDir . $filename;
+            file_put_contents($filePath, $imageData);
+            
+            $db = Database::getInstance();
+            $db->query("INSERT INTO generated_files (user_id, generation_id, model_name, prompt, file_type, media_type, file_path, file_size, mime_type, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+                [$internalId, $generationId, $modelName, $prompt, $fileType, $mediaType, $filePath, strlen($imageData), $mime]
+            );
+            
+            Logger::info('saveGeneratedFile', 'File saved successfully', ['path' => $filePath, 'size' => strlen($imageData)]);
+            return $filePath;
+        } catch (\Throwable $e) {
+            Logger::error('saveGeneratedFile', $e->getMessage(), ['generation_id' => $generationId]);
+            return null;
         }
     }
 

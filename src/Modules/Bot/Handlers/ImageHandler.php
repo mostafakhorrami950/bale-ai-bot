@@ -471,6 +471,7 @@ class ImageHandler extends BaseHandler
             'inline_keyboard' => [
                 [['text' => "\xE2\x9C\xA8 ساخت تصویر", 'callback_data' => 'generate_image'], ['text' => "\xF0\x9F\x96\xBC\xEF\xB8\x8F ویرایش عکس", 'callback_data' => 'edit_image']],
                 [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x8E\xAC ساخت ویدئو", 'callback_data' => 'generate_video']],
+                [['text' => "\xF0\x9F\x94\x8D پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']],
                 [['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account'], ['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit']],
                 [['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
             ]
