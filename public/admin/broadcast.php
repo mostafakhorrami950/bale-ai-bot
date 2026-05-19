@@ -18,10 +18,15 @@ $db = Database::getInstance();
  * Get filtered list of target users for broadcast.
  */
 function getFilteredUsers($db, string $filterType, ?string $filterValue): array {
-    // users table has phone_number (not phone), use it as display name
     switch ($filterType) {
         case 'all':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u ORDER BY u.id ASC")->fetchAll();
+            // Users from `users` table (registered or unregistered) + users from deep_link_entries who just started the bot
+            $usersFromDb = $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u ORDER BY u.id ASC")->fetchAll();
+            // Also include unique bale_user_ids from deep_link_entries that are NOT in users table
+            $additional = $db->query(
+                "SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.bale_user_id IS NOT NULL AND dle.bale_user_id NOT IN (SELECT bale_user_id FROM users WHERE bale_user_id IS NOT NULL) GROUP BY dle.bale_user_id ORDER BY dle.id ASC"
+            )->fetchAll();
+            return array_merge($usersFromDb, $additional);
         case 'registered':
             return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.registered = 1 ORDER BY u.id ASC")->fetchAll();
         case 'unregistered':
