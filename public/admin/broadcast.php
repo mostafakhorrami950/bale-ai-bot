@@ -28,9 +28,9 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
             )->fetchAll();
             return array_merge($usersFromDb, $additional);
         case 'registered':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.registered = 1 ORDER BY u.id ASC")->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.is_registered = 1 ORDER BY u.id ASC")->fetchAll();
         case 'unregistered':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.registered = 0 ORDER BY u.id ASC")->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.is_registered = 0 ORDER BY u.id ASC")->fetchAll();
         case 'deep_link_all':
             return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
         case 'deep_link_registered':
@@ -130,14 +130,37 @@ if (isset($_GET['ajax_process'])) {
         }
         $db->query("UPDATE broadcast_jobs SET status = 'processing', started_at = NOW() WHERE id = ? AND status != 'processing'", [$jobId]);
 
+        // Check if job was cancelled
+        $jobCheck = $db->query("SELECT status FROM broadcast_jobs WHERE id = ?", [$jobId])->fetch();
+        if (!$jobCheck || $jobCheck['status'] === 'cancelled') {
+            echo json_encode(['done' => true, 'cancelled' => true]); exit;
+        }
+
         $processed = $db->query("SELECT user_id FROM broadcast_log WHERE job_id = ?", [$jobId])->fetchAll();
         $pIds = array_column($processed, 'user_id');
+        // sentBaleUserIds: positive IDs from users table, negative IDs are bale_user_ids encoded as -bale_user_id
+        $sentBaleUserIds = [];
+        foreach ($processed as $pRow) {
+            $uid = (int)$pRow['user_id'];
+            if ($uid > 0) { 
+                // Try to resolve via users table
+                $uRow = $db->query("SELECT bale_user_id FROM users WHERE id = ?", [$uid])->fetch();
+                if ($uRow && $uRow['bale_user_id']) $sentBaleUserIds[] = (int)$uRow['bale_user_id'];
+            } elseif ($uid < 0) {
+                // Negative = direct bale_user_id (deep_link_unregistered)
+                $sentBaleUserIds[] = abs($uid);
+            }
+        }
+        
         $targetUsers = getFilteredUsers($db, $job['filter_type'], $job['filter_value']);
 
         $batch = [];
         foreach ($targetUsers as $u) {
             if (count($batch) >= 10) break;
+            // Skip if internal_id exists and already processed
             if ($u['internal_id'] && in_array($u['internal_id'], $pIds)) continue;
+            // Skip if no internal_id but bale_user_id already sent (deep_link_unregistered prevention)
+            if (!$u['internal_id'] && $u['bale_user_id'] && in_array((int)$u['bale_user_id'], $sentBaleUserIds)) continue;
             $batch[] = $u;
         }
 
@@ -170,9 +193,10 @@ if (isset($_GET['ajax_process'])) {
                 } catch (\Throwable $e) {}
             }
             $status = $success ? 'sent' : 'failed';
-            if ($internalId) {
-                $db->query("INSERT INTO broadcast_log (job_id, user_id, status, created_at) VALUES (?, ?, ?, NOW())", [$jobId, $internalId, $status]);
-            }
+            // CRITICAL FIX: For users without internal_id (deep_link_unregistered), 
+            // use negative bale_user_id to track them in broadcast_log and prevent infinite loop
+            $logUserId = $internalId ? (int)$internalId : (int)('-' . $chatId);
+            $db->query("INSERT INTO broadcast_log (job_id, user_id, status, created_at) VALUES (?, ?, ?, NOW())", [$jobId, $logUserId, $status]);
             if ($success) $sent++; else $failed++;
         }
         $db->query("UPDATE broadcast_jobs SET sent_count = sent_count + ?, failed_count = failed_count + ? WHERE id = ?", [$sent, $failed, $jobId]);
@@ -182,6 +206,13 @@ if (isset($_GET['ajax_process'])) {
         echo json_encode(['error' => $e->getMessage()]);
     }
     exit;
+}
+
+// ─── Cancel job ───
+if (isset($_GET['cancel_job'])) {
+    $cancelJobId = (int)$_GET['cancel_job'];
+    $db->query("UPDATE broadcast_jobs SET status = 'cancelled', completed_at = NOW() WHERE id = ? AND status IN ('pending','processing')", [$cancelJobId]);
+    $message = "⏹️ ارسال #{$cancelJobId} متوقف شد.";
 }
 
 // ─── Fetch data ───
@@ -312,11 +343,11 @@ ob_start();
             <div class="table-responsive">
                 <table class="table table-hover table-sm">
                     <thead class="table-dark">
-                        <tr><th>#</th><th>متن</th><th>فیلتر</th><th>وضعیت</th><th>کل</th><th>موفق</th><th>ناموفق</th><th>زمان</th></tr>
+                        <tr><th>#</th><th>متن</th><th>فیلتر</th><th>وضعیت</th><th>کل</th><th>موفق</th><th>ناموفق</th><th>زمان</th><th>عملیات</th></tr>
                     </thead>
                     <tbody>
                         <?php if (empty($jobs)): ?>
-                        <tr><td colspan="8" class="text-center text-muted">هیچ ارسالی ثبت نشده.</td></tr>
+                        <tr><td colspan="9" class="text-center text-muted">هیچ ارسالی ثبت نشده.</td></tr>
                         <?php else: foreach ($jobs as $j): ?>
                         <tr>
                             <td><?php echo $j['id']; ?></td>
@@ -334,6 +365,13 @@ ob_start();
                             <td class="text-success"><?php echo $j['sent_count']; ?></td>
                             <td class="text-danger"><?php echo $j['failed_count']; ?></td>
                             <td><small><?php echo substr($j['created_at'] ?? '', 0, 16); ?></small></td>
+                            <td>
+                                <?php if ($j['status'] === 'pending' || $j['status'] === 'processing'): ?>
+                                <a href="?cancel_job=<?php echo $j['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('ارسال #<?php echo $j['id']; ?> متوقف شود؟')">⏹️ توقف</a>
+                                <?php else: ?>
+                                <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
                         </tr>
                         <?php endforeach; endif; ?>
                     </tbody>
