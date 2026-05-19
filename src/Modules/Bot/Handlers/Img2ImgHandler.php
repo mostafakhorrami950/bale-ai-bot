@@ -124,6 +124,7 @@ class Img2ImgHandler extends BaseHandler
         }
 
         $keyboard = ['inline_keyboard' => []];
+        $allButtons = [];
         $msg = BotTextService::get('edit_model_selection_title');
         foreach ($models as $model) {
             $displayName = $model['display_name'] ?? $model['name'];
@@ -131,11 +132,12 @@ class Img2ImgHandler extends BaseHandler
             $msg .= '• ' . $displayName . ' — هزینه: ' . $model['cost_per_image'] . ' اعتبار';
             if ($desc) $msg .= ' — ' . $desc;
             $msg .= "\n";
-            $keyboard['inline_keyboard'][] = [[
+            $allButtons[] = [
                 'text' => $displayName,
                 'callback_data' => "edit_select_model_{$model['id']}"
-            ]];
+            ];
         }
+        $keyboard['inline_keyboard'] = array_chunk($allButtons, 2);
 
         $internalId = $this->resolveUserId($userId);
         $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'selecting_model_edit')", [$internalId]);

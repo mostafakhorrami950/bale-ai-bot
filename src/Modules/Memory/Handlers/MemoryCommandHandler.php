@@ -303,13 +303,11 @@ class MemoryCommandHandler
         $encoded = urlencode($memoryText);
         $keyboard = [
             'inline_keyboard' => [
-                [
-                    ['text' => '⭐', 'callback_data' => 'mem_imp_' . $encoded . '_1'],
-                    ['text' => '⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_2'],
-                    ['text' => '⭐⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_3'],
-                    ['text' => '⭐⭐⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_4'],
-                    ['text' => '⭐⭐⭐⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_5'],
-                ]
+                [['text' => '⭐ (کم)', 'callback_data' => 'mem_imp_' . $encoded . '_1']],
+                [['text' => '⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_2']],
+                [['text' => '⭐⭐⭐ (متوسط)', 'callback_data' => 'mem_imp_' . $encoded . '_3']],
+                [['text' => '⭐⭐⭐⭐', 'callback_data' => 'mem_imp_' . $encoded . '_4']],
+                [['text' => '⭐⭐⭐⭐⭐ (زیاد)', 'callback_data' => 'mem_imp_' . $encoded . '_5']],
             ]
         ];
 

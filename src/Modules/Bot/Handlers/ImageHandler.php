@@ -91,11 +91,17 @@ class ImageHandler extends BaseHandler
                 $msg .= "• {$displayName} — هزینه: {$model['cost_per_image']} اعتبار";
                 if ($desc) $msg .= " — {$desc}";
                 $msg .= "\n";
-                $keyboard['inline_keyboard'][] = [[
-                    'text' => $displayName,
-                    'callback_data' => "img_select_model_{$model['id']}"
-                ]];
             }
+            // Chunk models into groups of 2 for 2-column layout
+            $allButtons = [];
+            foreach ($models as $model) {
+                $displayName = $model['display_name'] ?? $model['name'];
+                $allButtons[] = [
+                    'text' => $displayName,
+                    'callback_data' => 'img_select_model_' . $model['id']
+                ];
+            }
+            $keyboard['inline_keyboard'] = array_chunk($allButtons, 2);
             $internalId = $this->resolveUserId($userId);
             $nextState = ($type === 'image') ? 'selecting_model_image' : 'selecting_model_edit';
             $db->query(

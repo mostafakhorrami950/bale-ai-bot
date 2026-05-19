@@ -18,19 +18,20 @@ $db = Database::getInstance();
  * Get filtered list of target users for broadcast.
  */
 function getFilteredUsers($db, string $filterType, ?string $filterValue): array {
+    // Get display name from users table (phone), no alias dependency
     switch ($filterType) {
         case 'all':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(up.first_name,'') as first_name, COALESCE(up.username,'') as username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id ORDER BY u.id ASC")->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone,'') as first_name FROM users u ORDER BY u.id ASC")->fetchAll();
         case 'registered':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(up.first_name,'') as first_name, COALESCE(up.username,'') as username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.registered = 1 ORDER BY u.id ASC")->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone,'') as first_name FROM users u WHERE u.registered = 1 ORDER BY u.id ASC")->fetchAll();
         case 'unregistered':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(up.first_name,'') as first_name, COALESCE(up.username,'') as username FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.registered = 0 ORDER BY u.id ASC")->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone,'') as first_name FROM users u WHERE u.registered = 0 ORDER BY u.id ASC")->fetchAll();
         case 'deep_link_all':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(up.first_name,'') as first_name, COALESCE(up.username,'') as username FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
         case 'deep_link_registered':
-            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(up.first_name,'') as first_name, COALESCE(up.username,'') as username FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? AND dle.is_registered = 1 GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? AND dle.is_registered = 1 GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
         case 'deep_link_unregistered':
-            return $db->query("SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name, COALESCE(dle.username,'') as username FROM deep_link_entries dle WHERE dle.payload = ? AND dle.is_registered = 0 AND dle.bale_user_id IS NOT NULL GROUP BY dle.bale_user_id ORDER BY dle.id ASC", [$filterValue])->fetchAll();
+            return $db->query("SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.payload = ? AND dle.is_registered = 0 AND dle.bale_user_id IS NOT NULL GROUP BY dle.bale_user_id ORDER BY dle.id ASC", [$filterValue])->fetchAll();
         default:
             return [];
     }
@@ -40,9 +41,16 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
 if (isset($_GET['delete_user'])) {
     $userId = (int)$_GET['delete_user'];
     try {
-        foreach (['user_profiles', 'chat_sessions', 'ai_requests', 'memory_entries', 'transactions', 'bot_state', 'broadcast_log', 'payment_requests'] as $t) {
+        // Note: chat_sessions doesn't exist, use chat_conversations + chat_messages instead
+        foreach (['user_profiles', 'ai_requests', 'memory_entries', 'transactions', 'bot_state', 'broadcast_log', 'payment_requests'] as $t) {
             $db->query("DELETE FROM {$t} WHERE user_id = ?", [$userId]);
         }
+        // Delete chat conversations and messages
+        $convIds = $db->query("SELECT id FROM chat_conversations WHERE user_id = ?", [$userId])->fetchAll();
+        foreach ($convIds as $conv) {
+            $db->query("DELETE FROM chat_messages WHERE conversation_id = ?", [(int)$conv['id']]);
+        }
+        $db->query("DELETE FROM chat_conversations WHERE user_id = ?", [$userId]);
         $db->query("UPDATE deep_link_entries SET registered_user_id = NULL, is_registered = 0 WHERE registered_user_id = ?", [$userId]);
         $db->query("DELETE FROM users WHERE id = ?", [$userId]);
         $message = "✅ کاربر #{$userId} و تمام اطلاعات وابسته حذف شد.";
