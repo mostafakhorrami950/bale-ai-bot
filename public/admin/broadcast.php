@@ -1,6 +1,6 @@
 <?php
 /**
- * Broadcast v2 — Auto-send with filters + user delete
+ * Broadcast v2 — Auto-send with filters + user delete + image support + bale_user_ids filter
  */
 require_once __DIR__ . '/../../init.php';
 
@@ -20,9 +20,7 @@ $db = Database::getInstance();
 function getFilteredUsers($db, string $filterType, ?string $filterValue): array {
     switch ($filterType) {
         case 'all':
-            // Users from `users` table (registered or unregistered) + users from deep_link_entries who just started the bot
             $usersFromDb = $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u ORDER BY u.id ASC")->fetchAll();
-            // Also include unique bale_user_ids from deep_link_entries that are NOT in users table
             $additional = $db->query(
                 "SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.bale_user_id IS NOT NULL AND dle.bale_user_id NOT IN (SELECT bale_user_id FROM users WHERE bale_user_id IS NOT NULL) GROUP BY dle.bale_user_id ORDER BY dle.id ASC"
             )->fetchAll();
@@ -38,9 +36,36 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
         case 'deep_link_unregistered':
             return $db->query("SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.payload = ? AND dle.is_registered = 0 AND dle.bale_user_id IS NOT NULL GROUP BY dle.bale_user_id ORDER BY dle.id ASC", [$filterValue])->fetchAll();
         case 'deep_link_returning':
-            // کاربر تکراری: کاربری که قبلاً ثبت‌نام کرده و حالا مجدداً از طریق دیپ لینک وارد ربات شده
-            // u.created_at < dle.clicked_at یعنی کاربر قبل از کلیک روی دیپ لینک ثبت‌نام کرده بوده
             return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? AND u.created_at < dle.clicked_at AND dle.is_registered = 1 GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
+        case 'bale_user_ids':
+            // کاربر ادمین لیست شناسه‌های بله را با کاما وارد کرده
+            $ids = array_map('intval', explode(',', $filterValue));
+            $ids = array_filter($ids, fn($v) => $v > 0);
+            if (empty($ids)) return [];
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $usersFromDb = $db->query(
+                "SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u WHERE u.bale_user_id IN ({$placeholders}) ORDER BY u.id ASC",
+                $ids
+            )->fetchAll();
+            // Also try deep_link_entries for IDs not found in users
+            $foundIds = array_column($usersFromDb, 'bale_user_id');
+            $missingIds = array_diff($ids, $foundIds);
+            $additional = [];
+            if (!empty($missingIds)) {
+                $mPlaceholders = implode(',', array_fill(0, count($missingIds), '?'));
+                $additional = $db->query(
+                    "SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.bale_user_id IN ({$mPlaceholders}) AND dle.bale_user_id IS NOT NULL GROUP BY dle.bale_user_id ORDER BY dle.id ASC",
+                    $missingIds
+                )->fetchAll();
+                // For IDs found nowhere, create virtual entries
+                $foundMissing = array_column($additional, 'bale_user_id');
+                foreach ($missingIds as $mid) {
+                    if (!in_array($mid, $foundMissing)) {
+                        $additional[] = ['internal_id' => null, 'bale_user_id' => $mid, 'first_name' => 'کاربر مستقیم'];
+                    }
+                }
+            }
+            return array_merge($usersFromDb, $additional);
         default:
             return [];
     }
@@ -50,18 +75,12 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
 if (isset($_GET['delete_user'])) {
     $userId = (int)$_GET['delete_user'];
     try {
-        // Delete ALL user-related data from ALL relevant tables
-        // Note: 'transactions' doesn't exist — use actual table names
         foreach (['user_profiles', 'ai_requests', 'user_memories', 'user_memory_settings', 'bot_state', 'broadcast_log', 'conversation_summaries'] as $t) {
             $db->query("DELETE FROM {$t} WHERE user_id = ?", [$userId]);
         }
-        // payments uses user_id (Bale user ID, not internal ID)
         $db->query("DELETE FROM payments WHERE user_id = ?", [$userId]);
-        // credit_ledger uses user_id (internal ID)
         $db->query("DELETE FROM credit_ledger WHERE user_id = ?", [$userId]);
-        // uploaded_files uses user_id
         $db->query("DELETE FROM uploaded_files WHERE user_id = ?", [$userId]);
-        // Delete chat conversations and their messages
         $convIds = $db->query("SELECT id FROM chat_conversations WHERE user_id = ?", [$userId])->fetchAll();
         foreach ($convIds as $conv) {
             $db->query("DELETE FROM chat_messages WHERE conversation_id = ?", [(int)$conv['id']]);
@@ -87,6 +106,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         if (in_array($filterType, ['deep_link_all', 'deep_link_registered', 'deep_link_unregistered', 'deep_link_returning'])) {
             $filterValue = trim($_POST['filter_payload'] ?? '');
             if (empty($filterValue)) throw new \InvalidArgumentException('لطفاً نام کمپین دیپ لینک را وارد کنید.');
+        } elseif ($filterType === 'bale_user_ids') {
+            $filterValue = trim($_POST['bale_user_ids'] ?? '');
+            if (empty($filterValue)) throw new \InvalidArgumentException('لطفاً شناسه‌های بله را وارد کنید.');
         }
 
         $imagePath = null;
@@ -138,16 +160,13 @@ if (isset($_GET['ajax_process'])) {
 
         $processed = $db->query("SELECT user_id FROM broadcast_log WHERE job_id = ?", [$jobId])->fetchAll();
         $pIds = array_column($processed, 'user_id');
-        // sentBaleUserIds: positive IDs from users table, negative IDs are bale_user_ids encoded as -bale_user_id
         $sentBaleUserIds = [];
         foreach ($processed as $pRow) {
             $uid = (int)$pRow['user_id'];
             if ($uid > 0) { 
-                // Try to resolve via users table
                 $uRow = $db->query("SELECT bale_user_id FROM users WHERE id = ?", [$uid])->fetch();
                 if ($uRow && $uRow['bale_user_id']) $sentBaleUserIds[] = (int)$uRow['bale_user_id'];
             } elseif ($uid < 0) {
-                // Negative = direct bale_user_id (deep_link_unregistered)
                 $sentBaleUserIds[] = abs($uid);
             }
         }
@@ -157,9 +176,7 @@ if (isset($_GET['ajax_process'])) {
         $batch = [];
         foreach ($targetUsers as $u) {
             if (count($batch) >= 10) break;
-            // Skip if internal_id exists and already processed
             if ($u['internal_id'] && in_array($u['internal_id'], $pIds)) continue;
-            // Skip if no internal_id but bale_user_id already sent (deep_link_unregistered prevention)
             if (!$u['internal_id'] && $u['bale_user_id'] && in_array((int)$u['bale_user_id'], $sentBaleUserIds)) continue;
             $batch[] = $u;
         }
@@ -171,30 +188,64 @@ if (isset($_GET['ajax_process'])) {
 
         $sent = 0; $failed = 0;
         $token = Config::get('BALE_BOT_TOKEN');
+        $imagePath = $job['image_path'];
+        $hasImage = !empty($imagePath);
+        
         foreach ($batch as $user) {
             $chatId = (int)$user['bale_user_id'];
             $internalId = $user['internal_id'];
             $success = false;
             if ($chatId > 0) {
                 try {
-                    $params = ['chat_id' => $chatId, 'text' => $job['message_text']];
-                    $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendMessage");
-                    curl_setopt_array($ch, [
-                        CURLOPT_POST => true,
-                        CURLOPT_POSTFIELDS => json_encode($params),
-                        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-                        CURLOPT_RETURNTRANSFER => true,
-                        CURLOPT_TIMEOUT => 10,
-                    ]);
-                    curl_exec($ch);
-                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    curl_close($ch);
-                    $success = ($httpCode === 200);
+                    if ($hasImage) {
+                        // Send photo with caption
+                        $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendPhoto");
+                        $postFields = [
+                            'chat_id' => $chatId,
+                            'caption' => $job['message_text'],
+                        ];
+                        if (file_exists($imagePath)) {
+                            // Local file — use CURLFile
+                            $postFields['photo'] = new \CURLFile($imagePath);
+                        } elseif (filter_var($imagePath, FILTER_VALIDATE_URL)) {
+                            // URL — send as string
+                            $postFields['photo'] = $imagePath;
+                        } else {
+                            // Invalid path — fallback to text only
+                            $hasImage = false;
+                            $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendMessage");
+                            $postFields = ['chat_id' => $chatId, 'text' => $job['message_text']];
+                        }
+                        curl_setopt_array($ch, [
+                            CURLOPT_POST => true,
+                            CURLOPT_POSTFIELDS => $postFields,
+                            CURLOPT_RETURNTRANSFER => true,
+                            CURLOPT_TIMEOUT => 30,
+                            CURLOPT_SSL_VERIFYPEER => true,
+                        ]);
+                        curl_exec($ch);
+                        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                        curl_close($ch);
+                        $success = ($httpCode === 200);
+                    } else {
+                        // Text only
+                        $params = ['chat_id' => $chatId, 'text' => $job['message_text']];
+                        $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendMessage");
+                        curl_setopt_array($ch, [
+                            CURLOPT_POST => true,
+                            CURLOPT_POSTFIELDS => json_encode($params),
+                            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                            CURLOPT_RETURNTRANSFER => true,
+                            CURLOPT_TIMEOUT => 10,
+                        ]);
+                        curl_exec($ch);
+                        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                        curl_close($ch);
+                        $success = ($httpCode === 200);
+                    }
                 } catch (\Throwable $e) {}
             }
             $status = $success ? 'sent' : 'failed';
-            // CRITICAL FIX: For users without internal_id (deep_link_unregistered), 
-            // use negative bale_user_id to track them in broadcast_log and prevent infinite loop
             $logUserId = $internalId ? (int)$internalId : (int)('-' . $chatId);
             $db->query("INSERT INTO broadcast_log (job_id, user_id, status, created_at) VALUES (?, ?, ?, NOW())", [$jobId, $logUserId, $status]);
             if ($success) $sent++; else $failed++;
@@ -305,6 +356,7 @@ ob_start();
                             <option value="deep_link_registered">دیپ لینک (ثبت‌نام کرده)</option>
                             <option value="deep_link_unregistered">دیپ لینک (ثبت‌نام نکرده)</option>
                             <option value="deep_link_returning">دیپ لینک (کاربر تکراری)</option>
+                            <option value="bale_user_ids">شناسه‌های بله (دستی)</option>
                         </select>
                         <div id="filterPayloadGroup" style="display:none;">
                             <label class="form-label mt-2">Payload کمپین</label>
@@ -313,6 +365,11 @@ ob_start();
                                 <option value="<?php echo $c['payload']; ?>"><?php echo htmlspecialchars($c['title']); ?> (<?php echo $c['payload']; ?>)</option>
                                 <?php endforeach; ?>
                             </select>
+                        </div>
+                        <div id="filterBaleIdsGroup" style="display:none;">
+                            <label class="form-label mt-2">شناسه‌های کاربران بله (با کاما جدا کنید):</label>
+                            <input type="text" name="bale_user_ids" class="form-control" dir="ltr" placeholder="مثال: 1625645128,1980810710,598567558">
+                            <div class="form-text">شناسه‌های عددی کاربران را با کاما (,) از هم جدا کنید.</div>
                         </div>
                     </div>
                 </div>
@@ -333,7 +390,8 @@ ob_start();
         <script>
         function toggleFilter(el){
             var v = el.value;
-            document.getElementById('filterPayloadGroup').style.display = v.indexOf('deep_link') === 0 ? 'block' : 'none';
+            document.getElementById('filterPayloadGroup').style.display = (v.indexOf('deep_link') === 0) ? 'block' : 'none';
+            document.getElementById('filterBaleIdsGroup').style.display = (v === 'bale_user_ids') ? 'block' : 'none';
         }
         </script>
 
