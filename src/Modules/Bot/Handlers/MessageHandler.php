@@ -95,7 +95,6 @@ class MessageHandler extends BaseHandler
             }
 
             $helpText = $settings['help_text'] ?? BotTextService::get('help_default_text');
-
             $helpImage = $settings['help_image'] ?? null;
 
             if (!empty($helpImage) && filter_var($helpImage, FILTER_VALIDATE_URL)) {
@@ -111,14 +110,21 @@ class MessageHandler extends BaseHandler
     }
 
     /**
-     * Unified 6-button main menu (inline keyboard with callback_data).
+     * Unified 8-button main menu (inline keyboard with callback_data).
+     *
+     * Row 1: ساخت تصویر | ویرایش عکس
+     * Row 2: چت با هوش مصنوعی | ساخت ویدئو
+     * Row 3: پیگیری ساخت تصویر و ویدئو
+     * Row 4: حساب کاربری | خرید اعتبار
+     * Row 5: راهنما
      */
     public static function getMainMenuKeyboard(): array
     {
         return [
             'inline_keyboard' => [
                 [['text' => "\xF0\x9F\x8E\xA8 ساخت تصویر", 'callback_data' => 'generate_image'], ['text' => "\xF0\x9F\x96\xBC\xEF\xB8\x8F ویرایش عکس", 'callback_data' => 'edit_image']],
-                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x8E\xAC ساخت ویدئو با هوش مصنوعی", 'callback_data' => 'generate_video']],
+                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x8E\xAC ساخت ویدئو", 'callback_data' => 'generate_video']],
+                [['text' => "\xF0\x9F\x94\x8D پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']],
                 [['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account'], ['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit']],
                 [['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
             ]

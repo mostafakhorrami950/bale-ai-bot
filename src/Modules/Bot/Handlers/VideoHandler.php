@@ -941,22 +941,15 @@ class VideoHandler extends BaseHandler
 
                     $this->aiLog('INFO', 'Video saved to temp file', ['path' => $tempFile, 'size' => strlen($videoData)]);
 
-                    // Send via Bale sendVideo
+                    // Send as DOCUMENT (file), not as video content
                     $caption = ($index === 0) ? "🎬 **ویدئو ساخته شد!**\n🤖 مدل: {$modelName}" : '';
-                    $success = $this->baleClient->sendVideo($chatId, $tempFile, $caption);
+                    $success = $this->baleClient->sendDocument($chatId, $tempFile, $caption);
                     if ($success) {
                         $sentCount++;
                         $this->aiLog('INFO', 'Video sent to user', ['index' => $index, 'file' => $tempFile]);
                     } else {
                         $this->aiLog('ERROR', 'Failed to send video to user', ['index' => $index, 'error' => $this->baleClient->getLastError()]);
-                        // Fallback: try sendDocument
-                        $docSuccess = $this->baleClient->sendDocument($chatId, $tempFile, $caption);
-                        if ($docSuccess) {
-                            $sentCount++;
-                            $this->aiLog('INFO', 'Video sent as document fallback', ['index' => $index]);
-                        } else {
-                            $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال ویدئو. لینک مستقیم:\n{$contentUrl}");
-                        }
+                        $this->baleClient->sendMessage($chatId, "⚠️ خطا در ارسال ویدئو. لینک مستقیم:\n{$contentUrl}");
                     }
 
                     // Clean up temp file

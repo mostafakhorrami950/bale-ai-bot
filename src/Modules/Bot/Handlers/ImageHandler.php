@@ -103,7 +103,6 @@ class ImageHandler extends BaseHandler
                 if ($desc) $msg .= " — {$desc}";
                 $msg .= "\n";
             }
-            // Chunk models into groups of 2 for 2-column layout
             $allButtons = [];
             foreach ($models as $model) {
                 $displayName = $model['display_name'] ?? $model['name'];
@@ -226,26 +225,21 @@ class ImageHandler extends BaseHandler
 
         // Check if model returned text instead of image
         if (!empty($result['text'])) {
-            // Model returned text only — refund image cost, charge based on chars
             $textResponse = $result['text'];
             $usage = $result['usage'] ?? [];
             
-            // Refund the image cost (it was deducted earlier)
             CreditService::creditBack($internalId, $cost, $referenceId . '_refund');
             
-            // Calculate text-based cost
             $inputChars = mb_strlen($prompt);
             $outputChars = mb_strlen($textResponse);
             $costPerInputChar = (float)($model['cost_per_input_char'] ?? 0.000001);
             $costPerOutputChar = (float)($model['cost_per_output_char'] ?? 0.000002);
             $textCost = (int)ceil(($inputChars * $costPerInputChar) + ($outputChars * $costPerOutputChar));
-            if ($textCost < 1) $textCost = 1; // Minimum 1 credit
+            if ($textCost < 1) $textCost = 1;
             
-            // Deduct text-based cost
             $textRefId = $referenceId . '_text';
             CreditService::deduct($internalId, $textCost, $textRefId);
             
-            // Fetch actual USD cost from usage if available
             $actualUsd = 0;
             if (!empty($usage)) {
                 $actualUsd = (float)($usage['cost'] ?? 0);
@@ -268,7 +262,6 @@ class ImageHandler extends BaseHandler
             
             $this->clearUserState($internalId);
             
-            // Send text response (clamped to 4000 chars for Bale API limit)
             $displayText = mb_substr($textResponse, 0, 4000);
             $caption = BotTextService::get('text_fallback_caption', ['text' => $displayText, 'cost' => $textCost]);
             $this->baleClient->sendMessage($chatId, $caption, $this->getMainMenuInlineKeyboard());
@@ -285,7 +278,6 @@ class ImageHandler extends BaseHandler
             }
         }
         
-        // Model returned image(s) — normal flow
         $db->query("INSERT INTO ai_requests (user_id, model_id, model_name, prompt, image_type, status, reference_id, actual_cost_usd, cost_charged) VALUES (?, ?, ?, ?, 'text2img', 'success', ?, ?, ?)", 
             [$internalId, $modelId, $model['name'], $prompt, $referenceId, $actualUsd, $cost]);
 
@@ -293,12 +285,21 @@ class ImageHandler extends BaseHandler
         $generationId = $result['generation_id'] ?? $referenceId;
         \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);
         \Core\AILogger::log('IMAGE_SEND', ['count' => count($images)]);
-        foreach ($images as $urlOrData) {
-            $sent = $this->sendImageToUser($chatId, $urlOrData, $cost);
-            if ($sent) {
-                $this->saveGeneratedFile($internalId, $generationId, $model['name'], $prompt, 'image', 'text2img', $urlOrData);
+        foreach ($images as $idx => $urlOrData) {
+            // Save file locally first
+            $savedPath = $this->saveGeneratedFile($internalId, $generationId, $model['name'], $prompt, 'image', 'text2img', $urlOrData);
+            if ($savedPath) {
+                // Send as DOCUMENT (file) not photo
+                $sent = $this->baleClient->sendDocument($chatId, $savedPath, "🖼 تصویر #" . ($idx+1) . "\n🆔 Gen: {$generationId}");
+                if (!$sent) {
+                    \Core\AILogger::error('image_send', 'Failed to send file to user', ['chat_id' => $chatId, 'path' => $savedPath]);
+                }
             } else {
-                \Core\AILogger::error('image_send', 'Failed to send image to user', ['chat_id' => $chatId]);
+                // Fallback: send via old method
+                $sent = $this->sendImageToUser($chatId, $urlOrData, $cost);
+                if (!$sent) {
+                    \Core\AILogger::error('image_send', 'Failed to send image to user', ['chat_id' => $chatId]);
+                }
             }
         }
 
@@ -348,7 +349,7 @@ class ImageHandler extends BaseHandler
      */
     private function sendImageToUser(int $chatId, string $urlOrData, int $cost): bool
     {
-        // Case 1: data URI → convert to temp file, send as multipart
+        // Case 1: data URI → convert to temp file, send as document (file)
         if (str_starts_with($urlOrData, 'data:')) {
             $parts = explode('base64,', $urlOrData, 2);
             $b64Data = $parts[1] ?? $parts[0] ?? '';
@@ -361,23 +362,17 @@ class ImageHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
                 file_put_contents($tmpFile, $imageData);
-                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('image_caption', ['cost' => $cost]));
+                // Send as DOCUMENT
+                $sent = $this->baleClient->sendDocument($chatId, $tmpFile, "🖼 تصویر ساخته شده");
                 @unlink($tmpFile);
                 return $sent;
             }
             return false;
         }
 
-        // Case 2: HTTP URL → try direct send first, if fails download and send multipart
+        // Case 2: HTTP URL → download ourselves and send as document
         if (str_starts_with($urlOrData, 'http')) {
-            // Try direct URL send first (Bale downloads it)
-            $resp = $this->baleClient->sendPhoto($chatId, $urlOrData, BotTextService::get('image_caption', ['cost' => $cost]));
-            if (isset($resp['ok']) && $resp['ok'] === true) {
-                return true;
-            }
-
-            // Bale can't download it — download ourselves and send as multipart
-            \Core\AILogger::log('IMAGE_DOWNLOAD_RETRY', ['url' => substr($urlOrData, 0, 100)]);
+            \Core\AILogger::log('IMAGE_DOWNLOAD', ['url' => substr($urlOrData, 0, 100)]);
             $ch = curl_init($urlOrData);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -400,7 +395,7 @@ class ImageHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'img_') . '.' . $ext;
                 file_put_contents($tmpFile, $imgData);
-                $sent = $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('image_caption', ['cost' => $cost]));
+                $sent = $this->baleClient->sendDocument($chatId, $tmpFile, "🖼 تصویر ساخته شده");
                 @unlink($tmpFile);
                 return $sent;
             }
@@ -409,9 +404,9 @@ class ImageHandler extends BaseHandler
             return false;
         }
 
-        // Case 3: local file path → send as multipart
+        // Case 3: local file path → send as document
         if (file_exists($urlOrData)) {
-            $sent = $this->baleClient->sendPhotoFile($chatId, $urlOrData, BotTextService::get('image_caption', ['cost' => $cost]));
+            $sent = $this->baleClient->sendDocument($chatId, $urlOrData, "🖼 تصویر ساخته شده");
             @unlink($urlOrData);
             return $sent;
         }
@@ -422,8 +417,9 @@ class ImageHandler extends BaseHandler
 
     /**
      * Save a generated image file locally and insert a record into generated_files table.
+     * Returns the saved file path on success, or null on failure.
      */
-    private function saveGeneratedFile(int $internalId, string $generationId, string $modelName, string $prompt, string $fileType, string $mediaType, string $urlOrData): void
+    private function saveGeneratedFile(int $internalId, string $generationId, string $modelName, string $prompt, string $fileType, string $mediaType, string $urlOrData): ?string
     {
         try {
             $imageData = null;
@@ -451,7 +447,7 @@ class ImageHandler extends BaseHandler
                 elseif (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
             }
             
-            if (empty($imageData) || strlen($imageData) < 500) return;
+            if (empty($imageData) || strlen($imageData) < 500) return null;
             
             $filename = 'img_' . $internalId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
             $filePath = $this->storageDir . $filename;
@@ -461,8 +457,11 @@ class ImageHandler extends BaseHandler
             $db->query("INSERT INTO generated_files (user_id, generation_id, model_name, prompt, file_type, media_type, file_path, file_size, mime_type, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
                 [$internalId, $generationId, $modelName, $prompt, $fileType, $mediaType, $filePath, strlen($imageData), $mime]
             );
+            
+            return $filePath;
         } catch (\Throwable $e) {
             \Core\AILogger::error('saveGeneratedFile', $e->getMessage());
+            return null;
         }
     }
 
@@ -471,8 +470,9 @@ class ImageHandler extends BaseHandler
         return [
             'inline_keyboard' => [
                 [['text' => "\xE2\x9C\xA8 ساخت تصویر", 'callback_data' => 'generate_image'], ['text' => "\xF0\x9F\x96\xBC\xEF\xB8\x8F ویرایش عکس", 'callback_data' => 'edit_image']],
-                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account']],
-                [['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit'], ['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
+                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x8E\xAC ساخت ویدئو", 'callback_data' => 'generate_video']],
+                [['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account'], ['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit']],
+                [['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
             ]
         ];
     }

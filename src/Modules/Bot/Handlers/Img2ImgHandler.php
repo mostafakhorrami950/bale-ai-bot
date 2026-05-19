@@ -496,7 +496,7 @@ class Img2ImgHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
                 file_put_contents($tmpFile, $imageData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
+                $this->baleClient->sendDocument($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return;
             }
@@ -528,10 +528,17 @@ class Img2ImgHandler extends BaseHandler
                 $ext = str_replace('image/', '', $mime);
                 $tmpFile = tempnam(sys_get_temp_dir(), 'edit_') . '.' . $ext;
                 file_put_contents($tmpFile, $imgData);
-                $this->baleClient->sendPhotoFile($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
+                $this->baleClient->sendDocument($chatId, $tmpFile, BotTextService::get('edit_image_caption', ['cost' => $cost]));
                 @unlink($tmpFile);
                 return;
             }
+        }
+
+        // Local file path
+        if (file_exists($urlOrData)) {
+            $this->baleClient->sendDocument($chatId, $urlOrData, BotTextService::get('edit_image_caption', ['cost' => $cost]));
+            @unlink($urlOrData);
+            return;
         }
 
         Logger::error('sendEditImageToUser', 'Could not send image', ['type' => gettype($urlOrData)]);
@@ -575,8 +582,10 @@ class Img2ImgHandler extends BaseHandler
         return [
             'inline_keyboard' => [
                 [['text' => "\xE2\x9C\xA8 ساخت تصویر", 'callback_data' => 'generate_image'], ['text' => "\xF0\x9F\x96\xBC\xEF\xB8\x8F ویرایش عکس", 'callback_data' => 'edit_image']],
-                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account']],
-                [['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit'], ['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
+                [['text' => "\xF0\x9F\x92\xAC چت با هوش مصنوعی", 'callback_data' => 'start_chat'], ['text' => "\xF0\x9F\x8E\xAC ساخت ویدئو", 'callback_data' => 'generate_video']],
+                [['text' => "\xF0\x9F\x94\x8D پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']],
+                [['text' => "\xF0\x9F\x91\xA4 حساب کاربری", 'callback_data' => 'account'], ['text' => "\xF0\x9F\x92\xB3 خرید اعتبار", 'callback_data' => 'buy_credit']],
+                [['text' => "\xE2\x9D\x93 راهنما", 'callback_data' => 'help']],
             ]
         ];
     }
