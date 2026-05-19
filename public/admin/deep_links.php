@@ -102,8 +102,8 @@ if (!empty($campaigns)) {
         $stats = $db->query(
             "SELECT 
                 COUNT(*) as total, 
-                SUM(is_registered) as reg,
-                SUM(CASE WHEN u.created_at < e.clicked_at THEN 1 ELSE 0 END) as returning 
+                COALESCE(SUM(e.is_registered), 0) as reg,
+                COALESCE(SUM(CASE WHEN u.created_at IS NOT NULL AND u.created_at < e.clicked_at THEN 1 ELSE 0 END), 0) as returning 
              FROM deep_link_entries e 
              LEFT JOIN users u ON u.id = e.registered_user_id 
              WHERE e.campaign_id = ?",
