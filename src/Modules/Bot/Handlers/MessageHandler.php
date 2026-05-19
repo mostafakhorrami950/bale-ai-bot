@@ -57,8 +57,8 @@ class MessageHandler extends BaseHandler
 
         if ($saved) {
             // ─── Update deep link entries: mark as registered ───
+            $userId = $update->getUserId();
             try {
-                $userId = $update->getUserId();
                 if ($userId) {
                     $db = Database::getInstance();
                     $userRow = \Modules\Bot\Models\User::findByBaleId($userId);
@@ -73,8 +73,18 @@ class MessageHandler extends BaseHandler
                 error_log("MessageHandler: deep_link registration update error: " . $e->getMessage());
             }
 
-            // Send registration success, then show MAIN MENU (not reply keyboard)
+            // Send registration success
             $this->baleClient->sendMessage($baleId, BotTextService::get('registration_success'));
+
+            // MANDATORY MEMBERSHIP CHECK immediately after registration
+            if ($userId) {
+                if (!$this->checkMembership($userId, $baleId)) {
+                    // checkMembership already sent the required channels message
+                    return;
+                }
+            }
+
+            // Show welcome and MAIN MENU (not reply keyboard)
             $this->baleClient->sendMessage($baleId, BotTextService::get('registration_welcome'), $this->getMainMenuKeyboard());
         } else {
             $this->baleClient->sendMessage($baleId, BotTextService::get('registration_failed'));

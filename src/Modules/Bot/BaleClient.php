@@ -434,7 +434,8 @@ class BaleClient
             CURLOPT_POSTFIELDS     => json_encode($params),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_TIMEOUT        => 8,          // Reduced from 10 to fail faster on network lag
+            CURLOPT_CONNECTTIMEOUT => 4,          // 4s to connect, prevents long hanging
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
                 'Accept: application/json',

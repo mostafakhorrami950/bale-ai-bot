@@ -126,13 +126,36 @@ class Router
             if ($data === 'track_generation') {
                 return new TrackGenerationHandler($this->baleClient);
             }
+
+            // check_membership callback must ALWAYS be handled by CallbackHandler
+            if ($data === 'check_membership') {
+                return new CallbackHandler($this->baleClient);
+            }
             // plan_* callbacks — buy credit flow
             if (str_starts_with($data, 'plan_') || str_starts_with($data, 'pay_zibal_') || str_starts_with($data, 'pay_bale_')) {
                 return new BuyCreditHandler($this->baleClient);
             }
             if (isset($map[$data])) {
                 $class = 'Modules\\Bot\\Handlers\\' . $map[$data];
-                return new $class($this->baleClient);
+                $handler = new $class($this->baleClient);
+
+                // MANDATORY MEMBERSHIP CHECK for all callbacks (except check_membership itself)
+                if ($data !== 'check_membership' && $data !== 'help') {
+                    $bUserId = $update->getUserId();
+                    $cId = $update->getChatId();
+                    if ($bUserId && $cId) {
+                        // We use a temporary object to access the protected checkMembership method
+                        $checker = new class($this->baleClient) extends BaseHandler {
+                            public function handle($update): void {}
+                            public function check($u, $c) { return $this->checkMembership($u, $c); }
+                        };
+                        if (!$checker->check($bUserId, $cId)) {
+                            return new UnknownUpdateHandler($this->baleClient); // Silent block
+                        }
+                    }
+                }
+
+                return $handler;
             }
             return new UnknownUpdateHandler($this->baleClient);
         }
@@ -157,6 +180,20 @@ class Router
                 $state = 'idle';
             }
             
+            // MANDATORY MEMBERSHIP CHECK for all state-based flows
+            if ($state !== 'idle') {
+                $cId = $update->getChatId();
+                if ($userId && $cId) {
+                    $checker = new class($this->baleClient) extends BaseHandler {
+                        public function handle($update): void {}
+                        public function check($u, $c) { return $this->checkMembership($u, $c); }
+                    };
+                    if (!$checker->check($userId, $cId)) {
+                        return new UnknownUpdateHandler($this->baleClient); // Silent block
+                    }
+                }
+            }
+
             if ($state === 'awaiting_image_prompt' || $state === 'selecting_model_image' || $state === 'ai_processing') {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> ImageHandler");
                 return new ImageHandler($this->baleClient);

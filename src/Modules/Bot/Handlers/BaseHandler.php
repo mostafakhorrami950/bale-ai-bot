@@ -68,31 +68,33 @@ abstract class BaseHandler
                 return true; // no required channels
             }
 
-            error_log("checkMembership: Checking " . count($channels) . " required channels for user $baleUserId");
-
             $nonMembers = [];
             foreach ($channels as $ch) {
                 $chId = $ch['channel_id'];
                 $title = $ch['title'] ?? $chId;
-                error_log("checkMembership: Checking channel id=$chId title=$title");
 
-                    try {
-                        $result = $this->baleClient->getChatMember($chId, $baleUserId);
-                        error_log("checkMembership: Channel $title result=" . json_encode($result));
+                try {
+                    $result = $this->baleClient->getChatMember($chId, $baleUserId);
 
-                        // If result is null, API returned ok:false (bot not admin, wrong channel_id, etc.)
-                        // In this case, fail OPEN — allow user through since we cannot verify
-                        if ($result === null) {
-                            error_log("checkMembership: API returned null for channel $title — cannot verify, allowing user through");
-                            continue;
+                    // If result is null, API returned ok:false or Connection Error
+                    if ($result === null) {
+                        // Check if it was a connection error or just "not member/not admin"
+                        $lastError = $this->baleClient->getLastError();
+                        if (str_contains($lastError, 'timed out') || str_contains($lastError, 'refused')) {
+                            // If Bale API is unreachable, we MUST inform user that verification is currently impossible
+                            $this->baleClient->sendMessage($chatId, "⚠️ در حال حاضر امکان برقراری ارتباط با سرورهای بله برای تأیید عضویت وجود ندارد. لطفاً چند لحظه دیگر تلاش کنید.");
+                            return false;
                         }
-
-                        $status = $result['status'] ?? 'left';
-                    } catch (\Throwable $e) {
-                        // Per-channel failure: log it and fail OPEN (allow user through)
-                        error_log("checkMembership: ERROR checking channel $title: " . $e->getMessage());
+                        // Other API errors (bot not admin): assume NOT member for safety, or allow if you prefer
+                        $nonMembers[] = $ch;
                         continue;
                     }
+
+                    $status = $result['status'] ?? 'left';
+                } catch (\Throwable $e) {
+                    $nonMembers[] = $ch;
+                    continue;
+                }
 
                 if (!in_array($status, ['member', 'creator', 'administrator'], true)) {
                     error_log("checkMembership: User $baleUserId NOT a member of channel $title (status=$status)");
@@ -133,9 +135,8 @@ abstract class BaseHandler
             error_log("checkMembership: User $baleUserId passed all " . count($channels) . " channel checks");
             return true;
         } catch (\Throwable $e) {
-            // If API fails completely, allow through (fail open)
             error_log("checkMembership FATAL error: " . $e->getMessage());
-            return true;
+            return false; // Fail closed for security
         }
     }
 }
