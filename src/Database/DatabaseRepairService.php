@@ -57,6 +57,8 @@ class DatabaseRepairService
         $this->ensureBotTextsTable();
         $this->ensureAiLogsTable();
         $this->purgeOldLogs();
+        $this->ensureDeepLinkTables();
+        $this->ensureBroadcastV2Columns();
 
         return $this->messages;
     }
@@ -1092,6 +1094,81 @@ class DatabaseRepairService
         if ($this->tableExists('bot_logs')) {
             $deleted = \Core\AILogger::purgeBotLogs();
             $this->log("🧹 {$deleted} رکورد از bot_logs (قدیمی‌تر از ۳۰ روز) پاک شد.");
+        }
+    }
+
+    private function ensureDeepLinkTables(): void
+    {
+        // deep_link_campaigns
+        if (!$this->tableExists('deep_link_campaigns')) {
+            $this->exec("
+                CREATE TABLE deep_link_campaigns (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    payload VARCHAR(64) NOT NULL UNIQUE,
+                    title VARCHAR(128) NOT NULL,
+                    welcome_text TEXT DEFAULT NULL,
+                    is_active TINYINT(1) NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_payload (payload),
+                    INDEX idx_active (is_active)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->log('✅ جدول deep_link_campaigns ایجاد شد.');
+        }
+        // deep_link_entries
+        if (!$this->tableExists('deep_link_entries')) {
+            $this->exec("
+                CREATE TABLE deep_link_entries (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    campaign_id INT DEFAULT NULL,
+                    payload VARCHAR(64) NOT NULL,
+                    bale_user_id BIGINT DEFAULT NULL,
+                    registered_user_id INT DEFAULT NULL,
+                    is_registered TINYINT(1) NOT NULL DEFAULT 0,
+                    first_name VARCHAR(128) DEFAULT NULL,
+                    username VARCHAR(128) DEFAULT NULL,
+                    clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    registered_at TIMESTAMP NULL DEFAULT NULL,
+                    INDEX idx_payload (payload),
+                    INDEX idx_campaign (campaign_id),
+                    INDEX idx_registered (is_registered),
+                    INDEX idx_bale_user (bale_user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->log('✅ جدول deep_link_entries ایجاد شد.');
+        }
+        // Default campaigns
+        $defaults = [
+            ['instagram', 'اینستاگرام'],
+            ['telegram', 'کانال تلگرام'],
+            ['youtube', 'یوتیوب'],
+            ['webinar', 'وبینار'],
+            ['ads', 'تبلیغات کلیکی'],
+        ];
+        foreach ($defaults as $d) {
+            $this->execIgnored("INSERT IGNORE INTO deep_link_campaigns (payload, title) VALUES (?, ?)", [$d[0], $d[1]]);
+        }
+        $this->log('✅ کمپین کمپین‌های دیفالت اضافه شدند.');
+    }
+
+    private function ensureBroadcastV2Columns(): void
+    {
+        if ($this->tableExists('broadcast_jobs')) {
+            if (!$this->columnExists('broadcast_jobs', 'filter_type')) {
+                $this->exec("ALTER TABLE broadcast_jobs ADD COLUMN filter_type VARCHAR(32) DEFAULT 'all' AFTER image_path");
+                $this->log('✅ ستون filter_type به broadcast_jobs اضافه شد.');
+            }
+            if (!$this->columnExists('broadcast_jobs', 'filter_value')) {
+                $this->exec("ALTER TABLE broadcast_jobs ADD COLUMN filter_value VARCHAR(128) DEFAULT NULL AFTER filter_type");
+                $this->log('✅ ستون filter_value به broadcast_jobs اضافه شد.');
+            }
+        }
+        if ($this->tableExists('broadcast_log')) {
+            if (!$this->indexExists('broadcast_log', 'idx_user_delete')) {
+                $this->exec("CREATE INDEX idx_user_delete ON broadcast_log (user_id)");
+                $this->log('✅ ایندکس idx_user_delete روی broadcast_log ایجاد شد.');
+            }
         }
     }
 

@@ -463,9 +463,13 @@ ob_start();
     </div>
 </div>
 
-<p class="mt-3">
+<div class="d-flex gap-2 mt-4">
     <a href="users.php" class="btn btn-outline-secondary">← بازگشت به لیست کاربران</a>
-</p>
+    <a href="broadcast.php?delete_user=<?php echo $userId; ?>" class="btn btn-outline-danger"
+       onclick="return confirm('⚠️ کاربر #<?php echo $userId; ?> و تمام اطلاعات وابسته حذف شود؟\n\nپس از حذف، کاربر می‌تواند مجدداً ثبت‌نام کند.');">
+       🗑️ حذف کامل کاربر
+    </a>
+</div>
 
 <?php
 $pageContent = ob_get_clean();

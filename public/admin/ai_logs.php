@@ -83,7 +83,36 @@ ob_start();
 <div class="row mb-3">
     <div class="col-md-3"><div class="stat-card"><div class="stat-icon">&#x1F4DD;</div><div class="stat-number"><?php echo number_format($total); ?></div><div class="stat-label">تعداد لاگ‌های AI</div></div></div>
     <div class="col-md-3"><div class="stat-card" style="border-right-color:#e17055;"><div class="stat-icon">&#x1F916;</div><div class="stat-number"><?php echo number_format($botLogsCount); ?></div><div class="stat-label">لاگ‌های ربات</div></div></div>
-    <div class="col-md-6"><div class="stat-card" style="border-right-color:#00b894;"><div class="stat-icon">&#x23F0;</div><div class="stat-number">۷ روز</div><div class="stat-label">مدت نگهداری</div></div></div>
+    <div class="col-md-6"><div class="stat-card" style="border-right-color:#00b894;"><div class="stat-icon">&#x23F0;</div><div class="stat-number">۷ روز</div><div class="stat-label">مدت نگهداری خودکار</div></div></div>
+</div>
+
+<div class="table-container mb-3">
+    <h5>🧹 مدیریت لاگ‌ها</h5>
+    <div class="d-flex flex-wrap gap-2">
+        <!-- Delete old logs (auto) -->
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="delete_old">
+            <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('لاگ‌های قدیمی پاک شوند؟')">
+                🗑️ حذف لاگ‌های قدیمی (خودکار)
+            </button>
+        </form>
+        <!-- Delete all AI logs -->
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="delete_all">
+            <input type="hidden" name="confirm" value="yes">
+            <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('⚠️ تمام لاگ‌های AI حذف شوند؟')">
+                🗑️ حذف تمام لاگ‌های AI (دستی)
+            </button>
+        </form>
+        <!-- Delete all bot logs -->
+        <form method="POST" style="display:inline;">
+            <input type="hidden" name="action" value="delete_all_bot">
+            <input type="hidden" name="confirm" value="yes">
+            <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('⚠️ تمام لاگ‌های ربات حذف شوند؟')">
+                🗑️ حذف تمام لاگ‌های ربات (دستی)
+            </button>
+        </form>
+    </div>
 </div>
 
 <h5>لاگ‌های AI</h5>
