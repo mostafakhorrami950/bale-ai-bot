@@ -178,7 +178,7 @@ class BaleClient
             return false;
         }
 
-        $url = $this->apiUrl . 'sendPhoto';
+        $url = $this->apiUrl . '/sendPhoto';
         $ch = curl_init();
         
         $postFields = [
@@ -307,7 +307,7 @@ class BaleClient
             return false;
         }
 
-        $url = $this->apiUrl . 'sendDocument';
+        $url = $this->apiUrl . '/sendDocument';
         $ch = curl_init();
         
         $postFields = [
@@ -367,7 +367,7 @@ class BaleClient
             return false;
         }
 
-        $url = $this->apiUrl . 'sendVideo';
+        $url = $this->apiUrl . '/sendVideo';
         $ch = curl_init();
         
         $postFields = [
