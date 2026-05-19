@@ -11,6 +11,17 @@ use Core\BotTextService;
 
 class ImageHandler extends BaseHandler
 {
+    private string $storageDir;
+
+    public function __construct($baleClient)
+    {
+        parent::__construct($baleClient);
+        $this->storageDir = BASE_PATH . '/uploads/ai_generated/';
+        if (!is_dir($this->storageDir)) {
+            @mkdir($this->storageDir, 0755, true);
+        }
+    }
+
     public function handle($update): void
     {
         try {
@@ -279,11 +290,14 @@ class ImageHandler extends BaseHandler
             [$internalId, $modelId, $model['name'], $prompt, $referenceId, $actualUsd, $cost]);
 
         $images = $result['images'] ?? [];
+        $generationId = $result['generation_id'] ?? $referenceId;
         \Core\AILogger::imageResult($internalId, 'text2img', $model['name'], $cost, true);
         \Core\AILogger::log('IMAGE_SEND', ['count' => count($images)]);
         foreach ($images as $urlOrData) {
             $sent = $this->sendImageToUser($chatId, $urlOrData, $cost);
-            if (!$sent) {
+            if ($sent) {
+                $this->saveGeneratedFile($internalId, $generationId, $model['name'], $prompt, 'image', 'text2img', $urlOrData);
+            } else {
                 \Core\AILogger::error('image_send', 'Failed to send image to user', ['chat_id' => $chatId]);
             }
         }
@@ -291,13 +305,10 @@ class ImageHandler extends BaseHandler
         $this->clearUserState($internalId);
 
         if (empty($images)) {
-            // CRITICAL: API returned success but no images! 
-            // Only refund if OpenRouter charged $0 (no actual cost)
             if ((float)$actualUsd <= 0) {
                 CreditService::creditBack($internalId, $cost, $referenceId . '_norefund');
                 $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد. هزینه عودت داده شد.");
             } else {
-                // OpenRouter already charged us, we can't refund
                 $this->baleClient->sendMessage($chatId, "⚠️ هوش مصنوعی تصویری تولید نکرد اما هزینه آن توسط OpenRouter کسر شده است.\nلطفاً با پشتیبانی تماس بگیرید.");
             }
             \Core\AILogger::error('image_empty', 'API returned success but no images', [
@@ -307,7 +318,12 @@ class ImageHandler extends BaseHandler
                 'prev_cost_charged' => $cost,
             ]);
         } else {
-            $this->baleClient->sendMessage($chatId, BotTextService::get('operation_complete'), $this->getMainMenuInlineKeyboard());
+            $keyboard = $this->getMainMenuInlineKeyboard();
+            $keyboard['inline_keyboard'][] = [['text' => "🔍 پیگیری ساخت تصویر و ویدئو", 'callback_data' => 'track_generation']];
+            $msg = BotTextService::get('operation_complete')
+                . "\n\n🆔 **Generation ID:** `{$generationId}`\n\n"
+                . "📌 اگر تصویر را دریافت نکرده‌اید، روی دکمه «🔍 پیگیری ساخت تصویر و ویدئو» کلیک کنید و **Generation ID** را ارسال کنید.";
+            $this->baleClient->sendMessage($chatId, $msg, $keyboard);
         }
     }
 
@@ -402,6 +418,52 @@ class ImageHandler extends BaseHandler
 
         \Core\AILogger::error('image_send_unknown_type', 'Unknown image type', ['type' => gettype($urlOrData), 'val' => substr((string)$urlOrData, 0, 50)]);
         return false;
+    }
+
+    /**
+     * Save a generated image file locally and insert a record into generated_files table.
+     */
+    private function saveGeneratedFile(int $internalId, string $generationId, string $modelName, string $prompt, string $fileType, string $mediaType, string $urlOrData): void
+    {
+        try {
+            $imageData = null;
+            $mime = 'image/png';
+            $ext = 'png';
+            
+            if (str_starts_with($urlOrData, 'data:')) {
+                $parts = explode('base64,', $urlOrData, 2);
+                $b64Data = $parts[1] ?? $parts[0] ?? '';
+                $imageData = base64_decode($b64Data, true);
+                if (str_contains($urlOrData, 'image/jpeg')) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_contains($urlOrData, 'image/gif')) { $mime = 'image/gif'; $ext = 'gif'; }
+            } elseif (str_starts_with($urlOrData, 'http')) {
+                $ch = curl_init($urlOrData);
+                curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_FOLLOWLOCATION => true]);
+                $imageData = curl_exec($ch);
+                curl_close($ch);
+                $first = substr($imageData ?? '', 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+            } elseif (file_exists($urlOrData)) {
+                $imageData = file_get_contents($urlOrData);
+                $first = substr($imageData ?? '', 0, 4);
+                if (str_starts_with($first, "\xff\xd8")) { $mime = 'image/jpeg'; $ext = 'jpg'; }
+                elseif (str_starts_with($first, "\x89PNG")) { $mime = 'image/png'; $ext = 'png'; }
+            }
+            
+            if (empty($imageData) || strlen($imageData) < 500) return;
+            
+            $filename = 'img_' . $internalId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+            $filePath = $this->storageDir . $filename;
+            file_put_contents($filePath, $imageData);
+            
+            $db = Database::getInstance();
+            $db->query("INSERT INTO generated_files (user_id, generation_id, model_name, prompt, file_type, media_type, file_path, file_size, mime_type, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+                [$internalId, $generationId, $modelName, $prompt, $fileType, $mediaType, $filePath, strlen($imageData), $mime]
+            );
+        } catch (\Throwable $e) {
+            \Core\AILogger::error('saveGeneratedFile', $e->getMessage());
+        }
     }
 
     private function getMainMenuInlineKeyboard(): array

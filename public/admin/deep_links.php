@@ -100,12 +100,19 @@ $entriesPerCampaign = [];
 if (!empty($campaigns)) {
     foreach ($campaigns as $c) {
         $stats = $db->query(
-            "SELECT COUNT(*) as total, SUM(is_registered) as reg FROM deep_link_entries WHERE campaign_id = ?",
+            "SELECT 
+                COUNT(*) as total, 
+                SUM(is_registered) as reg,
+                SUM(CASE WHEN u.created_at < e.clicked_at THEN 1 ELSE 0 END) as returning 
+             FROM deep_link_entries e 
+             LEFT JOIN users u ON u.id = e.registered_user_id 
+             WHERE e.campaign_id = ?",
             [$c['id']]
         )->fetch();
         $entriesPerCampaign[$c['id']] = [
             'total' => (int)$stats['total'],
             'registered' => (int)($stats['reg'] ?? 0),
+            'returning' => (int)($stats['returning'] ?? 0),
         ];
     }
 }
@@ -171,7 +178,8 @@ $pageContent .= <<<HTML
                     <th>عنوان</th>
                     <th>وضعیت</th>
                     <th>ورودی‌ها</th>
-                    <th>ثبت‌نام‌شده</th>
+                    <th>جدید</th>
+                    <th>تکراری (قبلاً عضو)</th>
                     <th>نرخ تبدیل</th>
                     <th>لینک نمونه</th>
                     <th>عملیات</th>
@@ -181,7 +189,7 @@ $pageContent .= <<<HTML
 HTML;
 
 if (empty($campaigns)) {
-    $pageContent .= '<tr><td colspan="9" class="text-center text-muted">هیچ کمپینی تعریف نشده است. اولین کمپین را ایجاد کنید.</td></tr>';
+    $pageContent .= '<tr><td colspan="10" class="text-center text-muted">هیچ کمپینی تعریف نشده است. اولین کمپین را ایجاد کنید.</td></tr>';
 } else {
     foreach ($campaigns as $c) {
         $badge = $c['is_active'] ? 'badge-active' : 'badge-inactive';
@@ -191,7 +199,7 @@ if (empty($campaigns)) {
         $editUrl = "?action=edit_form&id={$c['id']}";
         $sampleLink = "https://ble.ir/mobixbot?start={$c['payload']}";
         
-        $entryStats = $entriesPerCampaign[$c['id']] ?? ['total' => 0, 'registered' => 0];
+        $entryStats = $entriesPerCampaign[$c['id']] ?? ['total' => 0, 'registered' => 0, 'returning' => 0];
         $conversionRate = $entryStats['total'] > 0 ? round(($entryStats['registered'] / $entryStats['total']) * 100) . '%' : '—';
         
         $shortWelcome = mb_substr($c['welcome_text'] ?? 'پیش‌فرض', 0, 40);
@@ -204,6 +212,7 @@ if (empty($campaigns)) {
                     <td><span class="{$badge}">{$statusText}</span></td>
                     <td>{$entryStats['total']}</td>
                     <td>{$entryStats['registered']}</td>
+                    <td>{$entryStats['returning']}</td>
                     <td>{$conversionRate}</td>
                     <td><a href="{$sampleLink}" target="_blank" class="text-truncate d-inline-block" style="max-width:150px;" title="{$sampleLink}">{$sampleLink}</a></td>
                     <td>

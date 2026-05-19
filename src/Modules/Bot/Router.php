@@ -14,6 +14,7 @@ use Modules\Bot\Handlers\VideoHandler;
 use Modules\Bot\Handlers\StartHandler;
 use Modules\Bot\Handlers\BaseHandler;
 use Modules\Bot\Handlers\UnknownUpdateHandler;
+use Modules\Bot\Handlers\TrackGenerationHandler;
 use Modules\Memory\MemoryManager;
 use Modules\Memory\Handlers\MemoryCommandHandler;
 use Database\Database;
@@ -121,6 +122,10 @@ class Router
             if (str_starts_with($data, 'chat_pick_model_') || str_starts_with($data, 'chat_resume_') || str_starts_with($data, 'chat_delete_conv_') || str_starts_with($data, 'chat_history_page_')) {
                 return new ChatHandler($this->baleClient);
             }
+            // Track generation callback
+            if ($data === 'track_generation') {
+                return new TrackGenerationHandler($this->baleClient);
+            }
             // plan_* callbacks — buy credit flow
             if (str_starts_with($data, 'plan_') || str_starts_with($data, 'pay_zibal_') || str_starts_with($data, 'pay_bale_')) {
                 return new BuyCreditHandler($this->baleClient);
@@ -169,6 +174,11 @@ class Router
             if (in_array($state, ['awaiting_video_prompt', 'awaiting_video_first_frame', 'awaiting_video_last_frame', 'awaiting_video_reference', 'vid_processing', 'vid_polling'], true)) {
                 error_log("DEBUG ROUTER: state=[" . $state . "] -> VideoHandler");
                 return new VideoHandler($this->baleClient);
+            }
+            // Track generation state
+            if ($state === 'awaiting_track_gen_id') {
+                error_log("DEBUG ROUTER: state=[" . $state . "] -> TrackGenerationHandler");
+                return new TrackGenerationHandler($this->baleClient);
             }
             // Memory add text state
             if ($state === 'awaiting_memory_text') {

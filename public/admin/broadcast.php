@@ -32,6 +32,10 @@ function getFilteredUsers($db, string $filterType, ?string $filterValue): array 
             return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? AND dle.is_registered = 1 GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
         case 'deep_link_unregistered':
             return $db->query("SELECT NULL as internal_id, dle.bale_user_id, COALESCE(dle.first_name,'') as first_name FROM deep_link_entries dle WHERE dle.payload = ? AND dle.is_registered = 0 AND dle.bale_user_id IS NOT NULL GROUP BY dle.bale_user_id ORDER BY dle.id ASC", [$filterValue])->fetchAll();
+        case 'deep_link_returning':
+            // کاربر تکراری: کاربری که قبلاً ثبت‌نام کرده و حالا مجدداً از طریق دیپ لینک وارد ربات شده
+            // u.created_at < dle.clicked_at یعنی کاربر قبل از کلیک روی دیپ لینک ثبت‌نام کرده بوده
+            return $db->query("SELECT u.id as internal_id, u.bale_user_id, COALESCE(u.phone_number,'') as first_name FROM users u INNER JOIN deep_link_entries dle ON dle.registered_user_id = u.id WHERE dle.payload = ? AND u.created_at < dle.clicked_at AND dle.is_registered = 1 GROUP BY u.id ORDER BY u.id ASC", [$filterValue])->fetchAll();
         default:
             return [];
     }
@@ -75,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
 
         $filterType = $_POST['filter_type'] ?? 'all';
         $filterValue = null;
-        if (in_array($filterType, ['deep_link_all', 'deep_link_registered', 'deep_link_unregistered'])) {
+        if (in_array($filterType, ['deep_link_all', 'deep_link_registered', 'deep_link_unregistered', 'deep_link_returning'])) {
             $filterValue = trim($_POST['filter_payload'] ?? '');
             if (empty($filterValue)) throw new \InvalidArgumentException('لطفاً نام کمپین دیپ لینک را وارد کنید.');
         }
@@ -264,6 +268,7 @@ ob_start();
                             <option value="deep_link_all">دیپ لینک (همه)</option>
                             <option value="deep_link_registered">دیپ لینک (ثبت‌نام کرده)</option>
                             <option value="deep_link_unregistered">دیپ لینک (ثبت‌نام نکرده)</option>
+                            <option value="deep_link_returning">دیپ لینک (کاربر تکراری)</option>
                         </select>
                         <div id="filterPayloadGroup" style="display:none;">
                             <label class="form-label mt-2">Payload کمپین</label>
