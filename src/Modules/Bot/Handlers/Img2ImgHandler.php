@@ -620,7 +620,7 @@ class Img2ImgHandler extends BaseHandler
             }
             
             if (empty($imageData) || strlen($imageData) < 500) {
-                Logger::error('saveGeneratedFile', 'Empty or too small image data', ['generation_id' => $generationId]);
+                Logger::error('saveGeneratedFile', ['error' => 'Empty or too small image data', 'generation_id' => $generationId]);
                 return null;
             }
             
@@ -639,7 +639,7 @@ class Img2ImgHandler extends BaseHandler
             Logger::info('saveGeneratedFile', 'File saved successfully', ['path' => $filePath, 'size' => strlen($imageData)]);
             return $filePath;
         } catch (\Throwable $e) {
-            Logger::error('saveGeneratedFile', $e->getMessage(), ['generation_id' => $generationId]);
+            Logger::error('saveGeneratedFile', ['error' => $e->getMessage(), 'generation_id' => $generationId]);
             return null;
         }
     }
