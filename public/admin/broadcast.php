@@ -141,6 +141,136 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     }
 }
 
+// ─── Instant send (max speed, parallel curl) ───
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'instant_broadcast') {
+    try {
+        $text = trim($_POST['text'] ?? '');
+        if (empty($text)) throw new \InvalidArgumentException('متن پیام الزامی است.');
+
+        $filterType = $_POST['filter_type'] ?? 'all';
+        $filterValue = null;
+        if (in_array($filterType, ['deep_link_all', 'deep_link_registered', 'deep_link_unregistered', 'deep_link_returning'])) {
+            $filterValue = trim($_POST['filter_payload'] ?? '');
+            if (empty($filterValue)) throw new \InvalidArgumentException('لطفاً نام کمپین دیپ لینک را وارد کنید.');
+        } elseif ($filterType === 'bale_user_ids') {
+            $filterValue = trim($_POST['bale_user_ids'] ?? '');
+            if (empty($filterValue)) throw new \InvalidArgumentException('لطفاً شناسه‌های بله را وارد کنید.');
+        }
+
+        $imagePath = null;
+        $upload = $_FILES['image'] ?? null;
+        $imageUrl = trim($_POST['image_url'] ?? '');
+        if ($upload && $upload['error'] === UPLOAD_ERR_OK) {
+            $ext = pathinfo($upload['name'], PATHINFO_EXTENSION);
+            $dest = __DIR__ . '/../../uploads/broadcast_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+            move_uploaded_file($upload['tmp_name'], $dest);
+            $imagePath = $dest;
+        } elseif (!empty($imageUrl) && filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+            $imagePath = $imageUrl;
+        }
+
+        $adminId = (int)($_SESSION['admin_user_id'] ?? 0);
+        $targetUsers = getFilteredUsers($db, $filterType, $filterValue);
+        $totalUsers = count($targetUsers);
+        $token = Config::get('BALE_BOT_TOKEN');
+
+        // Create job record
+        $db->query(
+            "INSERT INTO broadcast_jobs (admin_id, message_text, image_path, filter_type, filter_value, total_users, sent_count, failed_count, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'instant', NOW())",
+            [$adminId, $text, $imagePath, $filterType, $filterValue, $totalUsers]
+        );
+        $jobId = (int)$db->lastInsertId();
+
+        // Prepare all curl handles for parallel sending
+        $curlHandles = [];
+        $userMap = []; // index => user info
+        foreach ($targetUsers as $idx => $user) {
+            $chatId = (int)$user['bale_user_id'];
+            $internalId = $user['internal_id'];
+            if ($chatId <= 0) continue;
+
+            if (!empty($imagePath)) {
+                $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendPhoto");
+                $postFields = [
+                    'chat_id' => $chatId,
+                    'caption' => $text,
+                ];
+                if (file_exists($imagePath)) {
+                    $postFields['photo'] = new \CURLFile($imagePath);
+                } elseif (filter_var($imagePath, FILTER_VALIDATE_URL)) {
+                    $postFields['photo'] = $imagePath;
+                } else {
+                    $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendMessage");
+                    $postFields = ['chat_id' => $chatId, 'text' => $text];
+                }
+                curl_setopt_array($ch, [
+                    CURLOPT_POST => true,
+                    CURLOPT_POSTFIELDS => $postFields,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 15,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                    CURLOPT_SSL_VERIFYPEER => true,
+                ]);
+            } else {
+                $params = ['chat_id' => $chatId, 'text' => $text];
+                $ch = curl_init("https://tapi.bale.ai/bot{$token}/sendMessage");
+                curl_setopt_array($ch, [
+                    CURLOPT_POST => true,
+                    CURLOPT_POSTFIELDS => json_encode($params),
+                    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 10,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                ]);
+            }
+            $curlHandles[$idx] = $ch;
+            $userMap[$idx] = $user;
+        }
+
+        // Execute all in parallel
+        $curlMulti = curl_multi_init();
+        foreach ($curlHandles as $ch) {
+            curl_multi_add_handle($curlMulti, $ch);
+        }
+        $active = null;
+        do {
+            $mrc = curl_multi_exec($curlMulti, $active);
+        } while ($mrc === CURLM_CALL_MULTI_PERFORM);
+        while ($active && $mrc === CURLM_OK) {
+            if (curl_multi_select($curlMulti, 5) === -1) {
+                usleep(100);
+            }
+            do {
+                $mrc = curl_multi_exec($curlMulti, $active);
+            } while ($mrc === CURLM_CALL_MULTI_PERFORM);
+        }
+        curl_multi_close($curlMulti);
+
+        // Collect results
+        $sent = 0;
+        $failed = 0;
+        foreach ($curlHandles as $idx => $ch) {
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $success = ($httpCode === 200);
+            $user = $userMap[$idx];
+            $chatId = (int)$user['bale_user_id'];
+            $internalId = $user['internal_id'];
+            $status = $success ? 'sent' : 'failed';
+            $logUserId = $internalId ? (int)$internalId : (int)('-' . $chatId);
+            $db->query("INSERT INTO broadcast_log (job_id, user_id, status, created_at) VALUES (?, ?, ?, NOW())", [$jobId, $logUserId, $status]);
+            if ($success) $sent++; else $failed++;
+        }
+
+        $db->query("UPDATE broadcast_jobs SET sent_count = ?, failed_count = ?, status = 'completed', completed_at = NOW() WHERE id = ?", [$sent, $failed, $jobId]);
+
+        $message = "🚀 ارسال فوری #{$jobId} تکمیل شد: ✅ {$sent} موفق / ❌ {$failed} ناموفق از {$totalUsers} کاربر";
+    } catch (\Throwable $e) {
+        $message = '❌ ' . $e->getMessage();
+        $messageType = 'danger';
+    }
+}
+
 // ─── AJAX auto-process handler ───
 if (isset($_GET['ajax_process'])) {
     header('Content-Type: application/json');
@@ -383,7 +513,10 @@ ob_start();
                         <input type="url" name="image_url" class="form-control" placeholder="https://...">
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary mt-2">📨 شروع ارسال خودکار</button>
+                <div class="mt-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary" onclick="document.querySelector('[name=action]').value='create_broadcast'">📨 شروع ارسال خودکار</button>
+                    <button type="submit" class="btn btn-danger" onclick="document.querySelector('[name=action]').value='instant_broadcast'; return confirm('⚠️ ارسال فوری به تمام کاربران فیلتر شده انجام می‌شود. ادامه می‌دهید؟')">🚀 ارسال فوری</button>
+                </div>
             </form>
         </div>
 
