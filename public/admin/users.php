@@ -33,8 +33,37 @@ if (!empty($search)) {
     )->fetchAll();
 }
 
+// ─── Collect all phone numbers ───
+$allPhones = [];
+foreach ($users as $u) {
+    $phone = trim($u['phone_number'] ?? '');
+    if ($phone !== '') {
+        $allPhones[] = $phone;
+    }
+}
+$allPhonesStr = htmlspecialchars(implode(",\n", $allPhones));
+
 ob_start();
 ?>
+
+<!-- 📞 Phone Numbers TextArea -->
+<div class="table-container mb-4">
+    <h5>📞 شماره تلفن تمام کاربران</h5>
+    <textarea class="form-control" rows="6" id="phonesTextarea" readonly style="direction:ltr;font-size:0.9rem;" onclick="this.select()"><?php echo $allPhonesStr; ?></textarea>
+    <div class="mt-2">
+        <button class="btn btn-sm btn-outline-primary" onclick="copyPhones()">📋 کپی کردن همه شماره‌ها</button>
+        <span class="text-muted small ms-2">(<?php echo count($allPhones); ?> شماره)</span>
+    </div>
+</div>
+<script>
+function copyPhones() {
+    var ta = document.getElementById('phonesTextarea');
+    ta.select();
+    document.execCommand('copy');
+    alert('✅ شماره‌ها کپی شدند!');
+}
+</script>
+
 <form method="GET" class="mb-3">
     <div class="input-group">
         <input type="text" name="search" class="form-control" placeholder="جستجو با شناسه بله، نام کاربری یا شماره تلفن..."

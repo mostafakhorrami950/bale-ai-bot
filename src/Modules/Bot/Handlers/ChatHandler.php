@@ -172,7 +172,7 @@ class ChatHandler extends BaseHandler
                 return;
             }
             $msg = BotTextService::get('chat_model_list_title');
-            $keyboard = ['inline_keyboard' => []];
+            $allButtons = [];
             foreach ($models as $m) {
                 $displayName = $m['display_name'] ?? $m['name'];
                 $desc = $m['description'] ?? '';
@@ -184,11 +184,12 @@ class ChatHandler extends BaseHandler
                 $msg .= "\n  💰 ورودی: {$inCost}/char | خروجی: {$outCost}/char";
                 if ($desc) $msg .= "\n  📌 {$desc}";
                 $msg .= "\n\n";
-                $keyboard['inline_keyboard'][] = [[
+                $allButtons[] = [
                     'text' => $displayName,
                     'callback_data' => "chat_pick_model_{$m['id']}"
-                ]];
+                ];
             }
+            $keyboard = ['inline_keyboard' => array_chunk($allButtons, 2)];
             $keyboard['inline_keyboard'][] = [['text' => '🔙 بازگشت', 'callback_data' => 'start_chat']];
             $db->query("REPLACE INTO bot_state (user_id, state) VALUES (?, 'chat_selecting_model')", [$internalId]);
             $this->baleClient->sendMessage($chatId, $msg, $keyboard);

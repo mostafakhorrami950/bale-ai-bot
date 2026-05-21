@@ -77,17 +77,41 @@ class AIService
 
     private function openrouterGenerate(string $prompt, string $modelName, ?string $image, ?array $modelData, ?array $images = null): array
     {
-        // Read model_config for aspect_ratio / image_size
-        $cfg = [];
-        if ($modelData && !empty($modelData['model_config'])) {
-            $raw = is_string($modelData['model_config'])
-                ? json_decode($modelData['model_config'], true)
-                : $modelData['model_config'];
-            $cfg = is_array($raw) ? $raw : [];
+        // Read size and aspect_ratio from model_data columns (set in admin panel, user NEVER sees these)
+        // Priority: model_data columns > model_config JSON > defaults
+        $aspectRatio = '1:1';
+        $imageSize   = '';
+        
+        if ($modelData) {
+            $dbAr = $modelData['aspect_ratio'] ?? '';
+            if ($dbAr !== '' && $dbAr !== 'auto') {
+                $aspectRatio = $dbAr;
+            }
+            $dbSize = $modelData['size'] ?? '';
+            if ($dbSize !== '' && $dbSize !== 'auto') {
+                $imageSize = $dbSize;
+            }
+            
+            // Fallback to model_config JSON for backward compatibility
+            if (($aspectRatio === '1:1' || $imageSize === '') && !empty($modelData['model_config'])) {
+                $raw = is_string($modelData['model_config'])
+                    ? json_decode($modelData['model_config'], true)
+                    : $modelData['model_config'];
+                $cfg = is_array($raw) ? $raw : [];
+                $o = $cfg['openrouter'] ?? [];
+                if ($aspectRatio === '1:1' && !empty($o['aspect_ratio'])) {
+                    $aspectRatio = $o['aspect_ratio'];
+                }
+                if ($imageSize === '' && !empty($o['image_size'])) {
+                    $imageSize = $o['image_size'];
+                }
+            }
         }
-        $o = $cfg['openrouter'] ?? [];
-        $aspectRatio = $o['aspect_ratio'] ?? '1:1';
-        $imageSize   = $o['image_size'] ?? '1K';
+        
+        // Default to 'auto' for image_size so OpenRouter API doesn't receive invalid values
+        if ($imageSize === '') {
+            $imageSize = 'auto';
+        }
 
         // Build messages content array
         $contentParts = [];
@@ -354,11 +378,11 @@ class AIService
 
             // If type is specified, query only that table
             if ($modelType === 'image_editing') {
-                $stmt = $db->query("SELECT id, name, provider, cost_per_edit AS cost_per_image, is_active, model_config FROM ai_edit_models WHERE id = ? AND is_active = 1", [$id]);
+                $stmt = $db->query("SELECT id, name, provider, cost_per_edit AS cost_per_image, size, aspect_ratio, model_config, is_active FROM ai_edit_models WHERE id = ? AND is_active = 1", [$id]);
                 return $stmt->fetch() ?: null;
             }
             if ($modelType === 'image_generation' || $modelType === 'text2img') {
-                $stmt = $db->query("SELECT id, name, provider, cost_per_image, is_active, model_config FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
+                $stmt = $db->query("SELECT id, name, provider, cost_per_image, size, aspect_ratio, model_config, is_active FROM ai_image_models WHERE id = ? AND is_active = 1", [$id]);
                 return $stmt->fetch() ?: null;
             }
             if ($modelType === 'text') {

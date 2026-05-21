@@ -847,12 +847,12 @@ class DatabaseRepairService
             $this->log("✅ ستون {$col} به جدول ai_video_models اضافه شد.");
         }
 
-        // Default values for existing rows
+        // Default values for existing rows — only set defaults for NULL (never overwrite empty string)
         $this->exec("UPDATE ai_video_models SET display_name = name WHERE display_name IS NULL");
-        $this->exec("UPDATE ai_video_models SET supported_resolutions = '480p,720p,1080p' WHERE supported_resolutions IS NULL OR supported_resolutions = ''");
-        $this->exec("UPDATE ai_video_models SET supported_sizes = '854x480,1280x720,1920x1080' WHERE supported_sizes IS NULL OR supported_sizes = ''");
-        $this->exec("UPDATE ai_video_models SET supported_aspect_ratios = '16:9,9:16,1:1' WHERE supported_aspect_ratios IS NULL OR supported_aspect_ratios = ''");
-        $this->exec("UPDATE ai_video_models SET supported_durations = '5,10,15' WHERE supported_durations IS NULL OR supported_durations = ''");
+        $this->exec("UPDATE ai_video_models SET supported_resolutions = '480p,720p,1080p' WHERE supported_resolutions IS NULL");
+        $this->exec("UPDATE ai_video_models SET supported_sizes = '854x480,1280x720,1920x1080' WHERE supported_sizes IS NULL");
+        $this->exec("UPDATE ai_video_models SET supported_aspect_ratios = '16:9,9:16,1:1' WHERE supported_aspect_ratios IS NULL");
+        $this->exec("UPDATE ai_video_models SET supported_durations = '5,10,15' WHERE supported_durations IS NULL");
         $this->exec("UPDATE ai_video_models SET pricing_json = '{}' WHERE pricing_json IS NULL");
 
         $this->log('✅ قابلیت‌های مدل ویدئو (فاز ۱۶) بروزرسانی شد.');
