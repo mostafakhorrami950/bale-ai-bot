@@ -33,6 +33,24 @@ if (!empty($search)) {
     )->fetchAll();
 }
 
+// ─── Export phone numbers to Excel (CSV) ───
+if (isset($_GET['export_phones'])) {
+    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Disposition: attachment; filename="phones.xls"');
+    echo "\xEF\xBB\xBF"; // BOM for UTF-8
+    foreach ($users as $u) {
+        $phone = trim($u['phone_number'] ?? '');
+        if ($phone !== '') {
+            // Convert 989XXXXXXXXX to 09XXXXXXXXX
+            if (strlen($phone) === 12 && substr($phone, 0, 3) === '989') {
+                $phone = '0' . substr($phone, 2);
+            }
+            echo $phone . "\n";
+        }
+    }
+    exit;
+}
+
 // ─── Collect all phone numbers ───
 $allPhones = [];
 foreach ($users as $u) {
@@ -52,6 +70,7 @@ ob_start();
     <textarea class="form-control" rows="6" id="phonesTextarea" readonly style="direction:ltr;font-size:0.9rem;" onclick="this.select()"><?php echo $allPhonesStr; ?></textarea>
     <div class="mt-2">
         <button class="btn btn-sm btn-outline-primary" onclick="copyPhones()">📋 کپی کردن همه شماره‌ها</button>
+        <a href="?export_phones=1<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" class="btn btn-sm btn-success">📥 خروجی اکسل</a>
         <span class="text-muted small ms-2">(<?php echo count($allPhones); ?> شماره)</span>
     </div>
 </div>
