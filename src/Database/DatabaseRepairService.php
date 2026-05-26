@@ -59,7 +59,7 @@ class DatabaseRepairService
         $this->purgeOldLogs();
         $this->ensureDeepLinkTables();
         $this->ensureBroadcastV2Columns();
-        $this->ensureGeneratedFilesTable();
+        $this->ensureAppErrorsTable();
 
         return $this->messages;
     }
@@ -1170,6 +1170,26 @@ class DatabaseRepairService
                 $this->exec("CREATE INDEX idx_user_delete ON broadcast_log (user_id)");
                 $this->log('✅ ایندکس idx_user_delete روی broadcast_log ایجاد شد.');
             }
+        }
+    }
+
+    public function ensureAppErrorsTable(): void
+    {
+        if (!$this->tableExists('app_errors')) {
+            $this->exec("
+                CREATE TABLE IF NOT EXISTS app_errors (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    error_type VARCHAR(100) NOT NULL DEFAULT 'unknown',
+                    error_message TEXT NOT NULL,
+                    error_trace TEXT DEFAULT NULL,
+                    bale_user_id INT DEFAULT NULL,
+                    payload_data TEXT DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_error_type (error_type),
+                    INDEX idx_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $this->log('✅ جدول app_errors ایجاد شد.');
         }
     }
 

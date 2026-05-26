@@ -101,7 +101,7 @@ ob_start();
                         </td>
                         <td>
                             <?php if ($e['bale_user_id']): ?>
-                                <a href="user_detail.php?bale_id=<?php echo $e['bale_user_id']; ?>"><?php echo $e['bale_user_id']; ?></a>
+                                <a href="user_detail.php?id=<?php echo $e['bale_user_id']; ?>"><?php echo $e['bale_user_id']; ?></a>
                             <?php else: ?>
                                 <span class="text-muted">—</span>
                             <?php endif; ?>
