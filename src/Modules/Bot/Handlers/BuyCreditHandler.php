@@ -80,6 +80,9 @@ class BuyCreditHandler extends BaseHandler
     /**
      * Handle PreCheckoutQuery — Bale wallet asks us to confirm/reject payment.
      * Must respond within 10 seconds or payment is cancelled.
+     * 
+     * CRITICAL: This method MUST always call answerPreCheckoutQuery() even on error,
+     * otherwise Bale will cancel the payment.
      */
     private function handlePreCheckoutQuery($update): void
     {
@@ -87,6 +90,8 @@ class BuyCreditHandler extends BaseHandler
         if (!$pq) return;
 
         $preCheckoutQueryId = $pq['id'] ?? '';
+        if (empty($preCheckoutQueryId)) return;
+
         $payload = $pq['invoice_payload'] ?? '';
         $totalAmount = $pq['total_amount'] ?? 0;
         $fromUserId = $pq['from']['id'] ?? null;
@@ -97,47 +102,70 @@ class BuyCreditHandler extends BaseHandler
             'amount' => $totalAmount,
         ]);
 
-        // Parse payload: plan_X_user_Y
-        $ok = false;
-        $errorMsg = '';
+        try {
+            // Parse payload: plan_X_user_Y
+            $ok = false;
+            $errorMsg = '';
+            $planId = 0;
 
-        if (preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $m)) {
-            $planId = (int)$m[1];
-            $baleUserId = (int)$m[2];
+            if (preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $m)) {
+                $planId = (int)$m[1];
+                $baleUserId = (int)$m[2];
 
-            // Verify the plan exists and is active
-            $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
-            if ($plan && $baleUserId > 0) {
-                // Verify amount matches
-                $expectedAmount = (int)$plan['price_rial'];
-                if ($totalAmount === $expectedAmount) {
-                    // Verify the user exists
-                    $user = User::findByBaleId($baleUserId);
-                    if ($user) {
-                        $ok = true;
+                // Verify the plan exists and is active
+                $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
+                if ($plan && $baleUserId > 0) {
+                    // Verify amount matches
+                    $expectedAmount = (int)$plan['price_rial'];
+                    if ($totalAmount === $expectedAmount) {
+                        // Verify the user exists
+                        $user = User::findByBaleId($baleUserId);
+                        if ($user) {
+                            $ok = true;
+                        } else {
+                            $errorMsg = 'کاربر یافت نشد.';
+                        }
                     } else {
-                        $errorMsg = 'کاربر یافت نشد.';
+                        $errorMsg = 'مبلغ صورتحساب نامعتبر است.';
                     }
                 } else {
-                    $errorMsg = 'مبلغ صورتحساب نامعتبر است.';
+                    $errorMsg = 'پلن یافت نشد یا غیرفعال است.';
                 }
             } else {
-                $errorMsg = 'پلن یافت نشد یا غیرفعال است.';
+                $errorMsg = 'payload نامعتبر است.';
             }
-        } else {
-            $errorMsg = 'payload نامعتبر است.';
+
+            // Log the pre_checkout_query to payments table for tracking
+            if ($ok && $planId > 0) {
+                try {
+                    Database::getInstance()->query(
+                        "INSERT INTO payments (user_id, track_id, order_id, amount_rial, status, plan_id) VALUES (?, ?, ?, ?, 'pending', ?)",
+                        [$fromUserId ?? 0, $preCheckoutQueryId, 'pq_' . $preCheckoutQueryId, $totalAmount, $planId]
+                    );
+                } catch (\Throwable $e) {
+                    Logger::error('BuyCreditHandler: Failed to log pre_checkout to payments', [
+                        'error' => $e->getMessage(),
+                    ]);
+                    // Continue — still answer the query
+                }
+            }
+        } catch (\Throwable $e) {
+            Logger::error('BuyCreditHandler: PreCheckoutQuery validation error', [
+                'error' => $e->getMessage(),
+            ]);
+            $ok = false;
+            $errorMsg = 'خطای داخلی سامانه';
         }
 
-        // Log the pre_checkout_query to payments table for tracking
-        if ($ok) {
-            Database::getInstance()->query(
-                "INSERT INTO payments (user_id, track_id, order_id, amount_rial, status, plan_id) VALUES (?, ?, ?, ?, 'pending', ?)",
-                [$fromUserId ?? 0, $preCheckoutQueryId, 'pq_' . $preCheckoutQueryId, $totalAmount, $planId ?? 0]
-            );
+        // Answer the pre-checkout query (MUST be within 10 seconds ALWAYS)
+        // This is CRITICAL — Bale cancels payment if we don't respond in time
+        try {
+            $this->baleClient->answerPreCheckoutQuery($preCheckoutQueryId, $ok, $ok ? null : ($errorMsg ?: 'خطای ناشناخته'));
+        } catch (\Throwable $e) {
+            Logger::error('BuyCreditHandler: answerPreCheckoutQuery failed', [
+                'error' => $e->getMessage(),
+            ]);
         }
-
-        // Answer the pre-checkout query (MUST be within 10 seconds)
-        $this->baleClient->answerPreCheckoutQuery($preCheckoutQueryId, $ok, $ok ? null : ($errorMsg ?: 'خطای ناشناخته'));
     }
 
     /**
