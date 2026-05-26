@@ -19,6 +19,18 @@ class BuyCreditHandler extends BaseHandler
             $text = $update->getText();
             $callbackData = $update->getCallbackData();
 
+            // PRIORITY: PreCheckoutQuery — must respond within 10 seconds
+            if ($update->isPreCheckoutQuery()) {
+                $this->handlePreCheckoutQuery($update);
+                return;
+            }
+
+            // PRIORITY: SuccessfulPayment — credit the user
+            if ($update->isSuccessfulPayment()) {
+                $this->handleSuccessfulPayment($update);
+                return;
+            }
+
             // Membership check
             if (!$this->checkMembership($userId, $chatId)) return;
 
@@ -58,6 +70,158 @@ class BuyCreditHandler extends BaseHandler
             ]);
             error_log("BuyCreditHandler FATAL ERROR: " . $e->getMessage());
             $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی در بارگزاری پلن‌ها پیش آمد.\nعلت: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Handle PreCheckoutQuery — Bale wallet asks us to confirm/reject payment.
+     * Must respond within 10 seconds or payment is cancelled.
+     */
+    private function handlePreCheckoutQuery($update): void
+    {
+        $pq = $update->getPreCheckoutQuery();
+        if (!$pq) return;
+
+        $preCheckoutQueryId = $pq['id'] ?? '';
+        $payload = $pq['invoice_payload'] ?? '';
+        $totalAmount = $pq['total_amount'] ?? 0;
+        $fromUserId = $pq['from']['id'] ?? null;
+
+        Logger::info('BuyCreditHandler: PreCheckoutQuery received', [
+            'id' => $preCheckoutQueryId,
+            'payload' => $payload,
+            'amount' => $totalAmount,
+        ]);
+
+        // Parse payload: plan_X_user_Y
+        $ok = false;
+        $errorMsg = '';
+
+        if (preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $m)) {
+            $planId = (int)$m[1];
+            $baleUserId = (int)$m[2];
+
+            // Verify the plan exists and is active
+            $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
+            if ($plan && $baleUserId > 0) {
+                // Verify amount matches
+                $expectedAmount = (int)$plan['price_rial'];
+                if ($totalAmount === $expectedAmount) {
+                    // Verify the user exists
+                    $user = User::findByBaleId($baleUserId);
+                    if ($user) {
+                        $ok = true;
+                    } else {
+                        $errorMsg = 'کاربر یافت نشد.';
+                    }
+                } else {
+                    $errorMsg = 'مبلغ صورتحساب نامعتبر است.';
+                }
+            } else {
+                $errorMsg = 'پلن یافت نشد یا غیرفعال است.';
+            }
+        } else {
+            $errorMsg = 'payload نامعتبر است.';
+        }
+
+        // Log the pre_checkout_query to payments table for tracking
+        if ($ok) {
+            Database::getInstance()->query(
+                "INSERT INTO payments (user_id, track_id, order_id, amount_rial, status, plan_id) VALUES (?, ?, ?, ?, 'pending', ?)",
+                [$fromUserId ?? 0, $preCheckoutQueryId, 'pq_' . $preCheckoutQueryId, $totalAmount, $planId ?? 0]
+            );
+        }
+
+        // Answer the pre-checkout query (MUST be within 10 seconds)
+        $this->baleClient->answerPreCheckoutQuery($preCheckoutQueryId, $ok, $ok ? null : ($errorMsg ?: 'خطای ناشناخته'));
+    }
+
+    /**
+     * Handle SuccessfulPayment — credit the user after successful Bale wallet payment.
+     */
+    private function handleSuccessfulPayment($update): void
+    {
+        $sp = $update->getSuccessfulPayment();
+        if (!$sp) return;
+
+        $payload = $sp['invoice_payload'] ?? '';
+        $totalAmount = (int)($sp['total_amount'] ?? 0);
+        $telegramPaymentChargeId = $sp['telegram_payment_charge_id'] ?? '';
+        $providerPaymentChargeId = $sp['provider_payment_charge_id'] ?? '';
+
+        Logger::info('BuyCreditHandler: SuccessfulPayment received', [
+            'payload' => $payload,
+            'amount' => $totalAmount,
+            'telegram_charge_id' => $telegramPaymentChargeId,
+            'provider_charge_id' => $providerPaymentChargeId,
+        ]);
+
+        // Parse payload: plan_X_user_Y
+        if (!preg_match('/^plan_(\d+)_user_(\d+)$/', $payload, $m)) {
+            Logger::error('BuyCreditHandler: invalid payload in SuccessfulPayment', ['payload' => $payload]);
+            return;
+        }
+
+        $planId = (int)$m[1];
+        $baleUserId = (int)$m[2];
+
+        $plan = Database::getInstance()->query("SELECT * FROM payment_plans WHERE id = ? AND is_active=1", [$planId])->fetch();
+        if (!$plan) {
+            Logger::error('BuyCreditHandler: plan not found in SuccessfulPayment', ['plan_id' => $planId]);
+            return;
+        }
+
+        $user = User::findByBaleId($baleUserId);
+        if (!$user) {
+            Logger::error('BuyCreditHandler: user not found in SuccessfulPayment', ['bale_user_id' => $baleUserId]);
+            return;
+        }
+
+        $internalId = (int)$user['id'];
+        $creditsToAdd = (int)$plan['credits'];
+
+        // Idempotency: check if this charge_id was already credited
+        $existingCredit = Database::getInstance()->query(
+            "SELECT id FROM payments WHERE track_id = ? AND status = 'verified'",
+            [$telegramPaymentChargeId]
+        )->fetch();
+        if ($existingCredit) {
+            Logger::info('BuyCreditHandler: duplicate successful payment ignored', ['charge_id' => $telegramPaymentChargeId]);
+            return;
+        }
+
+        // Add credits to user
+        $referenceId = 'bale_pay_' . $telegramPaymentChargeId . '_' . time();
+        $success = CreditService::addCredits($internalId, $creditsToAdd, $referenceId);
+
+        // Update payment record
+        Database::getInstance()->query(
+            "UPDATE payments SET status = 'verified', track_id = CONCAT(track_id, ',', ?) WHERE user_id = ? AND plan_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1",
+            [$telegramPaymentChargeId, $internalId, $planId]
+        );
+
+        if ($success) {
+            // Send confirmation to user
+            $chatId = $update->getChatId();
+            $message = "✅ پرداخت شما با موفقیت انجام شد!\n\n"
+                . "📦 پلن: {$plan['name']}\n"
+                . "💰 مبلغ: " . number_format($totalAmount / 10) . " تومان\n"
+                . "💎 اعتبار افزوده شده: " . number_format($creditsToAdd) . " کردیت\n"
+                . "📄 کد پیگیری: {$providerPaymentChargeId}";
+            if ($chatId) {
+                $this->baleClient->sendMessage($chatId, $message);
+            }
+
+            Logger::info('BuyCreditHandler: credits added successfully', [
+                'user_id' => $internalId,
+                'credits' => $creditsToAdd,
+                'reference' => $referenceId,
+            ]);
+        } else {
+            Logger::error('BuyCreditHandler: failed to add credits', [
+                'user_id' => $internalId,
+                'credits' => $creditsToAdd,
+            ]);
         }
     }
 

@@ -34,6 +34,18 @@ class Router
         error_log("DEBUG ROUTER: text=[" . $text . "]");
 
         // -------------------------------------------------------
+        // PRIORITY 0: Payment updates (pre_checkout_query, successful_payment)
+        // -------------------------------------------------------
+        if ($update->isPreCheckoutQuery()) {
+            error_log("DEBUG ROUTER: pre_checkout_query -> BuyCreditHandler");
+            return new BuyCreditHandler($this->baleClient);
+        }
+        if ($update->isSuccessfulPayment()) {
+            error_log("DEBUG ROUTER: successful_payment -> BuyCreditHandler");
+            return new BuyCreditHandler($this->baleClient);
+        }
+
+        // -------------------------------------------------------
         // PRIORITY 1: Always-respected commands (override state)
         // -------------------------------------------------------
 

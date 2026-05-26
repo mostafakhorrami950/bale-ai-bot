@@ -56,4 +56,35 @@ try {
     
 } catch (\Throwable $e) {
     @file_put_contents($logFile, date('[Y-m-d H:i:s]') . " FATAL: " . $e->getMessage() . "\n", FILE_APPEND);
+    
+    // Log critical errors (like integrity constraint violations) to app_errors table
+    $errMsg = $e->getMessage();
+    $baleUserId = null;
+    try {
+        if (isset($update) && method_exists($update, 'getUserId')) {
+            $baleUserId = $update->getUserId();
+        }
+    } catch (\Throwable $ignored) {}
+    
+    try {
+        $db2 = \Database\Database::getInstance();
+        $db2->query(
+            "INSERT INTO app_errors (error_type, error_message, error_trace, bale_user_id, payload_data) VALUES (?, ?, ?, ?, ?)",
+            [
+                'webhook_fatal',
+                $errMsg,
+                $e->getTraceAsString(),
+                $baleUserId,
+                mb_substr($rawInput ?? '', 0, 2000)
+            ]
+        );
+    } catch (\Throwable $ignored) {}
+    
+    // Tell user to use /start if we have a chat_id
+    if ($baleUserId) {
+        try {
+            $bale = new \Modules\Bot\BaleClient();
+            $bale->sendMessage($baleUserId, "⚠️ خطایی در پردازش پیام شما رخ داد.\nبرای رفع مشکل، لطفاً دستور /start را ارسال کنید.");
+        } catch (\Throwable $ignored) {}
+    }
 }
