@@ -69,7 +69,11 @@ class BuyCreditHandler extends BaseHandler
                 'trace'   => $e->getTraceAsString(),
             ]);
             error_log("BuyCreditHandler FATAL ERROR: " . $e->getMessage());
-            $this->baleClient->sendMessage($update->getChatId(), "⚠️ متأسفانه مشکلی در بارگزاری پلن‌ها پیش آمد.\nعلت: " . $e->getMessage());
+            // Only send message to user if we have a valid chat_id
+            $catchChatId = $update->getChatId();
+            if ($catchChatId) {
+                $this->baleClient->sendMessage($catchChatId, "⚠️ متأسفانه مشکلی در بارگزاری پلن‌ها پیش آمد.\nعلت: " . $e->getMessage());
+            }
         }
     }
 
