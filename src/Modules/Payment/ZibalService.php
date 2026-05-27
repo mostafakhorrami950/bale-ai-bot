@@ -115,6 +115,70 @@ class ZibalService
     }
 
     /**
+     * Inquiry — check payment status without consuming (does NOT verify).
+     * Use this to check if a user has paid before the callback arrives.
+     *
+     * @param string $trackId Track ID from Zibal
+     *
+     * @return array ['success' => true, 'paid' => true/false, 'amount' => int, 'refNumber' => '...', 'status' => int]
+     *               or ['success' => false, 'error' => '...']
+     */
+    public function inquiryPayment(string $trackId): array
+    {
+        $payload = [
+            'merchant' => $this->merchantCode,
+            'trackId'  => $trackId,
+        ];
+
+        $response = $this->callApi('/inquiry', $payload);
+
+        // Log the request/response
+        $this->logPayment('inquiry', $payload, $response, $response['result'] ?? 0, $trackId);
+
+        if (isset($response['result']) && $response['result'] === 100) {
+            Logger::info('Zibal::inquiryPayment success', [
+                'trackId'   => $trackId,
+                'amount'    => $response['amount'] ?? 0,
+                'refNumber' => $response['refNumber'] ?? '',
+                'status'    => $response['status'] ?? 0,
+            ]);
+            return [
+                'success'   => true,
+                'paid'      => true,
+                'amount'    => (int) ($response['amount'] ?? 0),
+                'refNumber' => (string) ($response['refNumber'] ?? ''),
+                'status'    => (int) ($response['status'] ?? 0),
+            ];
+        }
+
+        // Zibal result codes for unpaid:
+        // 101 = تراکنش قبلاً تایید شده
+        // 102 = تراکنش یافت نشد (هنوز پرداخت نشده)
+        // 103 = مرچنت کد یافت نشد
+        // 104 = تراکنش هنوز پرداخت نشده
+        if (in_array($response['result'] ?? 0, [101, 102, 104])) {
+            Logger::info('Zibal::inquiryPayment not yet paid', [
+                'trackId' => $trackId,
+                'result'  => $response['result'] ?? 0,
+                'message' => $response['message'] ?? '',
+            ]);
+            return [
+                'success' => true,
+                'paid'    => false,
+                'status'  => (int) ($response['result'] ?? 0),
+            ];
+        }
+
+        $errorMsg = $response['message'] ?? 'استعلام پرداخت ناموفق بود';
+        Logger::error('Zibal::inquiryPayment failed', [
+            'trackId' => $trackId,
+            'result'  => $response['result'] ?? 'unknown',
+            'message' => $errorMsg,
+        ]);
+        return ['success' => false, 'error' => $errorMsg];
+    }
+
+    /**
      * Execute an API call to Zibal.
      */
     private function callApi(string $endpoint, array $data): array
