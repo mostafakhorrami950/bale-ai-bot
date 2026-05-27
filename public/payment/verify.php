@@ -34,6 +34,10 @@ $trackId = $_GET['trackId'] ?? $_GET['track_id'] ?? '';
 
 
 if (empty($trackId)) {
+    try {
+        $adb = Database::getInstance();
+        $adb->query("INSERT INTO app_errors (error_type, error_message) VALUES (?, ?)", ['zibal_callback_missing_trackid', 'هیچ trackId در callback زیبال دریافت نشد']);
+    } catch (\Throwable $ignored) {}
     displayResult(
         false,
         '❌ خطا',

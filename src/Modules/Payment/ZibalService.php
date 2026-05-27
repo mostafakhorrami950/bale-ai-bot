@@ -143,25 +143,49 @@ class ZibalService
         curl_close($ch);
 
         if ($errno !== 0) {
+            $errMsg = 'خطای cURL در اتصال به زیبال: ' . $error;
             Logger::error('Zibal cURL error', [
                 'endpoint' => $endpoint,
                 'errno'    => $errno,
                 'error'    => $error,
             ]);
-            return ['result' => 0, 'message' => 'خطای ارتباط با درگاه زیبال: ' . $error];
+            $this->logAppError('zibal_curl_error', "Endpoint: {$endpoint}, cURL errno: {$errno}, error: {$error}");
+            return ['result' => 0, 'message' => $errMsg];
         }
 
         $result = json_decode($body, true);
         if (!is_array($result)) {
+            $errMsg = 'پاسخ نامعتبر از درگاه زیبال (HTTP ' . $httpCode . ')';
             Logger::error('Zibal invalid JSON response', [
                 'endpoint'  => $endpoint,
                 'http_code' => $httpCode,
                 'body'      => mb_substr($body, 0, 500),
             ]);
-            return ['result' => 0, 'message' => 'پاسخ نامعتبر از درگاه زیبال'];
+            $this->logAppError('zibal_invalid_response', "Endpoint: {$endpoint}, HTTP: {$httpCode}, Body: " . mb_substr($body, 0, 500));
+            return ['result' => 0, 'message' => $errMsg];
+        }
+
+        // Check for non-100 result codes and log them
+        if (isset($result['result']) && $result['result'] !== 100) {
+            $errMsg = $result['message'] ?? 'خطای ناشناخته زیبال';
+            $this->logAppError('zibal_api_error', "Endpoint: {$endpoint}, Result: {$result['result']}, Message: {$errMsg}");
         }
 
         return $result;
+    }
+
+    /**
+     * Log an error to the app_errors table.
+     */
+    private function logAppError(string $errorType, string $errorMessage): void
+    {
+        try {
+            $db = \Database\Database::getInstance();
+            $db->query(
+                "INSERT INTO app_errors (error_type, error_message) VALUES (?, ?)",
+                [$errorType, $errorMessage]
+            );
+        } catch (\Throwable $ignored) {}
     }
 
     /**

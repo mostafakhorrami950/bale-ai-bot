@@ -365,41 +365,65 @@ class BuyCreditHandler extends BaseHandler
             $result = $paymentService->requestPayment($amountRial, $orderId, $description);
 
             if (isset($result['error'])) {
+                $errorMsg = $result['error'];
                 Logger::error('BuyCreditHandler: Zibal payment request failed', [
                     'user_id' => $internalId,
                     'plan'    => $plan['name'],
-                    'error'   => $result['error'],
+                    'error'   => $errorMsg,
                 ]);
+                // Log to app_errors for admin visibility
+                $this->logAppError('zibal_request_failed', "Zibal: {$errorMsg}", $internalId);
                 $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_connection_error'));
                 return;
             }
 
-            if (isset($result['trackId'])) {
-                $trackId = $result['trackId'];
-
-                Database::getInstance()->query(
-                    "INSERT INTO payments (user_id, track_id, order_id, amount_rial, credits, plan_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-                    [$internalId, $trackId, $orderId, $amountRial, $plan['credits'], $plan['id']]
-                );
-
-                $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
-                $message = BotTextService::get('zibal_payment_message', [
-                    'plan_name' => $plan['name'],
-                    'amount' => number_format($amountRial / 10),
-                    'credits' => $plan['credits'],
-                    'payment_url' => $paymentUrl,
-                ]);
-
-                $this->baleClient->sendMessage($chatId, $message);
+            if (!isset($result['trackId'])) {
+                $errMsg = 'Zibal: trackId not found in response';
+                Logger::error($errMsg, ['response' => $result]);
+                $this->logAppError('zibal_no_trackid', json_encode($result), $internalId);
+                $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_connection_error'));
+                return;
             }
+
+            $trackId = $result['trackId'];
+
+            Database::getInstance()->query(
+                "INSERT INTO payments (user_id, track_id, order_id, amount_rial, credits, plan_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+                [$internalId, $trackId, $orderId, $amountRial, $plan['credits'], $plan['id']]
+            );
+
+            $paymentUrl = "https://gateway.zibal.ir/start/{$trackId}";
+            $message = BotTextService::get('zibal_payment_message', [
+                'plan_name' => $plan['name'],
+                'amount' => number_format($amountRial / 10),
+                'credits' => $plan['credits'],
+                'payment_url' => $paymentUrl,
+            ]);
+
+            $this->baleClient->sendMessage($chatId, $message);
         } catch (\Throwable $e) {
+            $errorMsg = $e->getMessage();
             Logger::error('BuyCreditHandler: processZibalPayment error', [
                 'user_id' => $userId,
                 'plan_id' => $plan['id'],
-                'error'   => $e->getMessage(),
+                'error'   => $errorMsg,
             ]);
+            $this->logAppError('zibal_payment_error', $errorMsg, $internalId ?? $userId);
             $this->baleClient->sendMessage($chatId, BotTextService::get('zibal_general_error'));
         }
+    }
+
+    /**
+     * Log an error to the app_errors table for admin visibility.
+     */
+    private function logAppError(string $errorType, string $errorMessage, ?int $baleUserId = null): void
+    {
+        try {
+            Database::getInstance()->query(
+                "INSERT INTO app_errors (error_type, error_message, bale_user_id) VALUES (?, ?, ?)",
+                [$errorType, $errorMessage, $baleUserId]
+            );
+        } catch (\Throwable $ignored) {}
     }
 
     /**
