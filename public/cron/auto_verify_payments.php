@@ -178,81 +178,79 @@ foreach ($pendingPayments as $payment) {
             continue;
         }
 
-        // ---- Step 6: Transaction ----
-        $conn = $db->getConnection();
-        $conn->beginTransaction();
+        // ---- Step 6: Update payment and add credits (no outer transaction) ----
+        // NOTE: CreditService::addCredits() manages its own transaction internally,
+        // so we do NOT wrap in an outer transaction here to avoid nesting conflicts.
 
-        try {
-            $updateStmt = $conn->prepare(
-                "UPDATE payments SET status = 'verified', ref_number = ?, verified_at = NOW() WHERE id = ? AND status = 'pending'"
-            );
-            $updateStmt->execute([$refNumber, $paymentId]);
+        // 6a. Update payment status to verified
+        $db->query(
+            "UPDATE payments SET status = 'verified', ref_number = ?, verified_at = NOW() WHERE id = ? AND status = 'pending'",
+            [$refNumber, $paymentId]
+        );
 
-            if ($updateStmt->rowCount() === 0) {
-                throw new \Exception("Payment already updated by another process");
-            }
+        // 6b. Add credits to user (idempotent via reference_id)
+        $referenceId = 'auto_verify_' . $trackId . '_' . time();
+        $credited = CreditService::addCredits($userId, $credits, $referenceId);
 
-            $referenceId = 'auto_verify_' . $trackId . '_' . time();
-            $credited = CreditService::addCredits($userId, $credits, $referenceId);
-
-            if (!$credited) {
-                $conn->prepare("UPDATE payments SET status = 'pending', ref_number = NULL, verified_at = NULL WHERE id = ?")
-                    ->execute([$paymentId]);
-                throw new \Exception("Failed to add credits to user {$userId}");
-            }
-
-            $conn->commit();
-
-            // ---- Step 7: Notify user on Bale ----
-            if ($baleUserId) {
-                try {
-                    $bale = new BaleClient();
-                    $planDisplay = $planName;
-                    try {
-                        $pStmt = $db->query("SELECT name FROM payment_plans WHERE id = ? OR plan_id = ?", [$planName, $planName]);
-                        $pRow = $pStmt->fetch();
-                        if ($pRow) $planDisplay = $pRow['name'];
-                    } catch (\Throwable $ignored) {}
-
-                    $planText = $planDisplay ? " برای پلن «{$planDisplay}»" : '';
-                    $msg = "✅ **پرداخت شما با موفقیت انجام شد!**{$planText}\n\n"
-                         . "💎 {$credits} اعتبار به حساب شما اضافه شد.\n"
-                         . "📄 کد پیگیری: {$refNumber}\n\n"
-                         . "🙏 از اعتماد شما سپاسگزاریم.\n\n"
-                         . "👈 اکنون می‌توانید از ربات استفاده کنید.";
-
-                    $bale->sendMessage($baleUserId, $msg);
-                    Logger::info('auto_verify_payments.php: User notified on Bale', [
-                        'payment_id' => $paymentId,
-                        'bale_user_id' => $baleUserId,
-                    ]);
-                } catch (\Throwable $e) {
-                    Logger::error('auto_verify_payments.php: Failed to notify user', [
-                        'payment_id' => $paymentId,
-                        'bale_user_id' => $baleUserId,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            }
-
-            $processed++;
-            Logger::info('auto_verify_payments.php: Payment auto-verified successfully', [
+        if (!$credited) {
+            Logger::error('auto_verify_payments.php: Failed to add credits, rolling back payment status', [
                 'payment_id' => $paymentId,
-                'track_id'   => $trackId,
                 'user_id'    => $userId,
-                'credits'    => $credits,
-                'ref_number' => $refNumber,
             ]);
-
-        } catch (\Throwable $e) {
-            $conn->rollBack();
-            Logger::error('auto_verify_payments.php: Transaction failed', [
-                'payment_id' => $paymentId,
-                'track_id'   => $trackId,
-                'error'      => $e->getMessage(),
-            ]);
-            logAppError('auto_verify_transaction_failed', "Payment {$paymentId}: " . $e->getMessage());
+            $db->query(
+                "UPDATE payments SET status = 'pending', ref_number = NULL, verified_at = NULL WHERE id = ?",
+                [$paymentId]
+            );
+            logAppError('auto_verify_credit_failed', "Payment {$paymentId}: Could not add credits to user {$userId}");
+            continue;
         }
+
+        Logger::info('auto_verify_payments.php: Payment verified and credits added', [
+            'payment_id' => $paymentId,
+            'user_id'    => $userId,
+            'credits'    => $credits,
+        ]);
+
+        // ---- Step 7: Notify user on Bale ----
+        if ($baleUserId) {
+            try {
+                $bale = new BaleClient();
+                $planDisplay = $planName;
+                try {
+                    $pStmt = $db->query("SELECT name FROM payment_plans WHERE id = ? OR plan_id = ?", [$planName, $planName]);
+                    $pRow = $pStmt->fetch();
+                    if ($pRow) $planDisplay = $pRow['name'];
+                } catch (\Throwable $ignored) {}
+
+                $planText = $planDisplay ? " برای پلن «{$planDisplay}»" : '';
+                $msg = "✅ **پرداخت شما با موفقیت انجام شد!**{$planText}\n\n"
+                     . "💎 {$credits} اعتبار به حساب شما اضافه شد.\n"
+                     . "📄 کد پیگیری: {$refNumber}\n\n"
+                     . "🙏 از اعتماد شما سپاسگزاریم.\n\n"
+                     . "👈 اکنون می‌توانید از ربات استفاده کنید.";
+
+                $bale->sendMessage($baleUserId, $msg);
+                Logger::info('auto_verify_payments.php: User notified on Bale', [
+                    'payment_id' => $paymentId,
+                    'bale_user_id' => $baleUserId,
+                ]);
+            } catch (\Throwable $e) {
+                Logger::error('auto_verify_payments.php: Failed to notify user', [
+                    'payment_id' => $paymentId,
+                    'bale_user_id' => $baleUserId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $processed++;
+        Logger::info('auto_verify_payments.php: Payment auto-verified successfully', [
+            'payment_id' => $paymentId,
+            'track_id'   => $trackId,
+            'user_id'    => $userId,
+            'credits'    => $credits,
+            'ref_number' => $refNumber,
+        ]);
 
     } catch (\Throwable $e) {
         Logger::error('auto_verify_payments.php: Payment processing error', [
