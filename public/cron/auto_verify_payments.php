@@ -125,6 +125,7 @@ foreach ($pendingPayments as $payment) {
 
         // Retry verify up to $maxRetries times on timeout/network errors
         $verifyResult = null;
+        $alreadyVerified = false;
         $lastError = '';
         for ($retry = 0; $retry < $maxRetries; $retry++) {
             if ($retry > 0) {
@@ -135,6 +136,15 @@ foreach ($pendingPayments as $payment) {
                 break;
             }
             $lastError = $verifyResult['error'] ?? 'unknown';
+            if (stripos($lastError, 'previously') !== false || stripos($lastError, 'verified') !== false || strpos($lastError, '201') !== false) {
+                $alreadyVerified = true;
+                Logger::info('auto_verify_payments.php: Verify returned previously-verified, treating as success for credit', [
+                    'payment_id' => $paymentId,
+                    'track_id'   => $trackId,
+                    'error'      => $lastError,
+                ]);
+                break;
+            }
             // Don't retry on logical errors (only on network/timeout errors)
             if (strpos($lastError, 'cURL') === false && strpos($lastError, 'timeout') === false) {
                 break;
@@ -145,7 +155,9 @@ foreach ($pendingPayments as $payment) {
             ]);
         }
 
-        if (empty($verifyResult['success'])) {
+        // Treat "previously verified" (Zibal error 201) as success
+        // so we can still add credits to the user
+        if (empty($verifyResult['success']) && !$alreadyVerified) {
             $errorMsg = $verifyResult['error'] ?? $lastError;
             Logger::error('auto_verify_payments.php: Verify API failed after inquiry showed paid', [
                 'payment_id' => $paymentId,
