@@ -276,4 +276,12 @@ class ZibalService
             ]);
         }
     }
+
+    /**
+     * Set cURL timeout in seconds.
+     */
+    public function setTimeout(int $seconds): void
+    {
+        $this->timeout = $seconds;
+    }
 }

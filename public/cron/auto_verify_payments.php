@@ -29,6 +29,7 @@ use Database\Logger;
 $maxAgeSeconds = 120;
 $maxPerRun     = 10;
 $maxInquiryAge = 3600;
+$maxRetries    = 3;   // Max retry count per cron run for failed verifications
 
 // ---- Execution guard ----
 $startTime = microtime(true);
@@ -76,6 +77,7 @@ if (empty($pendingPayments)) {
 Logger::info('auto_verify_payments.php: Found ' . count($pendingPayments) . ' pending payments to check');
 
 $zibal = new ZibalService();
+$zibal->setTimeout(60); // Increase cURL timeout for verify calls (Zibal can be slow)
 $processed = 0;
 
 foreach ($pendingPayments as $payment) {
@@ -121,16 +123,36 @@ foreach ($pendingPayments as $payment) {
             'user_id'    => $userId,
         ]);
 
-        $verifyResult = $zibal->verifyPayment($trackId);
+        // Retry verify up to $maxRetries times on timeout/network errors
+        $verifyResult = null;
+        $lastError = '';
+        for ($retry = 0; $retry < $maxRetries; $retry++) {
+            if ($retry > 0) {
+                usleep(500000); // wait 0.5 second between retries
+            }
+            $verifyResult = $zibal->verifyPayment($trackId);
+            if (!empty($verifyResult['success'])) {
+                break;
+            }
+            $lastError = $verifyResult['error'] ?? 'unknown';
+            // Don't retry on logical errors (only on network/timeout errors)
+            if (strpos($lastError, 'cURL') === false && strpos($lastError, 'timeout') === false) {
+                break;
+            }
+            Logger::warning('auto_verify_payments.php: Verify attempt ' . ($retry + 1) . " failed, retrying: {$lastError}", [
+                'payment_id' => $paymentId,
+                'track_id'   => $trackId,
+            ]);
+        }
 
-        if (!$verifyResult['success']) {
-            $errorMsg = $verifyResult['error'] ?? 'verify failed';
+        if (empty($verifyResult['success'])) {
+            $errorMsg = $verifyResult['error'] ?? $lastError;
             Logger::error('auto_verify_payments.php: Verify API failed after inquiry showed paid', [
                 'payment_id' => $paymentId,
                 'track_id'   => $trackId,
                 'error'      => $errorMsg,
             ]);
-            logAppError('auto_verify_failed', "Payment {$paymentId} (track: {$trackId}) inquiry showed paid but verify failed: {$errorMsg}");
+            logAppError('auto_verify_failed', "Payment {$paymentId} (track: {$trackId}) all {$maxRetries} verify attempts failed: {$errorMsg}");
             continue;
         }
 
