@@ -60,6 +60,7 @@ class DatabaseRepairService
         $this->ensureDeepLinkTables();
         $this->ensureBroadcastV2Columns();
         $this->ensureAppErrorsTable();
+        $this->ensureAutoVerifyColumns();
 
         return $this->messages;
     }
@@ -1217,6 +1218,28 @@ class DatabaseRepairService
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             ");
             $this->log('✅ جدول generated_files ایجاد شد.');
+        }
+    }
+
+    /**
+     * Add inquiry_count and last_inquiry_at columns to payments table
+     * for auto-verify payment cron support.
+     */
+    private function ensureAutoVerifyColumns(): void
+    {
+        if (!$this->tableExists('payments')) return;
+
+        if (!$this->columnExists('payments', 'inquiry_count')) {
+            $this->exec("ALTER TABLE payments ADD COLUMN inquiry_count INT DEFAULT 0 AFTER verified_at");
+            $this->log('✅ ستون inquiry_count به جدول payments اضافه شد.');
+        }
+        if (!$this->columnExists('payments', 'last_inquiry_at')) {
+            $this->exec("ALTER TABLE payments ADD COLUMN last_inquiry_at TIMESTAMP NULL AFTER inquiry_count");
+            $this->log('✅ ستون last_inquiry_at به جدول payments اضافه شد.');
+        }
+        if (!$this->indexExists('payments', 'idx_auto_verify')) {
+            $this->exec("CREATE INDEX idx_auto_verify ON payments (status, created_at)");
+            $this->log('✅ ایندکس idx_auto_verify روی payments ایجاد شد.');
         }
     }
 
