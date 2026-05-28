@@ -57,7 +57,7 @@ try {
           )
           AND p.created_at < DATE_SUB(NOW(), INTERVAL ? SECOND)
           AND p.created_at > DATE_SUB(NOW(), INTERVAL ? SECOND)
-        ORDER BY p.last_inquiry_at ASC NULLS FIRST, p.created_at ASC
+        ORDER BY ISNULL(p.last_inquiry_at) DESC, p.last_inquiry_at ASC, p.created_at ASC
         LIMIT ?
     ", [(int)$maxAgeSeconds, (int)$maxInquiryAge, (int)$maxPerRun]);
 
