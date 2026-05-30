@@ -1,0 +1,55 @@
+RewriteEngine On
+
+# Rewrite /web/* URLs to /public/web/*
+RewriteRule ^web/(.*)$ public/web/$1 [L]
+
+# Rewrite /admin/* URLs to /public/admin/*
+RewriteRule ^admin/(.*)$ public/admin/$1 [L]
+
+# Rewrite /payment/* to /public/payment/*
+RewriteRule ^payment/(.*)$ public/payment/$1 [L]
+
+# Rewrite /cron/* to /public/cron/*
+RewriteRule ^cron/(.*)$ public/cron/$1 [L]
+
+# Deny direct access to src/ directory
+RewriteRule ^src/ - [F,L]
+
+# Block access to schema*.sql files
+RewriteRule schema.*\.sql - [F,L]
+
+# Block access to .env from web
+RewriteRule \.env$ - [F,L]
+
+# Block access to test files
+RewriteRule test_.*\.php$ - [F,L]
+
+# Block directory listing
+Options -Indexes
+
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-Robots-Tag "noindex, nofollow"
+</IfModule>
+
+# Deny access to hidden files (starting with .)
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Deny access to sensitive files
+<FilesMatch "\.(env|sql|md|log|ini|lock|example)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# PHP settings (if allowed)
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_flag log_errors on
+</IfModule>
