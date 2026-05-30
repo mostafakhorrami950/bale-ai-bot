@@ -1,5 +1,6 @@
 # ================================================================
 # I6: Security hardening for production
+# NOTE: RewriteEngine and RewriteRule moved to root .htaccess
 # ================================================================
 
 # 1. Deny direct access to sensitive files
@@ -8,25 +9,8 @@
     Deny from all
 </FilesMatch>
 
-# 2. Deny access to src/ directory (PHP classes) via web
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    
-    # Block direct access to src/ directory
-    RewriteRule ^src/ - [F,L]
-    
-    # Block access to schema*.sql files
-    RewriteRule schema.*\.sql - [F,L]
-    
-    # Block access to .env from web
-    RewriteRule \.env$ - [F,L]
-    
-    # Block access to test files
-    RewriteRule test_.*\.php$ - [F,L]
-    
-    # Block directory listing
-    Options -Indexes
-</IfModule>
+# 2. Block directory listing
+Options -Indexes
 
 # 3. Security headers
 <IfModule mod_headers.c>
