@@ -61,6 +61,7 @@ class DatabaseRepairService
         $this->ensureBroadcastV2Columns();
         $this->ensureAppErrorsTable();
         $this->ensureAutoVerifyColumns();
+        $this->ensureWebUsersTable();
 
         return $this->messages;
     }
@@ -1240,6 +1241,46 @@ class DatabaseRepairService
         if (!$this->indexExists('payments', 'idx_auto_verify')) {
             $this->exec("CREATE INDEX idx_auto_verify ON payments (status, created_at)");
             $this->log('✅ ایندکس idx_auto_verify روی payments ایجاد شد.');
+        }
+    }
+
+    /**
+     * Create web_users table for web version authentication (SMS OTP login).
+     */
+    private function ensureWebUsersTable(): void
+    {
+        if (!$this->tableExists('web_users')) {
+            $this->exec("
+                CREATE TABLE web_users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    phone VARCHAR(20) UNIQUE NOT NULL COMMENT 'Mobile number with country code',
+                    name VARCHAR(100) DEFAULT NULL,
+                    bale_user_id BIGINT DEFAULT NULL COMMENT 'Linked Bale bot user ID',
+                    otp_code VARCHAR(6) DEFAULT NULL,
+                    otp_expires_at TIMESTAMP NULL,
+                    is_active TINYINT(1) DEFAULT 1,
+                    last_login TIMESTAMP NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_phone (phone),
+                    INDEX idx_bale_user (bale_user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->log('✅ جدول web_users برای نسخه تحت وب ایجاد شد.');
+        } else {
+            // Ensure columns exist
+            if (!$this->columnExists('web_users', 'bale_user_id')) {
+                $this->exec("ALTER TABLE web_users ADD COLUMN bale_user_id BIGINT DEFAULT NULL AFTER name");
+                $this->log('✅ ستون bale_user_id به جدول web_users اضافه شد.');
+            }
+            if (!$this->columnExists('web_users', 'otp_code')) {
+                $this->exec("ALTER TABLE web_users ADD COLUMN otp_code VARCHAR(6) DEFAULT NULL AFTER bale_user_id");
+                $this->log('✅ ستون otp_code به جدول web_users اضافه شد.');
+            }
+            if (!$this->columnExists('web_users', 'otp_expires_at')) {
+                $this->exec("ALTER TABLE web_users ADD COLUMN otp_expires_at TIMESTAMP NULL AFTER otp_code");
+                $this->log('✅ ستون otp_expires_at به جدول web_users اضافه شد.');
+            }
         }
     }
 

@@ -1,0 +1,7 @@
+RewriteEngine On
+
+# Block direct directory listing
+Options -Indexes
+
+# Redirect root /web to login
+RewriteRule ^$ /web/login.php [L,R=302]
