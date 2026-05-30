@@ -148,14 +148,14 @@ $currentPage = basename($_SERVER['SCRIPT_NAME']);
             <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
                 <?php
                 $navItems = [
-                    'dashboard.php' => ['icon' => 'layout-dashboard', 'label' => 'داشبورد'],
-                    'chat.php' => ['icon' => 'message-square', 'label' => 'چت هوشمند'],
-                    'image.php' => ['icon' => 'image', 'label' => 'تولید تصویر'],
-                    'img2img.php' => ['icon' => 'edit-3', 'label' => 'ویرایش تصویر'],
-                    'video.php' => ['icon' => 'video', 'label' => 'تولید ویدیو'],
-                    'plans.php' => ['icon' => 'shopping-cart', 'label' => 'خرید اعتبار'],
-                    'history.php' => ['icon' => 'clock', 'label' => 'تاریخچه'],
-                    'profile.php' => ['icon' => 'user', 'label' => 'حساب کاربری'],
+                'dashboard.php' => ['icon' => 'layout-dashboard', 'label' => 'داشبورد', 'url' => '/public/web/dashboard.php'],
+                'chat.php' => ['icon' => 'message-square', 'label' => 'چت هوشمند', 'url' => '/public/web/chat.php'],
+                'image.php' => ['icon' => 'image', 'label' => 'تولید تصویر', 'url' => '/public/web/image.php'],
+                'img2img.php' => ['icon' => 'edit-3', 'label' => 'ویرایش تصویر', 'url' => '/public/web/'],
+                'video.php' => ['icon' => 'video', 'label' => 'تولید ویدیو', 'url' => '/public/web/'],
+                'plans.php' => ['icon' => 'shopping-cart', 'label' => 'خرید اعتبار', 'url' => '/public/web/plans.php'],
+                'history.php' => ['icon' => 'clock', 'label' => 'تاریخچه', 'url' => '/public/web/history.php'],
+                'profile.php' => ['icon' => 'user', 'label' => 'حساب کاربری', 'url' => '/public/web/profile.php'],
                 ];
                 foreach ($navItems as $file => $item):
                     $active = ($currentPage === $file);
